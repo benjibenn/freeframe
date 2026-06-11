@@ -120,12 +120,15 @@ export function LoginForm() {
         code: codeStr,
       })
 
+      // A valid code authenticates the user — store the tokens now. These were
+      // previously dropped when needs_password was true, which left the follow-up
+      // /auth/set-password call unauthenticated (401) and broke new-user signup.
+      setTokens(res.access_token, res.refresh_token)
+
       if (res.needs_password) {
         setStep('password')
       } else {
-        setTokens(res.access_token, res.refresh_token)
         await useAuthStore.getState().fetchUser()
-        const user = useAuthStore.getState().user
         router.replace('/projects')
       }
     } catch (err) {
@@ -173,14 +176,11 @@ export function LoginForm() {
 
     setLoading(true)
     try {
-      const res = await api.post<AuthTokens>('/auth/set-password', {
-        email,
-        code: code.join(''),
-        password,
-      })
-      setTokens(res.access_token, res.refresh_token)
+      // Tokens were already stored after verify-magic-code, so this request is
+      // authenticated. The endpoint only needs the new password and returns the
+      // user object (not tokens).
+      await api.post('/auth/set-password', { password })
       await useAuthStore.getState().fetchUser()
-      const u = useAuthStore.getState().user
       router.replace('/projects')
     } catch (err) {
       if (err instanceof ApiError) {
