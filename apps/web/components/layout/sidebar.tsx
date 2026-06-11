@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   Layers,
+  Inbox,
   Bell,
   Upload,
   Settings,
@@ -30,6 +31,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { href: '/projects', label: 'Projects', icon: Layers },
+  { href: '/submissions', label: 'Submissions', icon: Inbox },
 ]
 
 interface SidebarProps {

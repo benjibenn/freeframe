@@ -1,0 +1,55 @@
+import uuid
+from datetime import datetime
+from typing import Optional
+from sqlalchemy import String, Enum, DateTime, ForeignKey, Boolean, func, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+try:
+    from ..database import Base
+    from .project import ProjectRole
+except ImportError:
+    from database import Base
+    from models.project import ProjectRole
+
+
+class SubmissionLink(Base):
+    """A reusable link an owner shares with many people (e.g. interview candidates).
+
+    Each authenticated visitor who accepts the link gets their OWN private project
+    (the owner is added as project owner, the visitor as `grant_role`). Because
+    project membership is per-user, submitters never see each other's uploads, while
+    the owner is a member of every per-submitter project and can review/comment.
+    """
+    __tablename__ = "submission_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    token: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Role granted to each submitter on their per-submitter project (editor => can upload).
+    grant_role: Mapped[ProjectRole] = mapped_column(
+        Enum(ProjectRole, name="projectrole", create_type=False),
+        nullable=False,
+        server_default=ProjectRole.editor.value,
+    )
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Submission(Base):
+    """One record per (link, submitter). Maps a submitter to the private project
+    that was provisioned for them, making `accept` idempotent and letting the owner
+    enumerate all submissions for a link."""
+    __tablename__ = "submissions"
+    __table_args__ = (
+        UniqueConstraint("submission_link_id", "user_id", name="uq_submissions_link_user"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    submission_link_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("submission_links.id"), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

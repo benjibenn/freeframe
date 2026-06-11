@@ -32,6 +32,17 @@ export function LoginForm() {
 
   const codeRefs = useRef<(HTMLInputElement | null)[]>([])
 
+  // After authenticating, return to wherever the user came from (e.g. a
+  // /submit/{token} link they opened before signing in), else the projects list.
+  function redirectAfterAuth() {
+    let dest = '/projects'
+    if (typeof window !== 'undefined') {
+      const from = new URLSearchParams(window.location.search).get('from')
+      if (from && from.startsWith('/')) dest = from
+    }
+    router.replace(dest)
+  }
+
   useEffect(() => {
     if (step === 'code') {
       codeRefs.current[0]?.focus()
@@ -129,7 +140,7 @@ export function LoginForm() {
         setStep('password')
       } else {
         await useAuthStore.getState().fetchUser()
-        router.replace('/projects')
+        redirectAfterAuth()
       }
     } catch (err) {
       if (err instanceof ApiError) {
@@ -181,7 +192,7 @@ export function LoginForm() {
       // user object (not tokens).
       await api.post('/auth/set-password', { password })
       await useAuthStore.getState().fetchUser()
-      router.replace('/projects')
+      redirectAfterAuth()
     } catch (err) {
       if (err instanceof ApiError) {
         setGeneralError(err.detail)
@@ -212,8 +223,7 @@ export function LoginForm() {
       })
       setTokens(res.access_token, res.refresh_token)
       await useAuthStore.getState().fetchUser()
-      const u = useAuthStore.getState().user
-      router.replace('/projects')
+      redirectAfterAuth()
     } catch (err) {
       if (err instanceof ApiError) {
         setClassicError(err.detail)
