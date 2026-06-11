@@ -1,0 +1,29 @@
+# ============================================================
+# FreeFrame — local override for this host
+# ------------------------------------------------------------
+# The host already runs nginx terminating TLS on :443 for
+# review.debugged.com.my (and other domains). We must NOT let
+# FreeFrame's Traefik grab host :80/:443. Instead Traefik runs
+# HTTP-only, bound to 127.0.0.1:8090 (the port Clapshot vacated),
+# and host nginx reverse-proxies the domain to it.
+#
+# Traefik still does FreeFrame's internal path routing:
+#   /api -> api:8000 (prefix stripped),  / -> web:3000
+#
+# Layer this on top of the prod compose:
+#   docker compose --env-file .env.prod \
+#     -f docker-compose.prod.yml -f docker-compose.override.prod.yml up -d --build
+# ============================================================
+
+services:
+  traefik:
+    # Replace the upstream command entirely: web entrypoint only,
+    # no websecure (:443) entrypoint and no Let's Encrypt resolver.
+    command: !override
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    # Replace the upstream ports entirely: expose only on loopback.
+    ports: !override
+      - "127.0.0.1:8090:80"
