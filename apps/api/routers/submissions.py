@@ -127,6 +127,57 @@ def create_submission_link(
     return resp
 
 
+@router.post("/submission-links/from-project/{project_id}", response_model=SubmissionLinkResponse, status_code=status.HTTP_201_CREATED)
+def create_request_from_project(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Convert an existing project into a video request: create a submission link
+    titled after the project and make the project the request's shared reference
+    (its current assets become brief/examples visible to every editor). Editors who
+    accept the link still upload into their own private per-editor projects."""
+    project = db.query(Project).filter(
+        Project.id == project_id, Project.deleted_at.is_(None),
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    owner = db.query(ProjectMember).filter(
+        ProjectMember.project_id == project_id,
+        ProjectMember.user_id == current_user.id,
+        ProjectMember.deleted_at.is_(None),
+        ProjectMember.role == ProjectRole.owner,
+    ).first()
+    if not owner:
+        raise HTTPException(status_code=403, detail="Project owner access required")
+
+    # A per-editor submission project can't itself become a request.
+    if db.query(Submission).filter(Submission.project_id == project_id).first():
+        raise HTTPException(status_code=400, detail="This project is an editor submission and can't be converted")
+    # Already the shared reference of another request.
+    if db.query(SubmissionLink).filter(
+        SubmissionLink.reference_project_id == project_id,
+        SubmissionLink.deleted_at.is_(None),
+    ).first():
+        raise HTTPException(status_code=400, detail="This project is already a request's shared reference")
+
+    link = SubmissionLink(
+        token=secrets.token_urlsafe(32),
+        created_by=current_user.id,
+        title=project.name,
+        instructions=project.description,
+        grant_role=ProjectRole.editor,
+        reference_project_id=project.id,
+    )
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    resp = SubmissionLinkResponse.model_validate(link)
+    resp.submission_count = 0
+    return resp
+
+
 @router.get("/submission-links", response_model=list[SubmissionLinkResponse])
 def list_submission_links(
     db: Session = Depends(get_db),

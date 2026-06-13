@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus } from 'lucide-react'
+import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus, Pencil, X } from 'lucide-react'
 
 interface SubmissionLink {
   id: string
@@ -143,7 +143,12 @@ export default function SubmissionsPage() {
       ) : (
         <div className="flex flex-col gap-3">
           {links.map((link) => (
-            <LinkCard key={link.id} link={link} onDelete={() => handleDelete(link.id)} />
+            <LinkCard
+              key={link.id}
+              link={link}
+              onDelete={() => handleDelete(link.id)}
+              onUpdated={load}
+            />
           ))}
         </div>
       )}
@@ -151,12 +156,48 @@ export default function SubmissionsPage() {
   )
 }
 
-function LinkCard({ link, onDelete }: { link: SubmissionLink; onDelete: () => void }) {
+function LinkCard({
+  link,
+  onDelete,
+  onUpdated,
+}: {
+  link: SubmissionLink
+  onDelete: () => void
+  onUpdated: () => void | Promise<void>
+}) {
   const [copied, setCopied] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [subs, setSubs] = useState<SubmissionItem[] | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState(link.title)
+  const [editInstructions, setEditInstructions] = useState(link.instructions ?? '')
+  const [saving, setSaving] = useState(false)
 
   const url = submitUrl(link.token)
+
+  function startEdit() {
+    setEditTitle(link.title)
+    setEditInstructions(link.instructions ?? '')
+    setEditing(true)
+  }
+
+  async function saveEdit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editTitle.trim() || saving) return
+    setSaving(true)
+    try {
+      await api.patch(`/submission-links/${link.id}`, {
+        title: editTitle.trim(),
+        instructions: editInstructions.trim() || null,
+      })
+      setEditing(false)
+      await onUpdated()
+    } catch {
+      /* surfaced via list refresh */
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function copy() {
     try {
@@ -182,17 +223,47 @@ function LinkCard({ link, onDelete }: { link: SubmissionLink; onDelete: () => vo
 
   return (
     <div className="rounded-lg border border-border bg-bg-secondary p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="truncate font-medium text-text-primary">{link.title}</h3>
-          {link.instructions && (
-            <p className="mt-0.5 line-clamp-2 text-sm text-text-secondary">{link.instructions}</p>
-          )}
+      {editing ? (
+        <form onSubmit={saveEdit} className="flex flex-col gap-3">
+          <Input
+            label="Name"
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            autoFocus
+          />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Instructions (optional)</label>
+            <textarea
+              className="flex min-h-[80px] w-full rounded-md border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+              value={editInstructions}
+              onChange={(e) => setEditInstructions(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" loading={saving}>Save</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
+              <X className="h-4 w-4" /> Cancel
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate font-medium text-text-primary">{link.title}</h3>
+            {link.instructions && (
+              <p className="mt-0.5 line-clamp-2 text-sm text-text-secondary">{link.instructions}</p>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={startEdit} title="Edit name">
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onDelete} title="Disable link">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
-        <Button variant="ghost" size="sm" onClick={onDelete} title="Disable link">
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </div>
+      )}
 
       <div className="mt-3 flex items-center gap-2">
         <input

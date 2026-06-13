@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import * as Dialog from "@radix-ui/react-dialog";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Plus,
   LayoutGrid,
@@ -15,6 +16,7 @@ import {
   Globe,
   Link2,
   FolderGit2,
+  ChevronDown,
 } from "lucide-react";
 import { cn, formatBytes } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -257,6 +259,15 @@ export default function ProjectsPage() {
     project_type: "personal",
   });
 
+  // New-request creation (a submission link / "video request")
+  const [requestDialogOpen, setRequestDialogOpen] = React.useState(false);
+  const [isCreatingRequest, setIsCreatingRequest] = React.useState(false);
+  const [requestError, setRequestError] = React.useState("");
+  const [requestForm, setRequestForm] = React.useState({
+    title: "",
+    instructions: "",
+  });
+
   const {
     data: projects,
     isLoading,
@@ -308,6 +319,32 @@ export default function ProjectsPage() {
       await mutateRequests();
     } catch {
       /* surfaced via list refresh */
+    }
+  };
+
+  const handleCreateRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!requestForm.title.trim()) {
+      setRequestError("Request name is required.");
+      return;
+    }
+    setIsCreatingRequest(true);
+    setRequestError("");
+    try {
+      const created = await api.post<{ id: string }>("/submission-links", {
+        title: requestForm.title.trim(),
+        instructions: requestForm.instructions.trim() || null,
+      });
+      await mutateRequests();
+      setRequestDialogOpen(false);
+      setRequestForm({ title: "", instructions: "" });
+      router.push(`/projects/requests/${created.id}`);
+    } catch (err) {
+      setRequestError(
+        err instanceof Error ? err.message : "Failed to create request",
+      );
+    } finally {
+      setIsCreatingRequest(false);
     }
   };
 
@@ -392,6 +429,48 @@ export default function ProjectsPage() {
             </button>
           </div>
 
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <Button size="sm">
+                <Plus className="h-4 w-4" />
+                New
+                <ChevronDown className="h-3.5 w-3.5 opacity-80" />
+              </Button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                className="z-50 min-w-[200px] rounded-xl border border-border bg-bg-secondary p-1 shadow-xl"
+                sideOffset={4}
+                align="end"
+              >
+                <DropdownMenu.Item
+                  className="flex items-start gap-2.5 rounded-lg px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
+                  onSelect={() => setDialogOpen(true)}
+                >
+                  <FolderOpen className="mt-0.5 h-4 w-4 text-text-tertiary" />
+                  <span>
+                    New Project
+                    <span className="block text-2xs text-text-tertiary">
+                      Organize and review your own assets
+                    </span>
+                  </span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  className="flex items-start gap-2.5 rounded-lg px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
+                  onSelect={() => setRequestDialogOpen(true)}
+                >
+                  <FolderGit2 className="mt-0.5 h-4 w-4 text-text-tertiary" />
+                  <span>
+                    New Request
+                    <span className="block text-2xs text-text-tertiary">
+                      Collect submissions from editors
+                    </span>
+                  </span>
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+
           <Dialog.Root
             open={dialogOpen}
             onOpenChange={(open) => {
@@ -399,13 +478,6 @@ export default function ProjectsPage() {
               if (!open) resetForm();
             }}
           >
-            <Dialog.Trigger asChild>
-              <Button size="sm">
-                <Plus className="h-4 w-4" />
-                New Project
-              </Button>
-            </Dialog.Trigger>
-
             <Dialog.Portal>
               <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
               <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-secondary p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
@@ -458,6 +530,80 @@ export default function ProjectsPage() {
                     </Dialog.Close>
                     <Button type="submit" size="sm" loading={isCreating}>
                       Create project
+                    </Button>
+                  </div>
+                </form>
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog.Root>
+
+          {/* New Request dialog */}
+          <Dialog.Root
+            open={requestDialogOpen}
+            onOpenChange={(open) => {
+              setRequestDialogOpen(open);
+              if (!open) {
+                setRequestForm({ title: "", instructions: "" });
+                setRequestError("");
+              }
+            }}
+          >
+            <Dialog.Portal>
+              <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+              <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-secondary p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+                <Dialog.Close className="absolute right-4 top-4 text-text-tertiary hover:text-text-primary transition-colors">
+                  <X className="h-4 w-4" />
+                </Dialog.Close>
+
+                <Dialog.Title className="text-base font-semibold text-text-primary">
+                  New Video Request
+                </Dialog.Title>
+                <Dialog.Description className="mt-1 text-sm text-text-secondary">
+                  Share one link; each editor gets their own private folder to upload
+                  into. You review them all.
+                </Dialog.Description>
+
+                <form onSubmit={handleCreateRequest} className="mt-5 space-y-4">
+                  <Input
+                    label="Request name"
+                    placeholder="e.g. P01-B03-Girls who want to travel"
+                    value={requestForm.title}
+                    onChange={(e) =>
+                      setRequestForm((f) => ({ ...f, title: e.target.value }))
+                    }
+                    required
+                  />
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium text-text-secondary">
+                      Instructions (optional)
+                    </label>
+                    <textarea
+                      rows={2}
+                      placeholder="Shown to editors before they upload..."
+                      value={requestForm.instructions}
+                      onChange={(e) =>
+                        setRequestForm((f) => ({
+                          ...f,
+                          instructions: e.target.value,
+                        }))
+                      }
+                      className="flex w-full rounded-md border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus"
+                    />
+                  </div>
+
+                  {requestError && (
+                    <p className="text-sm text-status-error">{requestError}</p>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Dialog.Close asChild>
+                      <Button type="button" variant="secondary" size="sm">
+                        Cancel
+                      </Button>
+                    </Dialog.Close>
+                    <Button type="submit" size="sm" loading={isCreatingRequest}>
+                      Create request
                     </Button>
                   </div>
                 </form>
