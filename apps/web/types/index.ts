@@ -56,6 +56,8 @@ export interface TaskItem {
   name: string;
   project_id: string;
   project_name: string | null;
+  request_id: string | null;
+  request_title: string | null;
   task_stage_id: string | null;
   submitter_name: string | null;
   submitter_email: string | null;

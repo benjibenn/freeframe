@@ -39,6 +39,9 @@ class TaskItem(BaseModel):
     name: str
     project_id: uuid.UUID
     project_name: Optional[str] = None
+    # The video request (submission link) this asset's project belongs to, if any.
+    request_id: Optional[uuid.UUID] = None
+    request_title: Optional[str] = None
     task_stage_id: Optional[uuid.UUID] = None
     submitter_name: Optional[str] = None
     submitter_email: Optional[str] = None

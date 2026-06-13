@@ -208,17 +208,28 @@ def list_tasks(
         p.id: p for p in db.query(Project).filter(Project.id.in_(project_ids)).all()
     } if project_ids else {}
 
+    # Resolve request (submission link) titles for grouping.
+    from ..models.submission import SubmissionLink
+    link_ids = {p.submission_link_id for p in projects.values() if p.submission_link_id}
+    links = {
+        l.id: l for l in db.query(SubmissionLink).filter(SubmissionLink.id.in_(link_ids)).all()
+    } if link_ids else {}
+
     out: list[TaskItem] = []
     for a in assets:
         version = version_by_asset.get(a.id)
         thumb_key = thumb_by_version.get(version.id) if version else None
         submitter = users.get(a.created_by)
         project = projects.get(a.project_id)
+        req_id = project.submission_link_id if project else None
+        req = links.get(req_id) if req_id else None
         out.append(TaskItem(
             asset_id=a.id,
             name=a.name,
             project_id=a.project_id,
             project_name=project.name if project else None,
+            request_id=req_id,
+            request_title=req.title if req else None,
             task_stage_id=a.task_stage_id,
             submitter_name=(submitter.name if submitter else None),
             submitter_email=(submitter.email if submitter else None),
@@ -250,11 +261,18 @@ def set_asset_task_stage(
 
     submitter = db.query(User).filter(User.id == asset.created_by).first()
     project = db.query(Project).filter(Project.id == asset.project_id).first()
+    from ..models.submission import SubmissionLink
+    req = (
+        db.query(SubmissionLink).filter(SubmissionLink.id == project.submission_link_id).first()
+        if project and project.submission_link_id else None
+    )
     return TaskItem(
         asset_id=asset.id,
         name=asset.name,
         project_id=asset.project_id,
         project_name=project.name if project else None,
+        request_id=(project.submission_link_id if project else None),
+        request_title=(req.title if req else None),
         task_stage_id=asset.task_stage_id,
         submitter_name=(submitter.name if submitter else None),
         submitter_email=(submitter.email if submitter else None),

@@ -307,6 +307,9 @@ export default function TasksPage() {
   const { user } = useAuthStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
   const [filter, setFilter] = React.useState<string | null>(null)
+  const [requestFilter, setRequestFilter] = React.useState<string | null>(null)
+  const [pageSize, setPageSize] = React.useState<number>(25)
+  const [page, setPage] = React.useState<number>(1)
 
   const { data: stages } = useSWR<TaskStage[]>(
     isPlatformAdmin ? STAGES_KEY : null,
@@ -316,6 +319,32 @@ export default function TasksPage() {
     isPlatformAdmin ? TASKS_KEY : null,
     () => api.get<TaskItem[]>(TASKS_KEY),
   )
+
+  // Remember the chosen page size across visits.
+  React.useEffect(() => {
+    const saved =
+      typeof window !== 'undefined' ? window.localStorage.getItem('tasksPageSize') : null
+    if (saved) setPageSize(Number(saved) || 25)
+  }, [])
+  React.useEffect(() => {
+    if (typeof window !== 'undefined')
+      window.localStorage.setItem('tasksPageSize', String(pageSize))
+  }, [pageSize])
+  // Back to page 1 whenever the filters or page size change.
+  React.useEffect(() => {
+    setPage(1)
+  }, [filter, requestFilter, pageSize])
+
+  // Distinct request groupings present in the task list (for the filter dropdown).
+  const requestOptions = React.useMemo(() => {
+    const m = new Map<string, string>()
+    for (const t of tasks ?? []) {
+      if (t.request_id) m.set(t.request_id, t.request_title || 'Untitled request')
+    }
+    return Array.from(m, ([id, title]) => ({ id, title })).sort((a, b) =>
+      a.title.localeCompare(b.title),
+    )
+  }, [tasks])
 
   if (!isPlatformAdmin) {
     return (
@@ -330,14 +359,29 @@ export default function TasksPage() {
   }
 
   const stageList = stages ?? []
-  const countByStage = (id: string | null) =>
-    (tasks ?? []).filter((t) => (t.task_stage_id ?? null) === id).length
 
-  const filtered = (tasks ?? []).filter((t) => {
+  // Tasks within the chosen request grouping — also drives the stage chip counts.
+  const requestScoped = (tasks ?? []).filter((t) =>
+    requestFilter === null
+      ? true
+      : requestFilter === 'none'
+        ? !t.request_id
+        : t.request_id === requestFilter,
+  )
+  const countByStage = (id: string | null) =>
+    requestScoped.filter((t) => (t.task_stage_id ?? null) === id).length
+
+  const filtered = requestScoped.filter((t) => {
     if (filter === null) return true
     if (filter === 'unassigned') return t.task_stage_id === null
     return t.task_stage_id === filter
   })
+
+  const total = filtered.length
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const startIndex = (currentPage - 1) * pageSize
+  const paginated = filtered.slice(startIndex, startIndex + pageSize)
 
   return (
     <div className="p-4 sm:p-6 max-w-5xl space-y-6">
@@ -352,30 +396,51 @@ export default function TasksPage() {
         <ManageStagesDialog stages={stageList} />
       </div>
 
-      {/* Stage filter chips */}
-      <div className="flex flex-wrap items-center gap-1 border-b border-border pb-3">
-        <FilterChip
-          label="All"
-          count={(tasks ?? []).length}
-          active={filter === null}
-          onClick={() => setFilter(null)}
-        />
-        {stageList.map((s) => (
+      {/* Filters: stage chips + request grouping */}
+      <div className="flex flex-col gap-3 border-b border-border pb-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-1">
           <FilterChip
-            key={s.id}
-            label={s.name}
-            color={s.color}
-            count={countByStage(s.id)}
-            active={filter === s.id}
-            onClick={() => setFilter(s.id)}
+            label="All"
+            count={requestScoped.length}
+            active={filter === null}
+            onClick={() => setFilter(null)}
           />
-        ))}
-        <FilterChip
-          label="Unassigned"
-          count={countByStage(null)}
-          active={filter === 'unassigned'}
-          onClick={() => setFilter('unassigned')}
-        />
+          {stageList.map((s) => (
+            <FilterChip
+              key={s.id}
+              label={s.name}
+              color={s.color}
+              count={countByStage(s.id)}
+              active={filter === s.id}
+              onClick={() => setFilter(s.id)}
+            />
+          ))}
+          <FilterChip
+            label="Unassigned"
+            count={countByStage(null)}
+            active={filter === 'unassigned'}
+            onClick={() => setFilter('unassigned')}
+          />
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <label className="text-xs text-text-tertiary whitespace-nowrap">Request</label>
+          <select
+            value={requestFilter ?? ''}
+            onChange={(e) =>
+              setRequestFilter(e.target.value === '' ? null : e.target.value)
+            }
+            className="rounded-md border border-border bg-bg-secondary px-2.5 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus cursor-pointer max-w-[16rem]"
+          >
+            <option value="">All requests</option>
+            {requestOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.title}
+              </option>
+            ))}
+            <option value="none">No request</option>
+          </select>
+        </div>
       </div>
 
       {isLoading ? (
@@ -391,6 +456,7 @@ export default function TasksPage() {
           description="Submitted videos will appear here so you can move them through the pipeline."
         />
       ) : (
+        <div className="space-y-3">
         <div className="rounded-lg border border-border bg-bg-secondary overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -402,7 +468,7 @@ export default function TasksPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((t) => (
+              {paginated.map((t) => (
                 <tr
                   key={t.asset_id}
                   className="border-b border-border last:border-0 hover:bg-bg-tertiary transition-colors"
@@ -449,6 +515,51 @@ export default function TasksPage() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-text-tertiary">
+            Showing {total === 0 ? 0 : startIndex + 1}–{Math.min(startIndex + pageSize, total)} of {total}
+          </p>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-text-tertiary whitespace-nowrap">Per page</label>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="rounded-md border border-border bg-bg-secondary px-2 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus cursor-pointer"
+              >
+                {[10, 25, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={currentPage <= 1}
+                onClick={() => setPage(currentPage - 1)}
+              >
+                Prev
+              </Button>
+              <span className="px-1 text-xs text-text-tertiary whitespace-nowrap">
+                Page {currentPage} / {totalPages}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={currentPage >= totalPages}
+                onClick={() => setPage(currentPage + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </div>
         </div>
       )}
     </div>
