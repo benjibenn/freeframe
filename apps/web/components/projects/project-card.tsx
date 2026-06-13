@@ -2,14 +2,14 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { mutate as globalMutate } from 'swr'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { MoreHorizontal, ImagePlus, Settings, Trash2, Globe, Lock, Link2, FolderGit2 } from 'lucide-react'
 import { cn, formatRelativeTime, formatBytes } from '@/lib/utils'
 import { getGradientForProject } from '@/lib/gradient-utils'
-import { api, ApiError } from '@/lib/api'
+import { api } from '@/lib/api'
 import { useToast } from '@/components/shared/toast'
 import { ProjectSettingsDialog } from './project-settings-dialog'
+import { ConvertToRequestDialog } from './convert-to-request-dialog'
 import type { Project } from '@/types'
 
 interface ProjectCardProps {
@@ -31,34 +31,12 @@ export function ProjectCard({
   const assetCount = project.asset_count ?? 0
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
-  const [converting, setConverting] = React.useState(false)
+  const [convertOpen, setConvertOpen] = React.useState(false)
   const toast = useToast()
 
-  // A request's per-editor projects (submission_link_id set) and shared-reference
-  // projects can't themselves be converted into a request.
+  // A request's per-editor projects (submission_link_id set) can't be added to a
+  // request again.
   const canConvert = !project.submission_link_id
-
-  const handleConvertToRequest = async () => {
-    if (
-      !confirm(
-        `Convert "${project.name}" into a video request? Its current files become the shared reference, and editors who get the link upload into their own private sub-folders.`,
-      )
-    )
-      return
-    setConverting(true)
-    try {
-      await api.post(`/submission-links/from-project/${project.id}`, {})
-      // Refresh both the project list (this one becomes the request's reference and
-      // drops out of the flat grid) and the requests list (the new request appears).
-      await Promise.all([globalMutate('/projects'), globalMutate('/submission-links')])
-      onMutate?.()
-      toast.success('Converted to a video request')
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.detail : 'Could not convert to request')
-    } finally {
-      setConverting(false)
-    }
-  }
 
   const handleCopyLink = async () => {
     try {
@@ -197,14 +175,10 @@ export function ProjectCard({
                 {canConvert && (
                   <DropdownMenu.Item
                     className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
-                    onSelect={(e) => {
-                      e.preventDefault()
-                      handleConvertToRequest()
-                    }}
-                    disabled={converting}
+                    onSelect={() => setConvertOpen(true)}
                   >
                     <FolderGit2 className="h-4 w-4 text-text-tertiary" />
-                    Convert to request
+                    Add to a request
                   </DropdownMenu.Item>
                 )}
 
@@ -230,6 +204,14 @@ export function ProjectCard({
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         onUpdated={() => onMutate?.()}
+      />
+
+      {/* Add to a request */}
+      <ConvertToRequestDialog
+        project={project}
+        open={convertOpen}
+        onOpenChange={setConvertOpen}
+        onDone={() => onMutate?.()}
       />
     </>
   )

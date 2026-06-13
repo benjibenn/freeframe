@@ -40,6 +40,18 @@ class ReferenceResponse(BaseModel):
     reference_project_id: Optional[uuid.UUID] = None
 
 
+class AttachProjectRequest(BaseModel):
+    # True => attach as the request's shared reference; False => as a child folder.
+    as_reference: bool = False
+
+
+class ChildProjectItem(BaseModel):
+    project_id: uuid.UUID
+    name: str
+    asset_count: int
+    is_reference: bool = False
+
+
 class SubmissionItem(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID

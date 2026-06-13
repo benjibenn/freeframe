@@ -34,6 +34,8 @@ from ..schemas.submission import (
     SubmissionItem,
     SubmissionUpdate,
     ReferenceResponse,
+    AttachProjectRequest,
+    ChildProjectItem,
 )
 from ..services.share_service import build_default_project_share_link
 
@@ -130,27 +132,21 @@ def create_submission_link(
 @router.post("/submission-links/from-project/{project_id}", response_model=SubmissionLinkResponse, status_code=status.HTTP_201_CREATED)
 def create_request_from_project(
     project_id: uuid.UUID,
+    body: AttachProjectRequest = AttachProjectRequest(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Convert an existing project into a video request: create a submission link
-    titled after the project and make the project the request's shared reference
-    (its current assets become brief/examples visible to every editor). Editors who
-    accept the link still upload into their own private per-editor projects."""
+    """Convert an existing project into a NEW video request titled after the project.
+    By default the project becomes the request's shared reference (its assets become
+    brief/examples for every editor); pass as_reference=false to add it as a plain
+    child folder instead. Either way, editors who accept the link upload into their
+    own private per-editor projects."""
     project = db.query(Project).filter(
         Project.id == project_id, Project.deleted_at.is_(None),
     ).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-
-    owner = db.query(ProjectMember).filter(
-        ProjectMember.project_id == project_id,
-        ProjectMember.user_id == current_user.id,
-        ProjectMember.deleted_at.is_(None),
-        ProjectMember.role == ProjectRole.owner,
-    ).first()
-    if not owner:
-        raise HTTPException(status_code=403, detail="Project owner access required")
+    _require_project_owner(db, project_id, current_user)
 
     # A per-editor submission project can't itself become a request.
     if db.query(Submission).filter(Submission.project_id == project_id).first():
@@ -168,9 +164,12 @@ def create_request_from_project(
         title=project.name,
         instructions=project.description,
         grant_role=ProjectRole.editor,
-        reference_project_id=project.id,
+        reference_project_id=project.id if body.as_reference else None,
     )
     db.add(link)
+    db.flush()
+    if not body.as_reference:
+        project.submission_link_id = link.id
     db.commit()
     db.refresh(link)
     resp = SubmissionLinkResponse.model_validate(link)
@@ -393,9 +392,169 @@ def disable_reference(
     if link.reference_project_id:
         proj = db.query(Project).filter(Project.id == link.reference_project_id).first()
         if proj and proj.deleted_at is None:
-            proj.deleted_at = datetime.now(timezone.utc)
+            # Only clean up an empty purpose-built shell. A reference that has content
+            # (e.g. an existing project attached as reference) is preserved — just
+            # unlinked — so disabling never destroys real work.
+            asset_count = db.query(func.count(Asset.id)).filter(
+                Asset.project_id == proj.id, Asset.deleted_at.is_(None),
+            ).scalar() or 0
+            if asset_count == 0:
+                proj.deleted_at = datetime.now(timezone.utc)
         link.reference_project_id = None
         db.commit()
+
+
+# ── Attach existing projects to a request ────────────────────────────────────
+
+def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> None:
+    owner = db.query(ProjectMember).filter(
+        ProjectMember.project_id == project_id,
+        ProjectMember.user_id == user.id,
+        ProjectMember.deleted_at.is_(None),
+        ProjectMember.role == ProjectRole.owner,
+    ).first()
+    if not owner:
+        raise HTTPException(status_code=403, detail="Project owner access required")
+
+
+def _enroll_submitters_as_viewers(db: Session, link: SubmissionLink, project_id: uuid.UUID) -> None:
+    """Give every submitter on `link` viewer access to `project_id` (the shared
+    reference). Idempotent; skips the owner, who already owns it."""
+    subs = db.query(Submission).filter(Submission.submission_link_id == link.id).all()
+    for s in subs:
+        if s.user_id == link.created_by:
+            continue
+        existing = db.query(ProjectMember).filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == s.user_id,
+        ).first()
+        if existing:
+            if existing.deleted_at is not None:
+                existing.deleted_at = None
+                existing.role = ProjectRole.viewer
+        else:
+            db.add(ProjectMember(
+                project_id=project_id,
+                user_id=s.user_id,
+                role=ProjectRole.viewer,
+                invited_by=link.created_by,
+            ))
+
+
+@router.post("/submission-links/{link_id}/attach-project/{project_id}", response_model=ReferenceResponse)
+def attach_project(
+    link_id: uuid.UUID,
+    project_id: uuid.UUID,
+    body: AttachProjectRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add an existing project to an existing request — as a child folder (default)
+    or as the request's shared reference. Requires owning both the request and the
+    project."""
+    link = _get_owned_link(db, link_id, current_user)
+    project = db.query(Project).filter(
+        Project.id == project_id, Project.deleted_at.is_(None),
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    _require_project_owner(db, project_id, current_user)
+
+    # A per-editor submission project can't be re-homed.
+    if db.query(Submission).filter(Submission.project_id == project_id).first():
+        raise HTTPException(status_code=400, detail="This project is an editor submission and can't be attached")
+
+    if body.as_reference:
+        link.reference_project_id = project.id
+        _enroll_submitters_as_viewers(db, link, project.id)
+    else:
+        # A project that's already a shared reference can't double as a child folder.
+        if db.query(SubmissionLink).filter(
+            SubmissionLink.reference_project_id == project_id,
+            SubmissionLink.deleted_at.is_(None),
+        ).first():
+            raise HTTPException(status_code=400, detail="This project is a shared reference and can't be added as a folder")
+        project.submission_link_id = link.id
+    db.commit()
+    return ReferenceResponse(reference_project_id=link.reference_project_id)
+
+
+@router.post("/submission-links/{link_id}/detach-project/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def detach_project(
+    link_id: uuid.UUID,
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove a manually-attached project (child folder or shared reference) from a
+    request. Per-editor submission projects are left in place."""
+    link = _get_owned_link(db, link_id, current_user)
+    changed = False
+    if link.reference_project_id == project_id:
+        link.reference_project_id = None
+        changed = True
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if project and project.submission_link_id == link.id:
+        is_submission = db.query(Submission).filter(Submission.project_id == project_id).first()
+        if not is_submission:
+            project.submission_link_id = None
+            changed = True
+    if changed:
+        db.commit()
+
+
+@router.get("/submission-links/{link_id}/projects", response_model=list[ChildProjectItem])
+def list_request_projects(
+    link_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Manually-attached child projects for a request (excludes per-editor submissions,
+    which the /submissions endpoint returns). Includes the shared reference, flagged."""
+    link = _get_owned_link(db, link_id, current_user)
+
+    submission_pids = {
+        pid for (pid,) in db.query(Submission.project_id)
+        .filter(Submission.submission_link_id == link.id).all()
+    }
+    projects = db.query(Project).filter(
+        Project.submission_link_id == link.id,
+        Project.deleted_at.is_(None),
+    ).all()
+    attached = [p for p in projects if p.id not in submission_pids]
+
+    # The shared reference isn't a child (no submission_link_id) — append it, flagged.
+    ref_project = None
+    if link.reference_project_id:
+        ref_project = db.query(Project).filter(
+            Project.id == link.reference_project_id,
+            Project.deleted_at.is_(None),
+        ).first()
+
+    pids = [p.id for p in attached] + ([ref_project.id] if ref_project else [])
+    asset_counts = {}
+    if pids:
+        rows = (
+            db.query(Asset.project_id, func.count(Asset.id))
+            .filter(Asset.project_id.in_(pids), Asset.deleted_at.is_(None))
+            .group_by(Asset.project_id)
+            .all()
+        )
+        asset_counts = {pid: int(c) for pid, c in rows}
+
+    out = [
+        ChildProjectItem(
+            project_id=p.id, name=p.name,
+            asset_count=asset_counts.get(p.id, 0), is_reference=False,
+        )
+        for p in attached
+    ]
+    if ref_project:
+        out.append(ChildProjectItem(
+            project_id=ref_project.id, name=ref_project.name,
+            asset_count=asset_counts.get(ref_project.id, 0), is_reference=True,
+        ))
+    return out
 
 
 # ── Visitor-facing ───────────────────────────────────────────────────────────
@@ -441,6 +600,7 @@ def accept_submission_link(
         description=f"Submission for “{link.title}”.",
         project_type=ProjectType.team,
         created_by=link.created_by,
+        submission_link_id=link.id,
     )
     db.add(project)
     db.flush()

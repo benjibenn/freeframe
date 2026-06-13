@@ -128,17 +128,12 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
         .all()
     )
 
-    # Batch: request grouping. A project provisioned by a submission link (a "video
-    # request") maps to that link via the submissions table; carry the link id + title
-    # so the projects page can nest it under the request instead of listing it flat.
-    from ..models.submission import Submission, SubmissionLink
-    request_map = dict(
-        db.query(Submission.project_id, Submission.submission_link_id)
-        .filter(Submission.project_id.in_(all_project_ids))
-        .all()
-    )
+    # Batch: request grouping. A project that belongs to a submission link (a "video
+    # request") carries its link id directly; resolve the link titles so the projects
+    # page can nest it under the request instead of listing it flat.
+    from ..models.submission import SubmissionLink
+    link_ids = list({p.submission_link_id for p in projects if p.submission_link_id})
     request_titles = {}
-    link_ids = list({lid for lid in request_map.values()})
     if link_ids:
         request_titles = dict(
             db.query(SubmissionLink.id, SubmissionLink.title)
@@ -155,10 +150,9 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
         resp.member_count = member_counts.get(p.id, 0)
         resp.role = membership_map.get(p.id)
         resp.share_token = share_tokens.get(p.id)
-        link_id = request_map.get(p.id)
-        if link_id is not None:
-            resp.submission_link_id = link_id
-            resp.request_title = request_titles.get(link_id)
+        if p.submission_link_id is not None:
+            resp.submission_link_id = p.submission_link_id
+            resp.request_title = request_titles.get(p.submission_link_id)
         result.append(resp)
 
     return result

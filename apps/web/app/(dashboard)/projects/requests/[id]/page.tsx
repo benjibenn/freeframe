@@ -3,7 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import useSWR from 'swr'
+import useSWR, { mutate as globalMutate } from 'swr'
 import {
   ArrowLeft,
   Copy,
@@ -14,6 +14,7 @@ import {
   Loader2,
   Pencil,
   X,
+  Trash2,
 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -31,6 +32,13 @@ interface SubmissionItem {
   project_id: string
   asset_count: number
   created_at: string
+}
+
+interface ChildProjectItem {
+  project_id: string
+  name: string
+  asset_count: number
+  is_reference: boolean
 }
 
 function submitUrl(token: string): string {
@@ -52,6 +60,27 @@ export default function RequestDetailPage() {
     id ? `/submission-links/${id}/submissions` : null,
     (key: string) => api.get<SubmissionItem[]>(key),
   )
+  const { data: childProjects, mutate: mutateChildren } = useSWR<ChildProjectItem[]>(
+    id ? `/submission-links/${id}/projects` : null,
+    (key: string) => api.get<ChildProjectItem[]>(key),
+  )
+
+  // Manually-attached child folders (the shared reference is shown separately above).
+  const attached = React.useMemo(
+    () => (childProjects ?? []).filter((p) => !p.is_reference),
+    [childProjects],
+  )
+
+  const detach = async (projectId: string) => {
+    if (!confirm('Remove this project from the request? The project itself is kept.')) return
+    try {
+      await api.post(`/submission-links/${id}/detach-project/${projectId}`, {})
+      await Promise.all([mutateChildren(), globalMutate('/projects')])
+      toast.success('Removed from request')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : 'Could not remove')
+    }
+  }
 
   usePageTitle(request?.title ?? 'Request')
 
@@ -184,7 +213,54 @@ export default function RequestDetailPage() {
         </Button>
       </div>
 
+      {/* Added projects (manually attached folders) */}
+      {attached.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-medium text-text-secondary">Added projects</h2>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {attached.map((p) => (
+              <div key={p.project_id} className="group relative">
+                <Link
+                  href={`/projects/${p.project_id}`}
+                  className="block rounded-xl overflow-hidden bg-bg-secondary border border-border hover:border-accent/40 transition-all duration-200 hover:shadow-lg hover:shadow-black/10"
+                >
+                  <div className="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-emerald-600 to-teal-500">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(255,255,255,0.1),transparent_60%)]" />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <FolderOpen className="h-12 w-12 text-white/85 drop-shadow" />
+                    </div>
+                    <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/70 via-black/30 to-transparent" />
+                    <div className="absolute inset-x-0 bottom-0 p-3">
+                      <p className="text-sm font-semibold text-white line-clamp-2 drop-shadow-sm">
+                        {p.name}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2.5">
+                    <span className="text-2xs text-text-tertiary">
+                      {p.asset_count} file{p.asset_count !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => detach(p.project_id)}
+                  title="Remove from request"
+                  aria-label="Remove from request"
+                  className="absolute bottom-2 right-2.5 flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary hover:bg-status-error/10 hover:text-status-error transition-all opacity-0 group-hover:opacity-100"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Submissions grid */}
+      {(attached.length > 0 || (subs && subs.length > 0)) && (
+        <h2 className="text-sm font-medium text-text-secondary">Submissions</h2>
+      )}
       {isLoading ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {Array.from({ length: 5 }).map((_, i) => (
