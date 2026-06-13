@@ -116,6 +116,10 @@ export interface Project {
   member_count?: number;
   role?: string | null;
   share_token?: string | null;
+  // Request grouping: set when this project was provisioned by a submission link
+  // (a "video request"). The projects page nests it under the request.
+  submission_link_id?: string | null;
+  request_title?: string | null;
 }
 
 export interface ProjectMember {

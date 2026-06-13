@@ -32,6 +32,8 @@ from ..schemas.submission import (
     SubmissionLinkPublic,
     SubmissionAcceptResponse,
     SubmissionItem,
+    SubmissionUpdate,
+    ReferenceResponse,
 )
 from ..services.share_service import build_default_project_share_link
 
@@ -58,6 +60,32 @@ def _validate_active(link: SubmissionLink | None) -> SubmissionLink:
     if link.expires_at and link.expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=410, detail="This submission link has expired")
     return link
+
+
+def _unique_project_name(
+    db: Session,
+    link: SubmissionLink,
+    base_name: str,
+    exclude_project_id: uuid.UUID | None = None,
+) -> str:
+    """Guarantee the per-submitter project name is unique within a request, so two
+    editors with the same display name don't both become "{title} — Anna". On a
+    collision, append " (2)", " (3)", … `exclude_project_id` skips the project being
+    renamed so re-saving its current name doesn't add a suffix."""
+    q = (
+        db.query(Project.name)
+        .join(Submission, Submission.project_id == Project.id)
+        .filter(Submission.submission_link_id == link.id, Project.deleted_at.is_(None))
+    )
+    if exclude_project_id is not None:
+        q = q.filter(Project.id != exclude_project_id)
+    existing = {n for (n,) in q.all()}
+    if base_name not in existing:
+        return base_name
+    i = 2
+    while f"{base_name} ({i})" in existing:
+        i += 1
+    return f"{base_name} ({i})"
 
 
 def _count_map(db: Session, link_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
@@ -162,11 +190,58 @@ def list_submissions(
             user_id=s.user_id,
             user_name=(u.name if u else "") or "",
             user_email=(u.email if u else "") or "",
+            display_name=s.display_name,
             project_id=s.project_id,
             asset_count=asset_counts.get(s.project_id, 0),
             created_at=s.created_at,
         ))
     return out
+
+
+@router.patch("/submission-links/{link_id}/submissions/{submission_id}", response_model=SubmissionItem)
+def update_submission(
+    link_id: uuid.UUID,
+    submission_id: uuid.UUID,
+    body: SubmissionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner sets/clears a submission's handle override, renaming the per-submitter
+    project to "{request title} — {handle}". Blank handle reverts to the account name."""
+    link = _get_owned_link(db, link_id, current_user)
+    sub = db.query(Submission).filter(
+        Submission.id == submission_id,
+        Submission.submission_link_id == link.id,
+    ).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    handle = (body.display_name or "").strip()
+    sub.display_name = handle or None
+
+    u = db.query(User).filter(User.id == sub.user_id).first()
+    label = handle or (u.name if u else "") or (u.email if u else "") or "Submission"
+    project = db.query(Project).filter(Project.id == sub.project_id).first()
+    if project:
+        project.name = _unique_project_name(
+            db, link, f"{link.title} — {label}", exclude_project_id=project.id
+        )
+    db.commit()
+    db.refresh(sub)
+
+    asset_count = db.query(func.count(Asset.id)).filter(
+        Asset.project_id == sub.project_id, Asset.deleted_at.is_(None),
+    ).scalar() or 0
+    return SubmissionItem(
+        id=sub.id,
+        user_id=sub.user_id,
+        user_name=(u.name if u else "") or "",
+        user_email=(u.email if u else "") or "",
+        display_name=sub.display_name,
+        project_id=sub.project_id,
+        asset_count=int(asset_count),
+        created_at=sub.created_at,
+    )
 
 
 @router.patch("/submission-links/{link_id}", response_model=SubmissionLinkResponse)
@@ -201,6 +276,75 @@ def disable_submission_link(
     link.deleted_at = datetime.now(timezone.utc)
     link.is_enabled = False
     db.commit()
+
+
+# ── Shared reference folder ──────────────────────────────────────────────────
+
+@router.post("/submission-links/{link_id}/reference", response_model=ReferenceResponse)
+def enable_reference(
+    link_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Enable a shared reference project for this request: one project all submitters
+    can view. Idempotent — returns the existing one if already enabled."""
+    link = _get_owned_link(db, link_id, current_user)
+
+    if link.reference_project_id:
+        existing_proj = db.query(Project).filter(
+            Project.id == link.reference_project_id,
+            Project.deleted_at.is_(None),
+        ).first()
+        if existing_proj:
+            return ReferenceResponse(reference_project_id=existing_proj.id)
+        # FK pointed at a since-deleted project — fall through and recreate.
+
+    project = Project(
+        name=f"{link.title} — Shared reference",
+        description=f"Shared reference for “{link.title}”. Visible to every submitter.",
+        project_type=ProjectType.team,
+        created_by=link.created_by,
+    )
+    db.add(project)
+    db.flush()
+    db.add(ProjectMember(
+        project_id=project.id,
+        user_id=link.created_by,
+        role=ProjectRole.owner,
+        invited_by=link.created_by,
+    ))
+    db.add(build_default_project_share_link(project.id, link.created_by, project.name))
+    # Enroll every current submitter (except the owner) as a viewer.
+    subs = db.query(Submission).filter(Submission.submission_link_id == link.id).all()
+    for s in subs:
+        if s.user_id == link.created_by:
+            continue
+        db.add(ProjectMember(
+            project_id=project.id,
+            user_id=s.user_id,
+            role=ProjectRole.viewer,
+            invited_by=link.created_by,
+        ))
+    link.reference_project_id = project.id
+    db.commit()
+    return ReferenceResponse(reference_project_id=project.id)
+
+
+@router.delete("/submission-links/{link_id}/reference", status_code=status.HTTP_204_NO_CONTENT)
+def disable_reference(
+    link_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Disable the shared reference: soft-delete its project (which drops it from every
+    submitter's view) and unlink it. Submitters' own projects are untouched."""
+    link = _get_owned_link(db, link_id, current_user)
+    if link.reference_project_id:
+        proj = db.query(Project).filter(Project.id == link.reference_project_id).first()
+        if proj and proj.deleted_at is None:
+            proj.deleted_at = datetime.now(timezone.utc)
+        link.reference_project_id = None
+        db.commit()
 
 
 # ── Visitor-facing ───────────────────────────────────────────────────────────
@@ -242,7 +386,7 @@ def accept_submission_link(
 
     submitter_label = (current_user.name or current_user.email or "Submission").strip()
     project = Project(
-        name=f"{link.title} — {submitter_label}",
+        name=_unique_project_name(db, link, f"{link.title} — {submitter_label}"),
         description=f"Submission for “{link.title}”.",
         project_type=ProjectType.team,
         created_by=link.created_by,
@@ -273,6 +417,15 @@ def accept_submission_link(
         project_id=project.id,
     )
     db.add(submission)
+    # If this request has a shared reference folder enabled, enroll the new submitter
+    # as a viewer of it (the owner is already its owner; skip them).
+    if link.reference_project_id and current_user.id != link.created_by:
+        db.add(ProjectMember(
+            project_id=link.reference_project_id,
+            user_id=current_user.id,
+            role=ProjectRole.viewer,
+            invited_by=link.created_by,
+        ))
     # Default share link for the submitter's project: private (login required) view +
     # comment. Owned by the link creator (the reviewer), matching project ownership.
     db.add(build_default_project_share_link(project.id, link.created_by, project.name))

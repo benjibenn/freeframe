@@ -14,6 +14,7 @@ import {
   Share2,
   Globe,
   Link2,
+  FolderGit2,
 } from "lucide-react";
 import { cn, formatBytes } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -21,6 +22,7 @@ import { useToast } from "@/components/shared/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProjectCard } from "@/components/projects/project-card";
+import { RequestCard, type VideoRequest } from "@/components/projects/request-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -261,15 +263,53 @@ export default function ProjectsPage() {
     mutate,
   } = useSWR<Project[]>("/projects", () => api.get<Project[]>("/projects"));
 
+  // Video requests = submission links the user owns. Their per-editor submission
+  // projects (and any shared-reference project) are nested under the request below,
+  // so we hide those from the flat project sections.
+  const { data: requests, mutate: mutateRequests } = useSWR<VideoRequest[]>(
+    "/submission-links",
+    () => api.get<VideoRequest[]>("/submission-links"),
+  );
+
+  const nestedProjectIds = React.useMemo(() => {
+    const requestIds = new Set((requests ?? []).map((r) => r.id));
+    const referenceIds = new Set(
+      (requests ?? []).map((r) => r.reference_project_id).filter(Boolean) as string[],
+    );
+    return { requestIds, referenceIds };
+  }, [requests]);
+
+  const isNested = React.useCallback(
+    (p: Project) =>
+      (!!p.submission_link_id && nestedProjectIds.requestIds.has(p.submission_link_id)) ||
+      nestedProjectIds.referenceIds.has(p.id),
+    [nestedProjectIds],
+  );
+
   const myProjects = React.useMemo(
-    () => (projects ?? []).filter((p) => p.created_by === user?.id),
-    [projects, user?.id],
+    () => (projects ?? []).filter((p) => p.created_by === user?.id && !isNested(p)),
+    [projects, user?.id, isNested],
   );
 
   const sharedProjects = React.useMemo(
-    () => (projects ?? []).filter((p) => p.created_by !== user?.id && p.role),
-    [projects, user?.id],
+    () => (projects ?? []).filter((p) => p.created_by !== user?.id && p.role && !isNested(p)),
+    [projects, user?.id, isNested],
   );
+
+  const handleDeleteRequest = async (id: string) => {
+    if (
+      !confirm(
+        "Close this request? Existing submissions are kept, but the link stops accepting new ones.",
+      )
+    )
+      return;
+    try {
+      await api.delete(`/submission-links/${id}`);
+      await mutateRequests();
+    } catch {
+      /* surfaced via list refresh */
+    }
+  };
 
   const publicProjects = React.useMemo(
     () =>
@@ -442,7 +482,7 @@ export default function ProjectsPage() {
             </div>
           ))}
         </div>
-      ) : !projects || projects.length === 0 ? (
+      ) : (!projects || projects.length === 0) && (requests ?? []).length === 0 ? (
         <div className="rounded-xl border border-border bg-bg-secondary">
           <EmptyState
             icon={FolderOpen}
@@ -456,6 +496,28 @@ export default function ProjectsPage() {
         </div>
       ) : (
         <div className="space-y-8">
+          {(requests ?? []).length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <FolderGit2 className="h-4 w-4 text-text-tertiary" />
+                <h2 className="text-sm font-medium text-text-secondary">
+                  Video Requests
+                </h2>
+                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-bg-tertiary px-1.5 text-[10px] font-medium text-text-tertiary">
+                  {(requests ?? []).length}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                {(requests ?? []).map((r) => (
+                  <RequestCard
+                    key={r.id}
+                    request={r}
+                    onDelete={handleDeleteRequest}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
           <ProjectSection
             title="My Projects"
             icon={<FolderOpen className="h-4 w-4 text-text-tertiary" />}

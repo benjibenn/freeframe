@@ -19,6 +19,8 @@ class SubmissionLinkResponse(BaseModel):
     expires_at: Optional[datetime] = None
     created_at: datetime
     submission_count: int = 0
+    # Shared reference project (None = strict isolation, the default).
+    reference_project_id: Optional[uuid.UUID] = None
     model_config = {"from_attributes": True}
 
 
@@ -34,11 +36,21 @@ class SubmissionAcceptResponse(BaseModel):
     project_id: uuid.UUID
 
 
+class ReferenceResponse(BaseModel):
+    reference_project_id: Optional[uuid.UUID] = None
+
+
 class SubmissionItem(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
     user_name: str
     user_email: str
+    display_name: Optional[str] = None  # Owner-set handle override (None => account name)
     project_id: uuid.UUID
     asset_count: int
     created_at: datetime
+
+
+class SubmissionUpdate(BaseModel):
+    # Empty/whitespace clears the override (falls back to the submitter's account name).
+    display_name: Optional[str] = None

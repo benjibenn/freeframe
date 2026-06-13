@@ -1,0 +1,290 @@
+'use client'
+
+import * as React from 'react'
+import Link from 'next/link'
+import { useParams, useRouter } from 'next/navigation'
+import useSWR from 'swr'
+import {
+  ArrowLeft,
+  Copy,
+  Check,
+  Users,
+  FolderOpen,
+  Eye,
+  Loader2,
+  Pencil,
+  X,
+} from 'lucide-react'
+import { api, ApiError } from '@/lib/api'
+import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/shared/empty-state'
+import { useToast } from '@/components/shared/toast'
+import { usePageTitle } from '@/hooks/use-page-title'
+import type { VideoRequest } from '@/components/projects/request-card'
+
+interface SubmissionItem {
+  id: string
+  user_id: string
+  user_name: string
+  user_email: string
+  display_name: string | null
+  project_id: string
+  asset_count: number
+  created_at: string
+}
+
+function submitUrl(token: string): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  return `${origin}/submit/${token}`
+}
+
+export default function RequestDetailPage() {
+  const params = useParams<{ id: string }>()
+  const router = useRouter()
+  const toast = useToast()
+  const id = params.id
+
+  const { data: request, mutate: mutateRequest } = useSWR<VideoRequest>(
+    id ? `/submission-links/${id}` : null,
+    (key: string) => api.get<VideoRequest>(key),
+  )
+  const { data: subs, isLoading, mutate: mutateSubs } = useSWR<SubmissionItem[]>(
+    id ? `/submission-links/${id}/submissions` : null,
+    (key: string) => api.get<SubmissionItem[]>(key),
+  )
+
+  usePageTitle(request?.title ?? 'Request')
+
+  const [copied, setCopied] = React.useState(false)
+  const [togglingRef, setTogglingRef] = React.useState(false)
+  const [editingId, setEditingId] = React.useState<string | null>(null)
+  const [editValue, setEditValue] = React.useState('')
+  const [savingHandle, setSavingHandle] = React.useState(false)
+
+  const startEdit = (s: SubmissionItem) => {
+    setEditingId(s.id)
+    setEditValue(s.display_name ?? s.user_name ?? '')
+  }
+
+  const saveHandle = async (s: SubmissionItem) => {
+    if (savingHandle) return
+    setSavingHandle(true)
+    try {
+      await api.patch(`/submission-links/${id}/submissions/${s.id}`, {
+        display_name: editValue.trim() || null,
+      })
+      await mutateSubs()
+      setEditingId(null)
+      toast.success('Editor name updated')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : 'Could not update name')
+    } finally {
+      setSavingHandle(false)
+    }
+  }
+
+  const copy = async () => {
+    if (!request) return
+    try {
+      await navigator.clipboard.writeText(submitUrl(request.token))
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+      toast.success('Submission link copied')
+    } catch {
+      toast.error('Could not copy link')
+    }
+  }
+
+  const referenceEnabled = !!request?.reference_project_id
+
+  const toggleReference = async () => {
+    if (!request) return
+    setTogglingRef(true)
+    try {
+      if (referenceEnabled) {
+        await api.delete(`/submission-links/${request.id}/reference`)
+        toast.success('Shared reference folder disabled')
+      } else {
+        await api.post(`/submission-links/${request.id}/reference`, {})
+        toast.success('Shared reference folder enabled — visible to all submitters')
+      }
+      await mutateRequest()
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : 'Could not update shared reference')
+    } finally {
+      setTogglingRef(false)
+    }
+  }
+
+  return (
+    <div className="p-4 sm:p-6 space-y-6">
+      {/* Header */}
+      <div>
+        <Link
+          href="/projects"
+          className="inline-flex items-center gap-1.5 text-sm text-text-tertiary hover:text-text-primary transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Projects
+        </Link>
+        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold text-text-primary truncate">
+              {request?.title ?? 'Request'}
+            </h1>
+            {request?.instructions && (
+              <p className="mt-1 text-sm text-text-secondary max-w-2xl">{request.instructions}</p>
+            )}
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-text-tertiary">
+              <Users className="h-3 w-3" />
+              {request?.submission_count ?? subs?.length ?? 0} submission
+              {(request?.submission_count ?? 0) !== 1 ? 's' : ''}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={copy} disabled={!request}>
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied ? 'Copied' : 'Copy submission link'}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Shared reference toggle */}
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-bg-secondary px-4 py-3">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-bg-tertiary text-text-secondary">
+            <Eye className="h-4 w-4" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-text-primary">Shared reference folder</p>
+            <p className="text-xs text-text-tertiary">
+              A common folder every submitter can view (brief, examples). Their own submissions
+              stay private to them.
+            </p>
+            {referenceEnabled && request?.reference_project_id && (
+              <Link
+                href={`/projects/${request.reference_project_id}`}
+                className="mt-1 inline-flex items-center gap-1 text-xs text-accent hover:underline"
+              >
+                <FolderOpen className="h-3 w-3" />
+                Open shared folder
+              </Link>
+            )}
+          </div>
+        </div>
+        <Button
+          variant={referenceEnabled ? 'secondary' : 'primary'}
+          size="sm"
+          onClick={toggleReference}
+          disabled={togglingRef || !request}
+        >
+          {togglingRef && <Loader2 className="h-4 w-4 animate-spin" />}
+          {referenceEnabled ? 'Disable' : 'Enable'}
+        </Button>
+      </div>
+
+      {/* Submissions grid */}
+      {isLoading ? (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex flex-col rounded-xl overflow-hidden border border-border">
+              <div className="aspect-square animate-pulse bg-bg-tertiary" />
+              <div className="px-3 py-2.5">
+                <div className="h-3 w-2/3 animate-pulse rounded bg-bg-tertiary" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : !subs || subs.length === 0 ? (
+        <div className="rounded-xl border border-border bg-bg-secondary">
+          <EmptyState
+            icon={FolderOpen}
+            title="No submissions yet"
+            description="Share the submission link above. Each person who signs in gets their own private folder here."
+          />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {subs.map((s) => {
+            const label = s.display_name || s.user_name || s.user_email
+            const isEditing = editingId === s.id
+            return (
+              <div key={s.id} className="group relative">
+                <Link
+                  href={`/projects/${s.project_id}`}
+                  className="block rounded-xl overflow-hidden bg-bg-secondary border border-border hover:border-accent/40 transition-all duration-200 hover:shadow-lg hover:shadow-black/10"
+                >
+                  <div className="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-violet-600 to-fuchsia-500">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(255,255,255,0.1),transparent_60%)]" />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <FolderOpen className="h-12 w-12 text-white/85 drop-shadow" />
+                    </div>
+                    <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/70 via-black/30 to-transparent" />
+                    <div className="absolute inset-x-0 bottom-0 p-3">
+                      <p className="text-sm font-semibold text-white line-clamp-2 drop-shadow-sm">
+                        {label}
+                      </p>
+                      {s.display_name && s.display_name !== s.user_name && (
+                        <p className="text-[11px] text-white/70 line-clamp-1">{s.user_name || s.user_email}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2.5">
+                    <span className="text-2xs text-text-tertiary">
+                      {s.asset_count} file{s.asset_count !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                </Link>
+
+                {/* Edit handle */}
+                <button
+                  type="button"
+                  onClick={() => startEdit(s)}
+                  title="Rename editor"
+                  aria-label="Rename editor"
+                  className="absolute bottom-2 right-2.5 flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-all opacity-0 group-hover:opacity-100"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+
+                {isEditing && (
+                  <div className="absolute inset-x-0 top-0 z-10 flex items-center gap-1 rounded-t-xl border border-accent/40 bg-bg-secondary p-2 shadow-lg">
+                    <input
+                      autoFocus
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveHandle(s)
+                        if (e.key === 'Escape') setEditingId(null)
+                      }}
+                      placeholder="Editor name"
+                      className="h-7 min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 text-xs text-text-primary focus:outline-none focus:border-accent"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => saveHandle(s)}
+                      disabled={savingHandle}
+                      title="Save"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-status-success hover:bg-bg-hover"
+                    >
+                      {savingHandle ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingId(null)}
+                      title="Cancel"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-text-tertiary hover:bg-bg-hover"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}

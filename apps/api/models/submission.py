@@ -34,6 +34,12 @@ class SubmissionLink(Base):
         server_default=ProjectRole.editor.value,
     )
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    # Optional shared "reference" project all submitters can view (a common brief /
+    # examples). Null = strict isolation (the default). See accept_submission_link /
+    # the reference endpoints in routers/submissions.py.
+    reference_project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True
+    )
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -52,4 +58,7 @@ class Submission(Base):
     submission_link_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("submission_links.id"), nullable=False, index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
+    # Owner-set handle override. When set, the per-submitter project is named
+    # "{request title} — {display_name}". Null => use the submitter's account name.
+    display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

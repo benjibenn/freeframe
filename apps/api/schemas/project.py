@@ -27,6 +27,11 @@ class ProjectResponse(BaseModel):
     member_count: int = 0
     role: ProjectRole | None = None
     share_token: str | None = None  # Token of the default (private view+comment) share link
+    # Request grouping: if this project was provisioned by a submission link (a "video
+    # request"), these identify it so the projects page can nest it under the request
+    # instead of listing it flat. Null for ordinary projects.
+    submission_link_id: uuid.UUID | None = None
+    request_title: str | None = None
     model_config = {"from_attributes": True}
 
 class ProjectMemberResponse(BaseModel):
