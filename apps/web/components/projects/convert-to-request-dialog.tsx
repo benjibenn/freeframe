@@ -159,8 +159,8 @@ export function ConvertToRequestDialog({
                   active={placement === 'folder'}
                   onClick={() => setPlacement('folder')}
                   icon={<FolderOpen className="h-4 w-4" />}
-                  label="Folder"
-                  hint="Private child under the request"
+                  label="Submission"
+                  hint="Appears under Submissions"
                 />
               </div>
             </div>

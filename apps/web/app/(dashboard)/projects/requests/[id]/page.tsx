@@ -42,6 +42,19 @@ interface ChildProjectItem {
   is_reference: boolean
 }
 
+// A unified submission card: either a per-editor submission (editable handle) or a
+// manually-attached project (editable project name, removable).
+type Card = {
+  key: string
+  kind: 'submission' | 'attached'
+  projectId: string
+  label: string
+  secondary: string | null
+  assetCount: number
+  editDefault: string
+  submissionId?: string
+}
+
 function submitUrl(token: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   return `${origin}/submit/${token}`
@@ -72,6 +85,33 @@ export default function RequestDetailPage() {
     [childProjects],
   )
 
+  // Per-editor submissions and attached projects render together as one grid.
+  const cards = React.useMemo<Card[]>(() => {
+    const submissionCards: Card[] = (subs ?? []).map((s) => ({
+      key: `sub-${s.id}`,
+      kind: 'submission',
+      projectId: s.project_id,
+      label: s.display_name || s.user_name || s.user_email,
+      secondary:
+        s.display_name && s.display_name !== s.user_name
+          ? s.user_name || s.user_email
+          : null,
+      assetCount: s.asset_count,
+      editDefault: s.display_name ?? s.user_name ?? '',
+      submissionId: s.id,
+    }))
+    const attachedCards: Card[] = attached.map((p) => ({
+      key: `att-${p.project_id}`,
+      kind: 'attached',
+      projectId: p.project_id,
+      label: p.name,
+      secondary: null,
+      assetCount: p.asset_count,
+      editDefault: p.name,
+    }))
+    return [...submissionCards, ...attachedCards]
+  }, [subs, attached])
+
   const detach = async (projectId: string) => {
     if (!confirm('Remove this project from the request? The project itself is kept.')) return
     try {
@@ -91,21 +131,30 @@ export default function RequestDetailPage() {
   const [editValue, setEditValue] = React.useState('')
   const [savingHandle, setSavingHandle] = React.useState(false)
 
-  const startEdit = (s: SubmissionItem) => {
-    setEditingId(s.id)
-    setEditValue(s.display_name ?? s.user_name ?? '')
+  const startEditCard = (card: Card) => {
+    setEditingId(card.key)
+    setEditValue(card.editDefault)
   }
 
-  const saveHandle = async (s: SubmissionItem) => {
+  const saveCard = async (card: Card) => {
     if (savingHandle) return
+    const value = editValue.trim()
+    if (card.kind === 'attached' && !value) return
     setSavingHandle(true)
     try {
-      await api.patch(`/submission-links/${id}/submissions/${s.id}`, {
-        display_name: editValue.trim() || null,
-      })
-      await mutateSubs()
+      if (card.kind === 'submission') {
+        // Per-editor submission: edit the handle override.
+        await api.patch(`/submission-links/${id}/submissions/${card.submissionId}`, {
+          display_name: value || null,
+        })
+        await mutateSubs()
+      } else {
+        // Attached project: rename the project itself.
+        await api.patch(`/projects/${card.projectId}`, { name: value })
+        await mutateChildren()
+      }
       setEditingId(null)
-      toast.success('Editor name updated')
+      toast.success('Name updated')
     } catch (err) {
       toast.error(err instanceof ApiError ? err.detail : 'Could not update name')
     } finally {
@@ -247,54 +296,8 @@ export default function RequestDetailPage() {
         </Button>
       </div>
 
-      {/* Added projects (manually attached folders) */}
-      {attached.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="text-sm font-medium text-text-secondary">Added projects</h2>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {attached.map((p) => (
-              <div key={p.project_id} className="group relative">
-                <Link
-                  href={`/projects/${p.project_id}`}
-                  className="block rounded-xl overflow-hidden bg-bg-secondary border border-border hover:border-accent/40 transition-all duration-200 hover:shadow-lg hover:shadow-black/10"
-                >
-                  <div className="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-emerald-600 to-teal-500">
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_40%,rgba(255,255,255,0.1),transparent_60%)]" />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <FolderOpen className="h-12 w-12 text-white/85 drop-shadow" />
-                    </div>
-                    <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/70 via-black/30 to-transparent" />
-                    <div className="absolute inset-x-0 bottom-0 p-3">
-                      <p className="text-sm font-semibold text-white line-clamp-2 drop-shadow-sm">
-                        {p.name}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between px-3 py-2.5">
-                    <span className="text-2xs text-text-tertiary">
-                      {p.asset_count} file{p.asset_count !== 1 ? 's' : ''}
-                    </span>
-                  </div>
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => detach(p.project_id)}
-                  title="Remove from request"
-                  aria-label="Remove from request"
-                  className="absolute bottom-2 right-2.5 flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary hover:bg-status-error/10 hover:text-status-error transition-all opacity-0 group-hover:opacity-100"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Submissions grid */}
-      {(attached.length > 0 || (subs && subs.length > 0)) && (
-        <h2 className="text-sm font-medium text-text-secondary">Submissions</h2>
-      )}
+      {/* Submissions (per-editor submissions + attached projects, unified) */}
+      <h2 className="text-sm font-medium text-text-secondary">Submissions</h2>
       {isLoading ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -306,23 +309,22 @@ export default function RequestDetailPage() {
             </div>
           ))}
         </div>
-      ) : !subs || subs.length === 0 ? (
+      ) : cards.length === 0 ? (
         <div className="rounded-xl border border-border bg-bg-secondary">
           <EmptyState
             icon={FolderOpen}
             title="No submissions yet"
-            description="Share the submission link above. Each person who signs in gets their own private folder here."
+            description="Share the submission link above, or add an existing project. Each editor who signs in gets their own private folder here."
           />
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {subs.map((s) => {
-            const label = s.display_name || s.user_name || s.user_email
-            const isEditing = editingId === s.id
+          {cards.map((card) => {
+            const isEditing = editingId === card.key
             return (
-              <div key={s.id} className="group relative">
+              <div key={card.key} className="group relative">
                 <Link
-                  href={`/projects/${s.project_id}`}
+                  href={`/projects/${card.projectId}`}
                   className="block rounded-xl overflow-hidden bg-bg-secondary border border-border hover:border-accent/40 transition-all duration-200 hover:shadow-lg hover:shadow-black/10"
                 >
                   <div className="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-violet-600 to-fuchsia-500">
@@ -333,30 +335,43 @@ export default function RequestDetailPage() {
                     <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/70 via-black/30 to-transparent" />
                     <div className="absolute inset-x-0 bottom-0 p-3">
                       <p className="text-sm font-semibold text-white line-clamp-2 drop-shadow-sm">
-                        {label}
+                        {card.label}
                       </p>
-                      {s.display_name && s.display_name !== s.user_name && (
-                        <p className="text-[11px] text-white/70 line-clamp-1">{s.user_name || s.user_email}</p>
+                      {card.secondary && (
+                        <p className="text-[11px] text-white/70 line-clamp-1">{card.secondary}</p>
                       )}
                     </div>
                   </div>
                   <div className="flex items-center justify-between px-3 py-2.5">
                     <span className="text-2xs text-text-tertiary">
-                      {s.asset_count} file{s.asset_count !== 1 ? 's' : ''}
+                      {card.assetCount} file{card.assetCount !== 1 ? 's' : ''}
                     </span>
                   </div>
                 </Link>
 
-                {/* Edit handle */}
+                {/* Rename */}
                 <button
                   type="button"
-                  onClick={() => startEdit(s)}
-                  title="Rename editor"
-                  aria-label="Rename editor"
+                  onClick={() => startEditCard(card)}
+                  title={card.kind === 'submission' ? 'Rename editor' : 'Rename project'}
+                  aria-label="Rename"
                   className="absolute bottom-2 right-2.5 flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-all opacity-0 group-hover:opacity-100"
                 >
                   <Pencil className="h-3.5 w-3.5" />
                 </button>
+
+                {/* Remove (attached projects only) */}
+                {card.kind === 'attached' && (
+                  <button
+                    type="button"
+                    onClick={() => detach(card.projectId)}
+                    title="Remove from request"
+                    aria-label="Remove from request"
+                    className="absolute bottom-2 right-10 flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary hover:bg-status-error/10 hover:text-status-error transition-all opacity-0 group-hover:opacity-100"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
 
                 {isEditing && (
                   <div className="absolute inset-x-0 top-0 z-10 flex items-center gap-1 rounded-t-xl border border-accent/40 bg-bg-secondary p-2 shadow-lg">
@@ -365,15 +380,15 @@ export default function RequestDetailPage() {
                       value={editValue}
                       onChange={(e) => setEditValue(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') saveHandle(s)
+                        if (e.key === 'Enter') saveCard(card)
                         if (e.key === 'Escape') setEditingId(null)
                       }}
-                      placeholder="Editor name"
+                      placeholder={card.kind === 'submission' ? 'Editor name' : 'Project name'}
                       className="h-7 min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 text-xs text-text-primary focus:outline-none focus:border-accent"
                     />
                     <button
                       type="button"
-                      onClick={() => saveHandle(s)}
+                      onClick={() => saveCard(card)}
                       disabled={savingHandle}
                       title="Save"
                       className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-status-success hover:bg-bg-hover"
