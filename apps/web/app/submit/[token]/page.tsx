@@ -63,7 +63,7 @@ export default function SubmitPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg-primary px-4">
-      <div className="w-full max-w-md rounded-xl border border-border bg-bg-secondary p-8">
+      <div className="w-full max-w-md rounded-xl border border-border bg-bg-secondary p-6 sm:p-8">
         {phase === 'loading' && (
           <p className="text-center text-sm text-text-secondary">Loading…</p>
         )}

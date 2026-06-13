@@ -134,7 +134,7 @@ export default function ActivityPage() {
 
   if (!isPlatformAdmin) {
     return (
-      <div className="p-6 max-w-3xl">
+      <div className="p-4 sm:p-6 max-w-3xl">
         <EmptyState
           icon={ActivityIcon}
           title="Admins only"
@@ -145,7 +145,7 @@ export default function ActivityPage() {
   }
 
   return (
-    <div className="p-6 max-w-3xl space-y-6">
+    <div className="p-4 sm:p-6 max-w-3xl space-y-6">
       <div>
         <h1 className="text-lg font-semibold text-text-primary">Activity</h1>
         <p className="text-sm text-text-secondary mt-0.5">

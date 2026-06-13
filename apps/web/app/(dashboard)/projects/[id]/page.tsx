@@ -24,6 +24,7 @@ import {
   MinusCircle,
   ExternalLink,
   Users,
+  PanelLeft,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatBytes } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -75,7 +76,7 @@ export default function ProjectDetailPage() {
   const [rightTab, setRightTab] = React.useState<"comments" | "fields">(
     "comments",
   );
-  const { rightPanelOpen } = useViewStore();
+  const { rightPanelOpen, toggleRightPanel } = useViewStore();
 
   const [currentFolderId, setCurrentFolderId] = React.useState<string | null>(
     searchParams.get("folder") || null,
@@ -115,6 +116,7 @@ export default function ProjectDetailPage() {
   } | null>(null);
   const [assetToRename, setAssetToRename] = React.useState<AssetResponse | null>(null);
   const [assetToDelete, setAssetToDelete] = React.useState<AssetResponse | null>(null);
+  const [mobileFoldersOpen, setMobileFoldersOpen] = React.useState(false);
 
   const { files: uploadFiles, startUpload } = useUploadStore();
   const { user } = useAuthStore();
@@ -383,7 +385,19 @@ export default function ProjectDetailPage() {
   return (
     <div className="flex h-full flex-col lg:flex-row overflow-hidden">
       {/* ─── Left Sidebar (Frame.io style) ──────────────────────────────── */}
-      <div className="hidden lg:flex w-72 flex-col border-r border-border bg-bg-secondary shrink-0">
+      {mobileFoldersOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+          onClick={() => setMobileFoldersOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      <div
+        className={cn(
+          "flex w-[260px] max-w-[80vw] flex-col border-r border-border bg-bg-secondary shrink-0 fixed inset-y-0 left-0 z-40 transition-transform lg:static lg:z-auto lg:w-72 lg:max-w-none lg:translate-x-0",
+          mobileFoldersOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
         {/* Assets section */}
         <div className="p-3 space-y-0.5">
           <div className="flex items-center justify-between px-2 mb-1">
@@ -410,12 +424,16 @@ export default function ProjectDetailPage() {
             projectName={project?.name || "Project"}
             currentFolderId={currentFolderId}
             showTrash={showTrash}
-            onSelectFolder={handleSelectFolder}
+            onSelectFolder={(folderId) => {
+              handleSelectFolder(folderId);
+              setMobileFoldersOpen(false);
+            }}
             onShowTrash={() => {
               setShowTrash(true);
               setCurrentFolderId(null);
               setShowShareLinks(false);
               setSelectedShareLink(null);
+              setMobileFoldersOpen(false);
             }}
             onCreateFolder={async (_name, parentId) => {
               setFolderDialogParentId(parentId);
@@ -631,7 +649,19 @@ export default function ProjectDetailPage() {
         className="flex-1 flex flex-col min-w-0 bg-bg-primary h-full overflow-y-auto"
         onClick={() => setSelectedAsset(null)}
       >
-        <div className="px-5 pt-3 pb-6 space-y-3">
+        <div className="px-4 sm:px-5 pt-3 pb-6 space-y-3">
+          {/* Mobile folder drawer trigger */}
+          <button
+            className="lg:hidden flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover text-[13px] transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMobileFoldersOpen(true);
+            }}
+          >
+            <PanelLeft className="h-4 w-4" />
+            Folders
+          </button>
+
           {/* Asset grid, Share links, or Trash view */}
           {showShareLinks && !selectedShareLink ? (
             <ShareLinksTable
@@ -954,7 +984,14 @@ export default function ProjectDetailPage() {
 
       {/* ─── Right Panel (Comments + Fields tabs, or Share Link Settings) ─ */}
       {rightPanelOpen && (
-        <div className="hidden xl:flex w-[360px] flex-col border-l border-border bg-bg-secondary shrink-0">
+        <div
+          className="fixed inset-0 z-30 bg-black/50 xl:hidden"
+          onClick={toggleRightPanel}
+          aria-hidden="true"
+        />
+      )}
+      {rightPanelOpen && (
+        <div className="flex flex-col border-l border-border bg-bg-secondary shrink-0 fixed inset-y-0 right-0 z-40 w-full max-w-[360px] xl:static xl:z-auto xl:w-[360px] xl:max-w-none">
           {showShareLinks && selectedShareLink ? (
             <ShareLinkSettingsPanel token={selectedShareLink} />
           ) : (

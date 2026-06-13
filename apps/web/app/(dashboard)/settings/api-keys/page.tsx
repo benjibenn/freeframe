@@ -75,7 +75,7 @@ function CreateKeyDialog() {
 
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-secondary p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-md max-h-[85vh] overflow-y-auto -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-secondary p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
           <Dialog.Close className="absolute right-4 top-4 text-text-tertiary hover:text-text-primary transition-colors">
             <X className="h-4 w-4" />
           </Dialog.Close>
@@ -212,7 +212,7 @@ export default function ApiKeysPage() {
   }
 
   return (
-    <div className="p-6 space-y-8">
+    <div className="p-4 sm:p-6 space-y-8">
       {/* Header */}
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-muted">
@@ -290,25 +290,26 @@ export default function ApiKeysPage() {
           </div>
         ) : (
           <div className="rounded-lg border border-border bg-bg-secondary overflow-hidden">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-tertiary">
-                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap">
                     Name
                   </th>
-                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap hidden md:table-cell">
                     Key
                   </th>
-                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap">
                     Status
                   </th>
-                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap hidden lg:table-cell">
                     Last used
                   </th>
-                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap hidden sm:table-cell">
                     Created
                   </th>
-                  <th className="px-4 py-2.5 text-right text-xs font-medium text-text-tertiary">
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-text-tertiary whitespace-nowrap">
                     Actions
                   </th>
                 </tr>
@@ -329,12 +330,12 @@ export default function ApiKeysPage() {
                         </p>
                       )}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap hidden md:table-cell">
                       <code className="font-mono text-xs text-text-secondary">
                         {k.key_prefix}…
                       </code>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       {k.is_active ? (
                         <span className="inline-flex items-center rounded-full bg-status-success/15 px-2 py-0.5 text-xs font-medium text-status-success">
                           Active
@@ -345,15 +346,15 @@ export default function ApiKeysPage() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-xs text-text-tertiary">
+                    <td className="px-4 py-3 text-xs text-text-tertiary whitespace-nowrap hidden lg:table-cell">
                       {k.last_used_at
                         ? new Date(k.last_used_at).toLocaleString()
                         : "Never"}
                     </td>
-                    <td className="px-4 py-3 text-xs text-text-tertiary">
+                    <td className="px-4 py-3 text-xs text-text-tertiary whitespace-nowrap hidden sm:table-cell">
                       {new Date(k.created_at).toLocaleDateString()}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center justify-end">
                         {k.is_active ? (
                           <Button
@@ -376,6 +377,7 @@ export default function ApiKeysPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
       </section>

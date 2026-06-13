@@ -125,7 +125,7 @@ export default function HomePage() {
   );
 
   return (
-    <div className="p-6 space-y-8">
+    <div className="p-4 sm:p-6 space-y-8">
       {/* Greeting */}
       <div>
         <h1 className="text-xl font-semibold text-text-primary">

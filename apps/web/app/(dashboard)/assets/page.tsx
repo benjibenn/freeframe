@@ -45,7 +45,7 @@ export default function AssetsPage() {
   return (
     <div className="flex h-full">
       {/* Left filter sidebar */}
-      <div className="w-[200px] shrink-0 border-r border-border p-3 space-y-1">
+      <div className="w-[140px] sm:w-[200px] shrink-0 border-r border-border p-3 space-y-1">
         <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-text-tertiary">
           Filters
         </p>
@@ -71,7 +71,7 @@ export default function AssetsPage() {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-5">
         {/* Header row */}
         <div className="mb-5">
           <h1 className="text-base font-semibold text-text-primary">

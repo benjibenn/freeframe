@@ -32,17 +32,17 @@ export default function SettingsLayout({
   const { user, isSuperAdmin } = useAuthStore()
 
   return (
-    <div className="flex h-full">
-      {/* Settings Sidebar */}
-      <aside className="w-56 border-r border-border bg-bg-secondary shrink-0">
-        <div className="p-4 border-b border-border">
+    <div className="flex h-full flex-col md:flex-row">
+      {/* Settings Sidebar — horizontal scroll bar on mobile, side rail on desktop */}
+      <aside className="w-full md:w-56 border-b md:border-b-0 md:border-r border-border bg-bg-secondary shrink-0">
+        <div className="hidden md:block p-4 border-b border-border">
           <h2 className="text-sm font-semibold text-text-primary">Settings</h2>
           <p className="text-xs text-text-tertiary mt-0.5">
             {user?.name ?? 'User'}
           </p>
         </div>
 
-        <nav className="p-2 space-y-0.5">
+        <nav className="flex md:flex-col gap-1 md:gap-0.5 p-2 overflow-x-auto">
           {settingsNavItems.map((item) => {
             // Hide admin-only items from non-admins
             if (item.adminOnly && !isSuperAdmin) return null
@@ -55,7 +55,7 @@ export default function SettingsLayout({
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors',
+                  'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors shrink-0 whitespace-nowrap',
                   isActive
                     ? 'bg-bg-hover text-text-primary font-medium'
                     : 'text-text-secondary hover:bg-bg-hover/70 hover:text-text-primary',

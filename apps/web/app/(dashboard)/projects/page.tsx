@@ -80,7 +80,7 @@ function ProjectListRow({
   return (
     <a
       href={`/projects/${project.id}`}
-      className="flex items-center gap-4 px-4 py-3 hover:bg-bg-hover transition-colors border-b border-border last:border-b-0"
+      className="flex items-center gap-3 sm:gap-4 px-4 py-3 hover:bg-bg-hover transition-colors border-b border-border last:border-b-0"
     >
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-fuchsia-500">
         <FolderOpen className="h-4 w-4 text-white" />
@@ -312,9 +312,9 @@ export default function ProjectsPage() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-lg font-semibold text-text-primary">Projects</h1>
           {projects && projects.length > 0 && (
@@ -324,7 +324,7 @@ export default function ProjectsPage() {
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <div className="flex items-center rounded-lg border border-border overflow-hidden">
             <button
               onClick={() => setViewMode("grid")}

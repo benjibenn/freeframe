@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { usePathname } from 'next/navigation'
-import { Search, ChevronRight, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { Search, ChevronRight, PanelRightClose, PanelRightOpen, Menu } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { useViewStore } from '@/stores/view-store'
@@ -10,6 +10,8 @@ import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 
 interface HeaderProps {
   onSearchOpen: () => void
+  /** Open the mobile nav drawer (only rendered below md). */
+  onMenuOpen?: () => void
 }
 
 const LABEL_MAP: Record<string, string> = {
@@ -52,7 +54,7 @@ function buildBreadcrumbs(pathname: string, dynamicLabels: Record<string, string
   return crumbs
 }
 
-export function Header({ onSearchOpen }: HeaderProps) {
+export function Header({ onSearchOpen, onMenuOpen }: HeaderProps) {
   const pathname = usePathname()
   const { rightPanelOpen, toggleRightPanel } = useViewStore()
   const { labels, extraCrumbs } = useBreadcrumbStore()
@@ -60,27 +62,36 @@ export function Header({ onSearchOpen }: HeaderProps) {
   const breadcrumbs = [...urlCrumbs, ...extraCrumbs.map((c) => ({ label: c.label, href: c.href ?? '' }))]
 
   return (
-    <header className="sticky top-0 z-20 flex h-11 items-center justify-between border-b border-border bg-bg-primary/90 backdrop-blur-sm px-4">
+    <header className="sticky top-0 z-20 flex h-11 items-center justify-between gap-2 border-b border-border bg-bg-primary/90 backdrop-blur-sm px-3 sm:px-4">
+      {/* Hamburger — opens the nav drawer on mobile */}
+      <button
+        onClick={onMenuOpen}
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors md:hidden"
+        aria-label="Open menu"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
       {/* Breadcrumbs */}
-      <nav className="flex items-center gap-1 text-[13px]">
+      <nav className="flex min-w-0 flex-1 items-center gap-1 text-[13px] overflow-hidden">
         {breadcrumbs.map((crumb, index) => {
           const isLast = index === breadcrumbs.length - 1
           return (
             <React.Fragment key={`${crumb.href}-${index}`}>
               {index > 0 && (
-                <ChevronRight className="h-3 w-3 text-text-tertiary" />
+                <ChevronRight className="hidden sm:block h-3 w-3 shrink-0 text-text-tertiary" />
               )}
               {isLast ? (
-                <span className="font-medium text-text-primary">{crumb.label}</span>
+                <span className="truncate font-medium text-text-primary">{crumb.label}</span>
               ) : crumb.href ? (
                 <Link
                   href={crumb.href}
-                  className="text-text-tertiary hover:text-text-secondary transition-colors"
+                  className="hidden sm:inline whitespace-nowrap text-text-tertiary hover:text-text-secondary transition-colors"
                 >
                   {crumb.label}
                 </Link>
               ) : (
-                <span className="text-text-tertiary">{crumb.label}</span>
+                <span className="hidden sm:inline whitespace-nowrap text-text-tertiary">{crumb.label}</span>
               )}
             </React.Fragment>
           )

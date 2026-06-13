@@ -70,25 +70,25 @@ export function ShareLinksTable({
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="border-b border-border bg-bg-secondary">
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider whitespace-nowrap">
                   Title
                 </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider whitespace-nowrap">
                   Link
                 </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider whitespace-nowrap">
                   Visibility
                 </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider whitespace-nowrap hidden sm:table-cell">
                   Access Type
                 </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">
                   Last Viewed
                 </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">
                   Views
                 </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-text-tertiary uppercase tracking-wider whitespace-nowrap hidden md:table-cell">
                   Activity
                 </th>
               </tr>
@@ -145,7 +145,7 @@ export function ShareLinksTable({
                     </td>
 
                     {/* Visibility (toggle) */}
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <Switch.Root
                         checked={link.is_enabled}
                         onCheckedChange={(checked) => onToggleEnabled(link.token, checked)}
@@ -164,28 +164,28 @@ export function ShareLinksTable({
                     </td>
 
                     {/* Access Type */}
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap hidden sm:table-cell">
                       <span className="inline-flex items-center rounded-full border border-border bg-bg-tertiary px-2 py-0.5 text-xs text-text-secondary">
                         Public
                       </span>
                     </td>
 
                     {/* Last Viewed */}
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap hidden md:table-cell">
                       <span className="text-xs text-text-tertiary">
                         {link.last_viewed_at ? formatRelativeTime(link.last_viewed_at) : '—'}
                       </span>
                     </td>
 
                     {/* Views */}
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap hidden md:table-cell">
                       <span className="text-sm text-text-secondary tabular-nums">
                         {link.view_count}
                       </span>
                     </td>
 
                     {/* Activity */}
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap hidden md:table-cell">
                       <button
                         onClick={() => onViewActivity(link.token)}
                         className="flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-primary transition-colors"

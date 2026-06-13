@@ -82,7 +82,7 @@ function BulkInviteDialog() {
 
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-secondary p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-md max-h-[85vh] overflow-y-auto -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-secondary p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
           <Dialog.Close className="absolute right-4 top-4 text-text-tertiary hover:text-text-primary transition-colors">
             <X className="h-4 w-4" />
           </Dialog.Close>
@@ -247,7 +247,7 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="p-6 space-y-8">
+    <div className="p-4 sm:p-6 space-y-8">
       {/* Header */}
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-muted">
@@ -289,22 +289,23 @@ export default function AdminPage() {
           </div>
         ) : (
           <div className="rounded-lg border border-border bg-bg-secondary overflow-hidden">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-tertiary">
-                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap">
                     User
                   </th>
-                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap hidden sm:table-cell">
                     Role
                   </th>
-                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap">
                     Status
                   </th>
-                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap hidden md:table-cell">
                     Joined
                   </th>
-                  <th className="px-4 py-2.5 text-right text-xs font-medium text-text-tertiary">
+                  <th className="px-4 py-2.5 text-right text-xs font-medium text-text-tertiary whitespace-nowrap">
                     Actions
                   </th>
                 </tr>
@@ -328,7 +329,7 @@ export default function AdminPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap hidden sm:table-cell">
                       {u.is_superadmin ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
                           <Shield className="h-3 w-3" />
@@ -343,14 +344,14 @@ export default function AdminPage() {
                         <span className="text-xs text-text-tertiary">User</span>
                       )}
                     </td>
-                    <td className="px-4 py-3">{userStatusBadge(u.status)}</td>
-                    <td className="px-4 py-3 text-xs text-text-tertiary">
+                    <td className="px-4 py-3 whitespace-nowrap">{userStatusBadge(u.status)}</td>
+                    <td className="px-4 py-3 text-xs text-text-tertiary whitespace-nowrap hidden md:table-cell">
                       {u.created_at
                         ? new Date(u.created_at).toLocaleDateString()
                         : "—"}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2 whitespace-nowrap">
                         {u.status === "pending_invite" && u.invite_token && (
                           <Button
                             variant="ghost"
@@ -421,6 +422,7 @@ export default function AdminPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
       </section>

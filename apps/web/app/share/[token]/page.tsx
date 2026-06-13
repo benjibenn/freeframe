@@ -562,7 +562,7 @@ function ShareRightPanel({
   const [activeTab, setActiveTab] = React.useState<'comments' | 'fields'>('comments')
 
   return (
-    <div className="w-[360px] flex flex-col border-l border-white/[0.06] bg-[#141416] shrink-0 animate-in slide-in-from-right-2 duration-150">
+    <div className="w-full md:w-[360px] flex flex-col border-t md:border-t-0 md:border-l border-white/[0.06] bg-[#141416] shrink-0 animate-in slide-in-from-right-2 duration-150 max-h-[55vh] md:max-h-none">
       {/* Tabs */}
       <div className="px-4 pt-3 pb-2 shrink-0">
         <div className="flex items-center bg-white/5 rounded-lg p-0.5">
@@ -743,7 +743,7 @@ function ShareViewer({
       />
 
       {/* Main content: viewer + sidebar */}
-      <div className="flex flex-1 overflow-hidden min-h-0">
+      <div className="flex flex-col md:flex-row flex-1 overflow-hidden min-h-0">
         {/* Left: full-screen media viewer */}
         <ShareMediaViewer
           asset={asset}

@@ -17,6 +17,7 @@ import {
   ListChecks,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useIsDesktop } from '@/hooks/use-media-query'
 import { useAuthStore } from '@/stores/auth-store'
 import { useUploadStore } from '@/stores/upload-store'
 import { useNotificationStore } from '@/stores/notification-store'
@@ -40,10 +41,17 @@ const navItems: NavItem[] = [
 interface SidebarProps {
   collapsed: boolean
   onToggle: () => void
+  /** Whether the off-canvas drawer is open (mobile only). */
+  mobileOpen?: boolean
+  onMobileClose?: () => void
 }
 
-export function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export function Sidebar({ collapsed: collapsedProp, onToggle, mobileOpen = false, onMobileClose }: SidebarProps) {
   const pathname = usePathname()
+  const isDesktop = useIsDesktop()
+  // The collapse (icon-only) mode is a desktop affordance. On mobile the
+  // sidebar is a full-width drawer, so always render the expanded layout.
+  const collapsed = isDesktop ? collapsedProp : false
   const { user, logout } = useAuthStore()
   const { files: uploadFiles, togglePanel, panelOpen } = useUploadStore()
   const { unreadCount, fetchNotifications } = useNotificationStore()
@@ -76,9 +84,15 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     <>
     <aside
       className={cn(
-        'fixed left-0 top-0 z-30 flex h-screen flex-col border-r border-border',
-        'bg-bg-secondary transition-[width] duration-200 overflow-hidden',
-        collapsed ? 'w-[52px]' : 'w-[220px]',
+        'fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-border',
+        'bg-bg-secondary overflow-hidden duration-200',
+        'transition-transform md:transition-[width]',
+        // Mobile: full-width drawer that slides in/out. Desktop: persistent,
+        // width follows the collapse toggle.
+        'w-[240px]',
+        collapsedProp ? 'md:w-[52px]' : 'md:w-[220px]',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full',
+        'md:translate-x-0',
       )}
     >
       {/* Logo */}
@@ -328,7 +342,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         <button
           onClick={onToggle}
           className={cn(
-            'flex w-full items-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-secondary transition-colors',
+            'hidden md:flex w-full items-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-secondary transition-colors',
             collapsed ? 'justify-center h-8 w-8 mx-auto' : 'gap-2 px-2.5 h-8',
           )}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
