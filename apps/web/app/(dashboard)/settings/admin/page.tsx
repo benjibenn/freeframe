@@ -226,6 +226,22 @@ export default function AdminPage() {
     }
   };
 
+  const handleToggleSubadmin = async (
+    userId: string,
+    isCurrentlySubadmin: boolean,
+  ) => {
+    try {
+      await api.patch(`/admin/users/${userId}/subadmin`, {
+        is_subadmin: !isCurrentlySubadmin,
+      });
+      mutate("/admin/users");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to update sub-admin role";
+      alert(message);
+    }
+  };
+
   if (!isSuperAdmin) {
     return null;
   }
@@ -318,6 +334,11 @@ export default function AdminPage() {
                           <Shield className="h-3 w-3" />
                           Admin
                         </span>
+                      ) : u.is_subadmin ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-status-warning/10 px-2 py-0.5 text-xs font-medium text-status-warning">
+                          <Shield className="h-3 w-3" />
+                          Sub-admin
+                        </span>
                       ) : (
                         <span className="text-xs text-text-tertiary">User</span>
                       )}
@@ -348,6 +369,17 @@ export default function AdminPage() {
                                 Link
                               </>
                             )}
+                          </Button>
+                        )}
+                        {u.id !== user?.id && !u.is_superadmin && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              handleToggleSubadmin(u.id, u.is_subadmin)
+                            }
+                          >
+                            {u.is_subadmin ? "Remove Sub-admin" : "Make Sub-admin"}
                           </Button>
                         )}
                         {u.id !== user?.id && (

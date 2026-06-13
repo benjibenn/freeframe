@@ -39,6 +39,8 @@ class Asset(Base):
     status: Mapped[AssetStatus] = mapped_column(Enum(AssetStatus), default=AssetStatus.draft)
     rating: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     assignee_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    # Current stage in the admin-configurable task pipeline (see TaskStage). Null = not yet triaged.
+    task_stage_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("task_stages.id"), nullable=True, index=True)
     folder_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("folders.id"), nullable=True, index=True)
     due_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     keywords: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)

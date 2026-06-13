@@ -7,6 +7,7 @@ from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, ProcessingStatus, FileType
+from ..models.activity import ActivityLog, ActivityAction
 from ..models.project import Project
 from ..services.s3_service import (
     create_multipart_upload, presign_upload_part,
@@ -57,6 +58,16 @@ def initiate_upload(
             created_by=current_user.id,
             folder_id=body.folder_id,
         )
+        # New videos land in the configured default task stage (e.g. "Pending")
+        # so they show up triaged in the admin task list right away.
+        if asset_type == AssetType.video:
+            from ..models.task_stage import TaskStage
+            default_stage = db.query(TaskStage).filter(
+                TaskStage.is_default.is_(True),
+                TaskStage.deleted_at.is_(None),
+            ).first()
+            if default_stage:
+                asset.task_stage_id = default_stage.id
         db.add(asset)
         db.flush()
 
@@ -146,6 +157,24 @@ def complete_upload(
     complete_multipart_upload(body.s3_key, body.upload_id, [p.model_dump() for p in body.parts])
 
     version.processing_status = ProcessingStatus.processing
+
+    # Record activity so the upload (a new asset or a new revision) surfaces in the
+    # platform-wide activity feed admins and sub-admins watch.
+    asset = db.query(Asset).filter(Asset.id == version.asset_id).first()
+    if asset:
+        media_file = db.query(MediaFile).filter(MediaFile.version_id == version.id).first()
+        db.add(ActivityLog(
+            user_id=current_user.id,
+            asset_id=asset.id,
+            project_id=asset.project_id,
+            action=ActivityAction.created,
+            payload={
+                "version_number": version.version_number,
+                "is_new_asset": version.version_number == 1,
+                "filename": media_file.original_filename if media_file else None,
+            },
+        ))
+
     db.commit()
 
     # Trigger transcoding in background (task dispatched in Step 7)

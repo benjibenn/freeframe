@@ -3,10 +3,11 @@
 import * as React from 'react'
 import Link from 'next/link'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { MoreHorizontal, ImagePlus, Settings, Trash2, Globe, Lock } from 'lucide-react'
+import { MoreHorizontal, ImagePlus, Settings, Trash2, Globe, Lock, Link2 } from 'lucide-react'
 import { cn, formatRelativeTime, formatBytes } from '@/lib/utils'
 import { getGradientForProject } from '@/lib/gradient-utils'
 import { api } from '@/lib/api'
+import { useToast } from '@/components/shared/toast'
 import { ProjectSettingsDialog } from './project-settings-dialog'
 import type { Project } from '@/types'
 
@@ -29,6 +30,27 @@ export function ProjectCard({
   const assetCount = project.asset_count ?? 0
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
+  const toast = useToast()
+
+  const handleCopyLink = async () => {
+    try {
+      // Prefer the token already loaded with the project; fall back to get-or-create
+      // (covers projects created before default links existed).
+      let token = project.share_token
+      if (!token) {
+        const link = await api.post<{ token: string }>(`/projects/${project.id}/share/default`, {})
+        token = link.token
+      }
+      const url =
+        typeof window !== 'undefined'
+          ? `${window.location.origin}/share/${token}`
+          : `/share/${token}`
+      await navigator.clipboard.writeText(url)
+      toast.success('Share link copied — private view & comment enabled')
+    } catch {
+      toast.error('Could not copy share link')
+    }
+  }
 
   const handleDelete = async () => {
     if (!confirm(`Delete "${project.name}"? This action cannot be undone.`)) return
@@ -127,6 +149,14 @@ export function ProjectCard({
                 <DropdownMenu.Label className="px-3 py-1.5 text-[10px] font-semibold text-text-tertiary uppercase tracking-wider">
                   Project
                 </DropdownMenu.Label>
+
+                <DropdownMenu.Item
+                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
+                  onSelect={handleCopyLink}
+                >
+                  <Link2 className="h-4 w-4 text-text-tertiary" />
+                  Copy link
+                </DropdownMenu.Item>
 
                 <DropdownMenu.Item
                   className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"

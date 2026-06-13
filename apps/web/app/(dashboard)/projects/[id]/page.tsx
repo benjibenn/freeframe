@@ -145,11 +145,16 @@ export default function ProjectDetailPage() {
   const selectedVersionId = selectedAsset?.latest_version?.id || null;
   const {
     comments,
+    createComment,
     resolveComment,
     deleteComment,
     addReaction,
     removeReaction,
   } = useComments(selectedAsset?.id || null, selectedVersionId);
+
+  const handleSubmitReply = async (parentId: string, body: string) => {
+    await createComment(body, undefined, undefined, undefined, parentId);
+  };
 
   const { data: project, isLoading: loadingProject } = useSWR<Project>(
     `/projects/${projectId}`,
@@ -1002,7 +1007,7 @@ export default function ProjectDetailPage() {
                         onAddReaction={addReaction}
                         onRemoveReaction={removeReaction}
                         onReply={() => {}}
-                        onSubmitReply={async () => {}}
+                        onSubmitReply={handleSubmitReply}
                       />
                     ) : (
                       <div className="flex-1 flex items-center justify-center p-6 text-center">

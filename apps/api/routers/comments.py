@@ -259,8 +259,19 @@ def create_comment(
             comment_id=comment.id,
         ))
 
-    # Activity log
-    activity = ActivityLog(user_id=current_user.id, asset_id=asset_id, action=ActivityAction.commented)
+    # Activity log — carry project, comment id and a preview so the platform-wide
+    # feed can render and deep-link straight to this comment.
+    activity = ActivityLog(
+        user_id=current_user.id,
+        asset_id=asset_id,
+        project_id=asset.project_id,
+        action=ActivityAction.commented,
+        payload={
+            "comment_id": str(comment.id),
+            "version_id": str(comment.version_id) if comment.version_id else None,
+            "preview": (body.body or "")[:140],
+        },
+    )
     db.add(activity)
 
     db.commit()

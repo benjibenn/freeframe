@@ -528,6 +528,28 @@ def create_project_share_link(
     return link
 
 
+@router.post("/projects/{project_id}/share/default", response_model=ShareLinkResponse)
+def get_or_create_project_default_share_link(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the project's canonical default share link (private view + comment),
+    creating it on demand. Used by the projects-page copy-link action and to backfill
+    projects created before default links existed. Idempotent."""
+    from ..services.share_service import get_or_create_default_project_share_link
+
+    project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    require_project_role(db, project_id, current_user, ProjectRole.editor)
+
+    link = get_or_create_default_project_share_link(db, project_id, current_user.id, project.name)
+    db.commit()
+    db.refresh(link)
+    return link
+
+
 @router.post("/projects/{project_id}/share/user", response_model=DirectShareResponse, status_code=status.HTTP_201_CREATED)
 def share_project_with_user(
     project_id: uuid.UUID,

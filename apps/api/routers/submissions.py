@@ -33,6 +33,7 @@ from ..schemas.submission import (
     SubmissionAcceptResponse,
     SubmissionItem,
 )
+from ..services.share_service import build_default_project_share_link
 
 router = APIRouter(tags=["submissions"])
 
@@ -272,6 +273,9 @@ def accept_submission_link(
         project_id=project.id,
     )
     db.add(submission)
+    # Default share link for the submitter's project: private (login required) view +
+    # comment. Owned by the link creator (the reviewer), matching project ownership.
+    db.add(build_default_project_share_link(project.id, link.created_by, project.name))
     try:
         db.commit()
     except IntegrityError:

@@ -13,11 +13,14 @@ import {
   LogOut,
   User,
   ChevronsLeft,
+  Activity,
+  ListChecks,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 import { useUploadStore } from '@/stores/upload-store'
 import { useNotificationStore } from '@/stores/notification-store'
+import { useActivityStore } from '@/stores/activity-store'
 import { useBrandingStore } from '@/stores/branding-store'
 import { useThemeStore } from '@/stores/theme-store'
 import { Avatar } from '@/components/shared/avatar'
@@ -44,6 +47,11 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const { user, logout } = useAuthStore()
   const { files: uploadFiles, togglePanel, panelOpen } = useUploadStore()
   const { unreadCount, fetchNotifications } = useNotificationStore()
+  const {
+    unreadCount: activityUnread,
+    fetchUnreadCount: fetchActivityUnread,
+  } = useActivityStore()
+  const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
   const { orgName, orgLogoDark, orgLogoLight } = useBrandingStore()
   const { theme } = useThemeStore()
   // Pick logo based on resolved theme; fall back to the other if only one is set
@@ -55,6 +63,14 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
   // Fetch notifications on mount
   React.useEffect(() => { fetchNotifications() }, [fetchNotifications])
+
+  // Poll the platform activity alert badge for admins / sub-admins.
+  React.useEffect(() => {
+    if (!isPlatformAdmin) return
+    fetchActivityUnread()
+    const id = setInterval(fetchActivityUnread, 45000)
+    return () => clearInterval(id)
+  }, [isPlatformAdmin, fetchActivityUnread])
 
   return (
     <>
@@ -132,6 +148,59 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             </Link>
           )
         })}
+
+        {/* Activity feed — admins & sub-admins only */}
+        {isPlatformAdmin && (
+          <Link
+            href="/activity"
+            onClick={() => setNotifOpen(false)}
+            className={cn(
+              'group relative flex items-center rounded-md transition-colors duration-100',
+              collapsed ? 'justify-center h-9 w-9 mx-auto' : 'gap-2.5 px-2.5 h-9',
+              pathname.startsWith('/activity')
+                ? 'bg-bg-hover text-text-primary'
+                : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
+            )}
+            title={collapsed ? 'Activity' : undefined}
+          >
+            <div className="relative shrink-0">
+              <Activity className="h-[18px] w-[18px]" strokeWidth={pathname.startsWith('/activity') ? 2 : 1.5} />
+              {activityUnread > 0 && (
+                <span className="absolute -top-1 -right-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-status-error px-0.5 text-[9px] font-bold text-white">
+                  {activityUnread > 99 ? '99+' : activityUnread}
+                </span>
+              )}
+            </div>
+            {!collapsed && (
+              <span className={cn('text-[13px]', pathname.startsWith('/activity') && 'font-medium')}>
+                Activity
+              </span>
+            )}
+          </Link>
+        )}
+
+        {/* Task list — admins & sub-admins only */}
+        {isPlatformAdmin && (
+          <Link
+            href="/tasks"
+            onClick={() => setNotifOpen(false)}
+            className={cn(
+              'group relative flex items-center rounded-md transition-colors duration-100',
+              collapsed ? 'justify-center h-9 w-9 mx-auto' : 'gap-2.5 px-2.5 h-9',
+              pathname.startsWith('/tasks')
+                ? 'bg-bg-hover text-text-primary'
+                : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
+            )}
+            title={collapsed ? 'Tasks' : undefined}
+          >
+            <ListChecks className="h-[18px] w-[18px] shrink-0" strokeWidth={pathname.startsWith('/tasks') ? 2 : 1.5} />
+            {!collapsed && (
+              <span className={cn('text-[13px]', pathname.startsWith('/tasks') && 'font-medium')}>
+                Tasks
+              </span>
+            )}
+          </Link>
+        )}
 
         {/* Notifications button */}
         <button

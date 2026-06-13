@@ -41,6 +41,7 @@ class AssetResponse(BaseModel):
     status: AssetStatus
     rating: Optional[int]
     assignee_id: Optional[uuid.UUID]
+    task_stage_id: Optional[uuid.UUID] = None
     folder_id: Optional[uuid.UUID] = None
     due_date: Optional[datetime]
     keywords: Optional[list]

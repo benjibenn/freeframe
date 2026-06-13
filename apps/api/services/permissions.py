@@ -8,6 +8,26 @@ from ..models.share import AssetShare, ShareLink, SharePermission
 from ..services.redis_service import verify_share_session
 
 
+# ── Platform-level (superadmin / subadmin) ──────────────────────────────────────
+
+def is_platform_admin(user: User) -> bool:
+    """True for full admins (superadmin) and delegated sub-admins.
+
+    Platform admins can view all activity across every project and comment on any
+    asset — including the isolated per-submitter projects created by submission links —
+    without being an explicit member of each one.
+    """
+    return bool(getattr(user, "is_superadmin", False) or getattr(user, "is_subadmin", False))
+
+
+def require_platform_admin(user: User) -> None:
+    if not is_platform_admin(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or sub-admin access required",
+        )
+
+
 # ── Project-level ──────────────────────────────────────────────────────────────
 
 def get_project_member(db: Session, project_id: uuid.UUID, user_id: uuid.UUID) -> ProjectMember | None:
@@ -56,8 +76,27 @@ def is_public_project(db: Session, project_id: uuid.UUID) -> bool:
     return project is not None and project.is_public
 
 
+def can_view_project(db: Session, project_id: uuid.UUID, user: User) -> bool:
+    """True if the user may view a project's folders/assets.
+
+    Platform admins (superadmin / subadmin) can view every project — so all admins
+    share the same view regardless of explicit membership. Otherwise the user must be
+    a project member or the project must be public.
+    """
+    if is_platform_admin(user):
+        return True
+    if get_project_member(db, project_id, user.id):
+        return True
+    return is_public_project(db, project_id)
+
+
 def can_access_asset(db: Session, asset: Asset, user: User) -> bool:
     """Check if user can access the asset via any path."""
+    # 0. Platform admins (superadmin / subadmin) can access every asset so they can
+    #    review and comment on the latest revision from the global activity feed.
+    if is_platform_admin(user):
+        return True
+
     # 1. Asset creator
     if asset.created_by == user.id:
         return True

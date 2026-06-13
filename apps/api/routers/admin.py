@@ -1,5 +1,6 @@
 """Admin endpoints for user management."""
 
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 import uuid
@@ -7,9 +8,19 @@ import uuid
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User, UserStatus
-from ..schemas.auth import UserResponse, UpdateUserRoleRequest
+from ..models.api_key import APIKey, generate_api_key, hash_api_key, API_KEY_PREFIX
+from ..schemas.auth import UserResponse, UpdateUserRoleRequest, UpdateSubadminRequest
+from ..schemas.api_key import APIKeyResponse, APIKeyCreate, APIKeyCreated
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _require_superadmin(current_user: User) -> None:
+    if not current_user.is_superadmin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can access this endpoint",
+        )
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -109,3 +120,112 @@ def update_user_role(
     db.commit()
     db.refresh(user)
     return user
+
+@router.patch("/users/{user_id}/subadmin", response_model=UserResponse)
+def update_user_subadmin(
+    user_id: uuid.UUID,
+    body: UpdateSubadminRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Assign or revoke the sub-admin role. Only full admins (superadmin) can do this.
+
+    A sub-admin can view all platform activity and comment on any asset, but cannot
+    manage users or change roles — so this assignment stays superadmin-only.
+    """
+    if not current_user.is_superadmin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can assign sub-admins"
+        )
+
+    user = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.is_subadmin = body.is_subadmin
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+# ── Public API keys ──────────────────────────────────────────────────────────────
+
+def _api_key_to_response(k: APIKey, creator_name: str | None) -> APIKeyResponse:
+    return APIKeyResponse(
+        id=k.id,
+        name=k.name,
+        key_prefix=k.key_prefix,
+        created_by=k.created_by,
+        created_by_name=creator_name,
+        last_used_at=k.last_used_at,
+        created_at=k.created_at,
+        revoked_at=k.revoked_at,
+        is_active=k.revoked_at is None,
+    )
+
+
+@router.get("/api-keys", response_model=list[APIKeyResponse])
+def list_api_keys(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all public API keys (newest first). Admin only.
+
+    Keys are returned with only their prefix — the full secret is never
+    retrievable after creation."""
+    _require_superadmin(current_user)
+
+    keys = db.query(APIKey).order_by(APIKey.created_at.desc()).all()
+    names = {
+        u.id: u.name
+        for u in db.query(User).filter(User.id.in_({k.created_by for k in keys})).all()
+    } if keys else {}
+    return [_api_key_to_response(k, names.get(k.created_by)) for k in keys]
+
+
+@router.post("/api-keys", response_model=APIKeyCreated, status_code=status.HTTP_201_CREATED)
+def create_api_key(
+    body: APIKeyCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a new public API key. The full key is returned ONCE — store it now.
+    Admin only."""
+    _require_superadmin(current_user)
+
+    raw_key = generate_api_key()
+    key = APIKey(
+        name=body.name,
+        key_prefix=raw_key[:13],  # e.g. "ffpk_Gr366cWq"
+        key_hash=hash_api_key(raw_key),
+        created_by=current_user.id,
+    )
+    db.add(key)
+    db.commit()
+    db.refresh(key)
+
+    resp = _api_key_to_response(key, current_user.name)
+    return APIKeyCreated(**resp.model_dump(), key=raw_key)
+
+
+@router.delete("/api-keys/{key_id}", response_model=APIKeyResponse)
+def revoke_api_key(
+    key_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Revoke an API key. It immediately stops authenticating; the row is kept
+    for audit. Admin only."""
+    _require_superadmin(current_user)
+
+    key = db.query(APIKey).filter(APIKey.id == key_id).first()
+    if not key:
+        raise HTTPException(status_code=404, detail="API key not found")
+    if key.revoked_at is None:
+        key.revoked_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(key)
+
+    creator = db.query(User).filter(User.id == key.created_by).first()
+    return _api_key_to_response(key, creator.name if creator else None)

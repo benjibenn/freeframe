@@ -24,6 +24,13 @@ services:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --entrypoints.web.address=:80
+      # Trust the host nginx in front of us so it can pass the real client IP
+      # through (X-Real-Ip / X-Forwarded-For). Without this Traefik strips those
+      # headers and the API sees every visitor as the docker gateway IP, which
+      # collapses all per-IP rate limits (e.g. magic-code sign-in) into one
+      # shared global bucket. nginx reaches us via the published loopback port,
+      # so it appears on the docker bridge network.
+      - --entrypoints.web.forwardedHeaders.trustedIPs=127.0.0.1/32,172.16.0.0/12
     # Replace the upstream ports entirely: expose only on loopback.
     ports: !override
       - "127.0.0.1:8090:80"

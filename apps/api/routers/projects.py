@@ -12,6 +12,7 @@ from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, Pro
 from ..tasks.email_tasks import send_project_added_email
 from ..tasks.celery_app import send_task_safe
 from ..services.s3_service import put_object, generate_presigned_get_url, delete_object
+from ..services.share_service import build_default_project_share_link, get_default_project_share_link
 from ..config import settings
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -49,6 +50,9 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_db), current_u
     db.flush()
     member = ProjectMember(project_id=project.id, user_id=current_user.id, role=ProjectRole.owner)
     db.add(member)
+    # Every project ships with a default share link: private (login required) view +
+    # comment. Surfaced via the projects-page "copy link" action.
+    db.add(build_default_project_share_link(project.id, current_user.id, project.name))
     db.commit()
     db.refresh(project)
     return project
@@ -56,6 +60,8 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_db), current_u
 @router.get("", response_model=list[ProjectResponse])
 def list_projects(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     from sqlalchemy import or_
+
+    from ..services.permissions import is_platform_admin
 
     # Get memberships for current user
     memberships = db.query(ProjectMember).filter(
@@ -65,14 +71,19 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
     membership_map = {m.project_id: m.role for m in memberships}
     member_project_ids = list(membership_map.keys())
 
-    # Get projects: user's memberships + all public projects
-    projects = db.query(Project).filter(
-        Project.deleted_at.is_(None),
-        or_(
-            Project.id.in_(member_project_ids) if member_project_ids else False,
-            Project.is_public == True,
-        ),
-    ).all()
+    if is_platform_admin(current_user):
+        # Platform admins (superadmin / subadmin) see every project, so all admins
+        # share the same view regardless of explicit membership.
+        projects = db.query(Project).filter(Project.deleted_at.is_(None)).all()
+    else:
+        # Get projects: user's memberships + all public projects
+        projects = db.query(Project).filter(
+            Project.deleted_at.is_(None),
+            or_(
+                Project.id.in_(member_project_ids) if member_project_ids else False,
+                Project.is_public == True,
+            ),
+        ).all()
 
     all_project_ids = [p.id for p in projects]
     if not all_project_ids:
@@ -105,6 +116,18 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
         .all()
     )
 
+    # Batch: default share-link token per project (for the projects-page copy-link action)
+    from ..models.share import ShareLink
+    share_tokens = dict(
+        db.query(ShareLink.project_id, ShareLink.token)
+        .filter(
+            ShareLink.project_id.in_(all_project_ids),
+            ShareLink.is_default.is_(True),
+            ShareLink.deleted_at.is_(None),
+        )
+        .all()
+    )
+
     result = []
     for p in projects:
         resp = ProjectResponse.model_validate(p)
@@ -113,19 +136,22 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
         resp.storage_bytes = storage_map.get(p.id, 0)
         resp.member_count = member_counts.get(p.id, 0)
         resp.role = membership_map.get(p.id)
+        resp.share_token = share_tokens.get(p.id)
         result.append(resp)
 
     return result
 
 @router.get("/{project_id}", response_model=ProjectResponse)
 def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    from ..services.permissions import is_platform_admin
+
     project = _get_project(db, project_id)
     member = db.query(ProjectMember).filter(
         ProjectMember.project_id == project_id,
         ProjectMember.user_id == current_user.id,
         ProjectMember.deleted_at.is_(None),
     ).first()
-    if not member and not project.is_public:
+    if not member and not project.is_public and not is_platform_admin(current_user):
         raise HTTPException(status_code=403, detail="Not a project member")
     resp = ProjectResponse.model_validate(project)
     resp.poster_url = _resolve_poster_url(project)
@@ -143,6 +169,8 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
     resp.member_count = db.query(func.count(ProjectMember.id)).filter(
         ProjectMember.project_id == project_id, ProjectMember.deleted_at.is_(None),
     ).scalar() or 0
+    default_link = get_default_project_share_link(db, project_id)
+    resp.share_token = default_link.token if default_link else None
     return resp
 
 @router.patch("/{project_id}", response_model=ProjectResponse)

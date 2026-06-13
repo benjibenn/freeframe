@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     frontend_url: str = "http://localhost:3000"
     transcoder_engine: str = "ffmpeg"
+
+    # Public (machine-to-machine) API key for the external integration that pulls
+    # videos out to other platforms (e.g. Meta). Sent in the X-API-Key header.
+    # If unset, the /public/* endpoints return 503 (disabled).
+    public_api_key: str | None = None
     
     # Worker concurrency settings
     transcoding_concurrency: int = 2  # Number of concurrent video transcoding jobs

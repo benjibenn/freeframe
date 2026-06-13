@@ -26,6 +26,7 @@ class ProjectResponse(BaseModel):
     storage_bytes: int = 0
     member_count: int = 0
     role: ProjectRole | None = None
+    share_token: str | None = None  # Token of the default (private view+comment) share link
     model_config = {"from_attributes": True}
 
 class ProjectMemberResponse(BaseModel):

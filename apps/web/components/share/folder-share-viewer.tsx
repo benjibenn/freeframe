@@ -802,6 +802,7 @@ function ShareReviewInner({
   const [guestIdentity, setGuestIdentity] = React.useState<{ name: string; email: string } | null>(null)
   const [showGuestPrompt, setShowGuestPrompt] = React.useState(false)
   const pendingCommentRef = React.useRef<{ body: string; timecodeStart?: number; timecodeEnd?: number; annotationData?: Record<string, unknown> } | null>(null)
+  const pendingReplyRef = React.useRef<{ parentId: string; body: string } | null>(null)
   React.useEffect(() => {
     try {
       const stored = localStorage.getItem('ff_guest_identity')
@@ -820,19 +821,37 @@ function ShareReviewInner({
     refetchComments().catch(() => {})
   }, [addComment, currentVersion, refetchComments])
 
+  const submitReply = React.useCallback(async (parentId: string, body: string) => {
+    const hasAuth = !!localStorage.getItem('ff_access_token')
+    const hasGuest = !!localStorage.getItem('ff_guest_identity')
+    if (!hasAuth && !hasGuest) {
+      pendingReplyRef.current = { parentId, body }
+      setShowGuestPrompt(true)
+      return
+    }
+    const payload: Record<string, unknown> = { body, parent_id: parentId }
+    if (currentVersion?.id) payload.version_id = currentVersion.id
+    await addComment(payload)
+    refetchComments().catch(() => {})
+  }, [addComment, currentVersion, refetchComments])
+
   const handleGuestIdentitySave = React.useCallback(async (name: string, email: string) => {
     const identity = { name, email }
     setGuestIdentity(identity)
     localStorage.setItem('ff_guest_identity', JSON.stringify(identity))
     setShowGuestPrompt(false)
 
-    // Auto-submit the pending comment
+    // Auto-submit the pending comment or reply
     if (pendingCommentRef.current) {
       const { body, timecodeStart, timecodeEnd, annotationData } = pendingCommentRef.current
       pendingCommentRef.current = null
       setTimeout(() => submitComment(body, timecodeStart, timecodeEnd, annotationData), 50)
+    } else if (pendingReplyRef.current) {
+      const { parentId, body } = pendingReplyRef.current
+      pendingReplyRef.current = null
+      setTimeout(() => submitReply(parentId, body), 50)
     }
-  }, [submitComment])
+  }, [submitComment, submitReply])
 
   if (isLoading || !asset) {
     return <div className="flex items-center justify-center h-screen bg-bg-primary"><Loader2 className="h-8 w-8 animate-spin text-text-tertiary" /></div>
@@ -922,7 +941,7 @@ function ShareReviewInner({
                   onAddReaction={() => {}}
                   onRemoveReaction={() => {}}
                   onReply={() => {}}
-                  onSubmitReply={async () => {}}
+                  onSubmitReply={submitReply}
                 />
                 {canComment && CommentInput && (
                   <CommentInput

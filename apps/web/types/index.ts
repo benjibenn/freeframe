@@ -41,6 +41,29 @@ export type ViewerLayout = "grid" | "reel";
 
 export type ApprovalStatus = "approved" | "rejected" | "pending";
 
+// ─── Task pipeline ────────────────────────────────────────────────────────────
+
+export interface TaskStage {
+  id: string;
+  name: string;
+  position: number;
+  color: string | null;
+  is_default: boolean;
+}
+
+export interface TaskItem {
+  asset_id: string;
+  name: string;
+  project_id: string;
+  project_name: string | null;
+  task_stage_id: string | null;
+  submitter_name: string | null;
+  submitter_email: string | null;
+  thumbnail_url: string | null;
+  latest_version_number: number | null;
+  created_at: string;
+}
+
 // ─── Core Entities ────────────────────────────────────────────────────────────
 
 export interface User {
@@ -50,6 +73,7 @@ export interface User {
   avatar_url: string | null;
   status: UserStatus;
   is_superadmin: boolean;
+  is_subadmin: boolean;
   email_verified: boolean;
   invite_token?: string | null;
   preferences: Record<string, unknown>;
@@ -91,6 +115,7 @@ export interface Project {
   storage_bytes?: number;
   member_count?: number;
   role?: string | null;
+  share_token?: string | null;
 }
 
 export interface ProjectMember {
@@ -114,6 +139,7 @@ export interface Asset {
   status: AssetStatus;
   rating: number | null;
   assignee_id: string | null;
+  task_stage_id?: string | null;
   folder_id: string | null;
   due_date: string | null;
   keywords: string[];
@@ -418,6 +444,30 @@ export interface Notification {
   project_id: string | null;
 }
 
+// ─── Activity feed (admin / sub-admin) ───────────────────────────────────────
+
+export interface ActivityActor {
+  id: string;
+  name: string;
+  avatar_url: string | null;
+}
+
+export interface ActivityFeedItem {
+  id: string;
+  action: ActivityAction | string;
+  created_at: string;
+  actor: ActivityActor | null;
+  asset_id: string | null;
+  asset_name: string | null;
+  asset_type: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  latest_version_number: number | null;
+  comment_preview: string | null;
+  deep_link: string | null;
+  payload: Record<string, unknown>;
+}
+
 // ─── Branding & Watermarking ──────────────────────────────────────────────────
 
 export interface ProjectBranding {
@@ -514,4 +564,23 @@ export interface AuthTokens {
   access_token: string;
   refresh_token: string;
   token_type: string;
+}
+
+// ─── Public API keys (admin) ──────────────────────────────────────────────────
+
+export interface APIKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  created_by: string;
+  created_by_name: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  revoked_at: string | null;
+  is_active: boolean;
+}
+
+/** Returned only once, at creation — includes the full plaintext key. */
+export interface APIKeyCreated extends APIKey {
+  key: string;
 }

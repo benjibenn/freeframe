@@ -13,9 +13,11 @@ import {
   Users,
   Share2,
   Globe,
+  Link2,
 } from "lucide-react";
 import { cn, formatBytes } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { useToast } from "@/components/shared/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProjectCard } from "@/components/projects/project-card";
@@ -39,6 +41,8 @@ function ProjectListRow({
   project: Project;
   showRole?: boolean;
 }) {
+  const toast = useToast();
+
   const roleName =
     project.role === "owner"
       ? "Owner"
@@ -49,6 +53,29 @@ function ProjectListRow({
           : project.role === "viewer"
             ? "Viewer"
             : "Member";
+
+  const handleCopyLink = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      let token = project.share_token;
+      if (!token) {
+        const link = await api.post<{ token: string }>(
+          `/projects/${project.id}/share/default`,
+          {},
+        );
+        token = link.token;
+      }
+      const url =
+        typeof window !== "undefined"
+          ? `${window.location.origin}/share/${token}`
+          : `/share/${token}`;
+      await navigator.clipboard.writeText(url);
+      toast.success("Share link copied — private view & comment enabled");
+    } catch {
+      toast.error("Could not copy share link");
+    }
+  };
 
   return (
     <a
@@ -79,6 +106,15 @@ function ProjectListRow({
           year: "numeric",
         })}
       </span>
+      <button
+        type="button"
+        onClick={handleCopyLink}
+        title="Copy share link"
+        aria-label="Copy share link"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
+      >
+        <Link2 className="h-3.5 w-3.5" />
+      </button>
       {showRole && (
         <span
           className={cn(
