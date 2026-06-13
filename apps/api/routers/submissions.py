@@ -328,6 +328,28 @@ def disable_submission_link(
     db.commit()
 
 
+@router.post("/submission-links/{link_id}/dissolve", status_code=status.HTTP_204_NO_CONTENT)
+def dissolve_submission_link(
+    link_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Undo a request: return every project it grouped (children, per-editor
+    submissions, and the shared reference) to standalone — they reappear in /projects
+    with their files intact — then soft-delete the request. Nothing is deleted; this
+    only unlinks. Use this to reverse a 'convert to request'."""
+    link = _get_owned_link(db, link_id, current_user)
+    # Detach all child projects (incl. auto-provisioned per-editor ones).
+    db.query(Project).filter(Project.submission_link_id == link.id).update(
+        {Project.submission_link_id: None}, synchronize_session=False
+    )
+    # Unlink the shared reference without deleting it.
+    link.reference_project_id = None
+    link.deleted_at = datetime.now(timezone.utc)
+    link.is_enabled = False
+    db.commit()
+
+
 # ── Shared reference folder ──────────────────────────────────────────────────
 
 @router.post("/submission-links/{link_id}/reference", response_model=ReferenceResponse)

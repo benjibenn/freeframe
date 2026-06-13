@@ -15,6 +15,7 @@ import {
   Pencil,
   X,
   Trash2,
+  Undo2,
 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -124,6 +125,29 @@ export default function RequestDetailPage() {
     }
   }
 
+  const [dissolving, setDissolving] = React.useState(false)
+
+  const dissolve = async () => {
+    if (!request) return
+    if (
+      !confirm(
+        `Undo this request? "${request.title}" will be removed and every project under it — including this one's files — goes back to your Projects unchanged.`,
+      )
+    )
+      return
+    setDissolving(true)
+    try {
+      await api.post(`/submission-links/${request.id}/dissolve`, {})
+      await globalMutate('/projects')
+      await globalMutate('/submission-links')
+      toast.success('Request undone — projects moved back to Projects')
+      router.push('/projects')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : 'Could not undo the request')
+      setDissolving(false)
+    }
+  }
+
   const referenceEnabled = !!request?.reference_project_id
 
   const toggleReference = async () => {
@@ -174,6 +198,16 @@ export default function RequestDetailPage() {
             <Button variant="secondary" size="sm" onClick={copy} disabled={!request}>
               {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               {copied ? 'Copied' : 'Copy submission link'}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={dissolve}
+              disabled={dissolving || !request}
+              title="Undo this request and move its projects back to Projects"
+            >
+              {dissolving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
+              Undo request
             </Button>
           </div>
         </div>
