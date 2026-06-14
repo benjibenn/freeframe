@@ -12,7 +12,7 @@ from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, FileType, 
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.share import AssetShare
 from ..models.activity import Mention, Notification, NotificationType
-from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse
+from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse, TagsUpdate, TagCount
 from ..schemas.notification import AssignmentUpdate
 from ..services.permissions import require_project_role, require_asset_access, can_access_asset, is_public_project, get_project_member, can_view_project
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
@@ -21,6 +21,31 @@ from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLO
 from ..services.s3_service import create_multipart_upload
 
 router = APIRouter(tags=["assets"])
+
+# Tags are stored in Asset.keywords (a JSONB string array). We normalize on write so
+# "B-roll", "b-roll " and "b-roll" all collapse to one canonical tag — that keeps
+# search and grouping-by-tag consistent.
+MAX_TAGS = 50
+MAX_TAG_LEN = 50
+
+
+def normalize_tags(raw) -> list[str]:
+    """Trim, collapse internal whitespace, lowercase, dedupe (order-preserving)."""
+    if not raw:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        tag = " ".join(item.strip().lower().split())[:MAX_TAG_LEN]
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        out.append(tag)
+        if len(out) >= MAX_TAGS:
+            break
+    return out
 
 
 def _build_asset_response(asset: Asset, db: Session) -> AssetResponse:
@@ -109,6 +134,7 @@ def list_assets(
     project_id: uuid.UUID,
     include_failed: bool = Query(False, description="Include assets whose latest version failed processing"),
     folder_id: Optional[str] = Query(None, description="Filter by folder. 'root' for root level, UUID for specific folder."),
+    tag: Optional[list[str]] = Query(None, description="Filter to assets carrying ALL of these tags. Searches the whole project (ignores folder)."),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -121,7 +147,13 @@ def list_assets(
         Asset.deleted_at.is_(None),
     )
 
-    if folder_id == "root":
+    tags = normalize_tags(tag)
+    if tags:
+        # Tag filtering is project-wide (across all folders) — selecting a tag is a
+        # search, not folder navigation. Each tag narrows further (AND / containment).
+        for t in tags:
+            query = query.filter(Asset.keywords.contains([t]))
+    elif folder_id == "root":
         query = query.filter(Asset.folder_id.is_(None))
     elif folder_id is not None:
         query = query.filter(Asset.folder_id == uuid.UUID(folder_id))
@@ -177,10 +209,55 @@ def update_asset(
         raise HTTPException(status_code=404, detail="Asset not found")
     require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
     for field, value in body.model_dump(exclude_unset=True).items():
+        if field == "keywords":
+            value = normalize_tags(value)
         setattr(asset, field, value)
     db.commit()
     db.refresh(asset)
     return _build_asset_response(asset, db)
+
+
+@router.put("/assets/{asset_id}/tags", response_model=AssetResponse)
+def set_asset_tags(
+    asset_id: uuid.UUID,
+    body: TagsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Replace an asset's tags (stored in keywords). Editor role or higher required."""
+    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    asset.keywords = normalize_tags(body.tags)
+    db.commit()
+    db.refresh(asset)
+    return _build_asset_response(asset, db)
+
+
+@router.get("/projects/{project_id}/tags", response_model=list[TagCount])
+def list_project_tags(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Every distinct tag used in the project, with how many assets carry it —
+    powers the project tag filter and tag autocomplete."""
+    if not can_view_project(db, project_id, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a project member")
+    rows = db.query(Asset.keywords).filter(
+        Asset.project_id == project_id,
+        Asset.deleted_at.is_(None),
+        Asset.keywords.isnot(None),
+    ).all()
+    counter: dict[str, int] = {}
+    for (kw,) in rows:
+        for t in (kw or []):
+            if isinstance(t, str) and t:
+                counter[t] = counter.get(t, 0) + 1
+    # Most-used first, then alphabetical for a stable order.
+    ordered = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [TagCount(tag=t, count=c) for t, c in ordered]
 
 
 @router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)

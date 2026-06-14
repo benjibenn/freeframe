@@ -201,6 +201,12 @@ export function AssetMetadataEditor({ asset, projectId, onUpdated }: AssetMetada
     () => api.get<AssetMetadata[]>(`/assets/${asset.id}/metadata`),
   )
 
+  // Existing tags in this project — drive the autocomplete suggestions.
+  const { data: projectTags } = useSWR<{ tag: string; count: number }[]>(
+    `/projects/${projectId}/tags`,
+    () => api.get<{ tag: string; count: number }[]>(`/projects/${projectId}/tags`),
+  )
+
   const [customValues, setCustomValues] = React.useState<Record<string, unknown>>({})
 
   React.useEffect(() => {
@@ -213,17 +219,37 @@ export function AssetMetadataEditor({ asset, projectId, onUpdated }: AssetMetada
     }
   }, [assetMetadata, metadataFields])
 
+  // Tags persist immediately (own endpoint) so they save independently of the
+  // metadata Save button.
+  const persistTags = async (next: string[]) => {
+    const prev = keywords
+    setKeywords(next)
+    try {
+      await api.put(`/assets/${asset.id}/tags`, { tags: next })
+      globalMutate(assetKey)
+      globalMutate(`/projects/${projectId}/tags`)
+      onUpdated?.()
+    } catch (err: unknown) {
+      setKeywords(prev) // revert on failure
+      setMsg(err instanceof Error ? err.message : 'Failed to save tags')
+    }
+  }
+
   const handleAddKeyword = () => {
-    const kw = keywordInput.trim()
+    const kw = keywordInput.trim().toLowerCase().replace(/\s+/g, ' ')
+    setKeywordInput('')
     if (kw && !keywords.includes(kw)) {
-      setKeywords([...keywords, kw])
-      setKeywordInput('')
+      persistTags([...keywords, kw])
     }
   }
 
   const handleRemoveKeyword = (kw: string) => {
-    setKeywords(keywords.filter((k) => k !== kw))
+    persistTags(keywords.filter((k) => k !== kw))
   }
+
+  const tagSuggestions = (projectTags ?? [])
+    .map((t) => t.tag)
+    .filter((t) => !keywords.includes(t))
 
   const handleSave = async () => {
     setSaving(true)
@@ -233,7 +259,6 @@ export function AssetMetadataEditor({ asset, projectId, onUpdated }: AssetMetada
         status,
         rating,
         due_date: dueDate || null,
-        keywords,
         assignee_id: assigneeId || null,
         custom_fields: customValues,
       })
@@ -285,7 +310,7 @@ export function AssetMetadataEditor({ asset, projectId, onUpdated }: AssetMetada
       <div className="flex flex-col gap-1.5">
         <label className="text-xs font-medium text-text-tertiary uppercase tracking-wide flex items-center gap-1">
           <Tag className="h-3 w-3" />
-          Keywords
+          Tags
         </label>
         <div className="flex flex-wrap gap-1.5 mb-1">
           {keywords.map((kw) => (
@@ -307,6 +332,7 @@ export function AssetMetadataEditor({ asset, projectId, onUpdated }: AssetMetada
         <div className="flex gap-2">
           <input
             type="text"
+            list={`tag-suggestions-${asset.id}`}
             value={keywordInput}
             onChange={(e) => setKeywordInput(e.target.value)}
             onKeyDown={(e) => {
@@ -315,9 +341,14 @@ export function AssetMetadataEditor({ asset, projectId, onUpdated }: AssetMetada
                 handleAddKeyword()
               }
             }}
-            placeholder="Add keyword..."
+            placeholder="Add tag..."
             className="flex h-8 flex-1 rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"
           />
+          <datalist id={`tag-suggestions-${asset.id}`}>
+            {tagSuggestions.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
           <Button type="button" variant="secondary" size="sm" onClick={handleAddKeyword}>
             Add
           </Button>

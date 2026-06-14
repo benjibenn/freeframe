@@ -284,7 +284,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                     return (
                       <Command.Item
                         key={`asset-${asset.id}`}
-                        value={`asset ${asset.name} ${asset.asset_type}`}
+                        value={`asset ${asset.name} ${asset.asset_type} ${(asset.keywords ?? []).join(" ")}`}
                         onSelect={() => handleAssetSelect(asset)}
                         className={cn(
                           "flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm text-text-secondary",

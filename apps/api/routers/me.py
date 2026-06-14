@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, cast, String
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -95,9 +95,15 @@ def list_my_assets(
             )
         )
 
-    # Apply search filter
+    # Apply search filter — match the asset name OR any of its tags (keywords).
+    # Casting the JSONB array to text lets a partial query like "b-rol" match the
+    # tag "b-roll" across all projects, giving global search-by-tag in ⌘K.
     if q and q.strip():
-        query = query.filter(Asset.name.ilike(f"%{q.strip()}%"))
+        needle = f"%{q.strip()}%"
+        query = query.filter(or_(
+            Asset.name.ilike(needle),
+            cast(Asset.keywords, String).ilike(needle),
+        ))
 
     assets = query.order_by(Asset.created_at.desc()).offset(skip).limit(limit).all()
     return _build_asset_responses_bulk(assets, db)

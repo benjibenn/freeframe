@@ -61,6 +61,14 @@ class AssetUpdate(BaseModel):
     due_date: Optional[datetime] = None
     keywords: Optional[list] = None
 
+class TagsUpdate(BaseModel):
+    # Full replacement of an asset's tag list (stored in Asset.keywords).
+    tags: list[str] = []
+
+class TagCount(BaseModel):
+    tag: str
+    count: int
+
 class StreamUrlResponse(BaseModel):
     url: str
     asset_type: AssetType

@@ -25,6 +25,7 @@ import {
   ExternalLink,
   Users,
   PanelLeft,
+  Tag as TagIcon,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatBytes } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -82,6 +83,7 @@ export default function ProjectDetailPage() {
     searchParams.get("folder") || null,
   );
   const [showTrash, setShowTrash] = React.useState(false);
+  const [selectedTags, setSelectedTags] = React.useState<string[]>([]);
   const [showShareLinks, setShowShareLinks] = React.useState(false);
   const [selectedShareLink, setSelectedShareLink] = React.useState<
     string | null
@@ -200,14 +202,31 @@ export default function ProjectDetailPage() {
   const folderParam = currentFolderId
     ? `folder_id=${currentFolderId}`
     : "folder_id=root";
+  // When tags are selected, the view becomes a project-wide tag search (ignores the
+  // current folder); otherwise it's the normal folder-scoped listing.
+  const filteringByTag = selectedTags.length > 0;
+  const assetsQuery = filteringByTag
+    ? selectedTags.map((t) => `tag=${encodeURIComponent(t)}`).join("&")
+    : folderParam;
   const {
     data: assets,
     isLoading: loadingAssets,
     mutate: mutateAssets,
   } = useSWR<AssetResponse[]>(
-    showTrash ? null : `/projects/${projectId}/assets?${folderParam}`,
+    showTrash ? null : `/projects/${projectId}/assets?${assetsQuery}`,
     (key: string) => api.get<AssetResponse[]>(key),
   );
+
+  // All tags used in this project, for the filter chip-bar.
+  const { data: projectTags } = useSWR<{ tag: string; count: number }[]>(
+    `/projects/${projectId}/tags`,
+    (key: string) => api.get<{ tag: string; count: number }[]>(key),
+  );
+
+  const toggleTag = (tag: string) =>
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
 
   // Subfolders for current view
   const { data: subfolders, mutate: mutateSubfolders } = useSWR<Folder[]>(
@@ -662,6 +681,50 @@ export default function ProjectDetailPage() {
             Folders
           </button>
 
+          {/* Tag filter bar — only outside the trash / share-links views */}
+          {!showTrash && !showShareLinks &&
+            ((projectTags && projectTags.length > 0) || filteringByTag) && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="flex items-center gap-1 text-2xs font-medium uppercase tracking-wide text-text-tertiary mr-0.5">
+                  <TagIcon className="h-3 w-3" />
+                  Tags
+                </span>
+                {(projectTags ?? []).map((t) => {
+                  const active = selectedTags.includes(t.tag);
+                  return (
+                    <button
+                      key={t.tag}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleTag(t.tag);
+                      }}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors",
+                        active
+                          ? "border-accent bg-accent/10 text-accent"
+                          : "border-border bg-bg-secondary text-text-secondary hover:border-border-focus hover:text-text-primary",
+                      )}
+                    >
+                      {t.tag}
+                      <span className="text-text-tertiary">{t.count}</span>
+                    </button>
+                  );
+                })}
+                {filteringByTag && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedTags([]);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs text-text-tertiary hover:text-text-primary transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                    Clear
+                  </button>
+                )}
+              </div>
+            )}
+
           {/* Asset grid, Share links, or Trash view */}
           {showShareLinks && !selectedShareLink ? (
             <ShareLinksTable
@@ -753,7 +816,7 @@ export default function ProjectDetailPage() {
           ) : (
             <AssetGrid
               assets={assets ?? []}
-              folders={subfolders ?? []}
+              folders={filteringByTag ? [] : (subfolders ?? [])}
               currentFolderId={currentFolderId}
               projectId={projectId}
               projectName={project?.name ?? 'Project'}
