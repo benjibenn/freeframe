@@ -508,8 +508,9 @@ function MetadataTab({ projectId }: { projectId: string }) {
   )
 
   const handleDelete = async (fieldId: string) => {
+    if (!confirm('Delete this field? Values stored on assets will be removed.')) return
     try {
-      await api.delete(`/metadata-fields/${fieldId}`)
+      await api.delete(`/projects/${projectId}/metadata-fields/${fieldId}`)
       globalMutate(key)
     } catch {
       // ignore

@@ -86,7 +86,8 @@ def create_metadata_field(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    if not is_platform_admin(current_user):
+        require_project_role(db, project_id, current_user, ProjectRole.editor)
 
     # Check for duplicate name (active fields only)
     existing = db.query(MetadataField).filter(
@@ -138,7 +139,8 @@ def delete_metadata_field(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    if not is_platform_admin(current_user):
+        require_project_role(db, project_id, current_user, ProjectRole.editor)
     field = db.query(MetadataField).filter(
         MetadataField.id == field_id,
         MetadataField.project_id == project_id,

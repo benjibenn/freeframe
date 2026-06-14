@@ -1,9 +1,10 @@
 'use client'
 
 import * as React from 'react'
+import Link from 'next/link'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Switch from '@radix-ui/react-switch'
-import { X, ImagePlus, Globe, Lock } from 'lucide-react'
+import { X, ImagePlus, Globe, Lock, SlidersHorizontal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getGradientForProject } from '@/lib/gradient-utils'
 import { api } from '@/lib/api'
@@ -190,13 +191,23 @@ export function ProjectSettingsDialog({
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-border">
-            <Dialog.Close asChild>
-              <Button variant="secondary" size="sm">Cancel</Button>
-            </Dialog.Close>
-            <Button size="sm" onClick={handleSave} loading={saving} disabled={!name.trim()}>
-              Save
-            </Button>
+          <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-border">
+            <Link
+              href={`/projects/${project.id}/settings`}
+              onClick={() => onOpenChange(false)}
+              className="inline-flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-primary transition-colors"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Branding, watermark &amp; custom fields
+            </Link>
+            <div className="flex items-center gap-2">
+              <Dialog.Close asChild>
+                <Button variant="secondary" size="sm">Cancel</Button>
+              </Dialog.Close>
+              <Button size="sm" onClick={handleSave} loading={saving} disabled={!name.trim()}>
+                Save
+              </Button>
+            </div>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
