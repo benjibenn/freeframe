@@ -119,6 +119,10 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const currentMember = members?.find((m) => m.user_id === user?.id)
   const currentRole = currentMember?.role ?? 'viewer'
   const canComment = currentRole !== 'viewer'
+  // Platform admins manage every project, so they can tag without explicit membership.
+  const isPlatformAdmin = !!(user?.is_superadmin || user?.is_subadmin)
+  const canEditTags =
+    isPlatformAdmin || currentRole === 'owner' || currentRole === 'editor'
 
   // Fetch all assets for navigation (1 of N)
   const { data: allAssets } = useSWR<AssetResponse[]>(
@@ -492,7 +496,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                       assetId={asset.id}
                       projectId={asset.project_id}
                       initialTags={asset.keywords ?? []}
-                      canEdit={currentRole === 'owner' || currentRole === 'editor'}
+                      canEdit={canEditTags}
                     />
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-text-tertiary">Name</span>

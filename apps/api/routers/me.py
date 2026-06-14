@@ -15,6 +15,7 @@ from ..models.activity import Mention, Notification
 from ..models.comment import Comment
 from ..schemas.asset import AssetResponse, NotificationResponse
 from ..routers.assets import _build_asset_response, _build_asset_responses_bulk
+from ..services.permissions import is_platform_admin
 
 router = APIRouter(prefix="/me", tags=["me"])
 
@@ -75,6 +76,11 @@ def list_my_assets(
             Asset.deleted_at.is_(None),
         )
 
+    elif is_platform_admin(current_user) and q and q.strip():
+        # Platform admins manage every project — so a global search (⌘K by name or
+        # tag) spans all projects, not just ones they're an explicit member of.
+        # (Without a query this stays member-scoped so "recent" lists aren't flooded.)
+        query = db.query(Asset).filter(Asset.deleted_at.is_(None))
     else:
         # All accessible: member of project OR directly shared OR assigned
         project_ids = db.query(ProjectMember.project_id).filter(

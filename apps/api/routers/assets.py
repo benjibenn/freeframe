@@ -14,7 +14,7 @@ from ..models.share import AssetShare
 from ..models.activity import Mention, Notification, NotificationType
 from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse, TagsUpdate, TagCount
 from ..schemas.notification import AssignmentUpdate
-from ..services.permissions import require_project_role, require_asset_access, can_access_asset, is_public_project, get_project_member, can_view_project
+from ..services.permissions import require_project_role, require_asset_access, can_access_asset, is_public_project, get_project_member, can_view_project, is_platform_admin
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
 from .hls_proxy import create_hls_token
 from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, mime_to_asset_type
@@ -228,7 +228,10 @@ def set_asset_tags(
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    # Platform admins (superadmin / sub-admin) manage every project and run triage, so
+    # they can tag any asset; otherwise editor role or higher on the project is required.
+    if not is_platform_admin(current_user):
+        require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
     asset.keywords = normalize_tags(body.tags)
     db.commit()
     db.refresh(asset)
