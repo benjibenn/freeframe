@@ -40,6 +40,11 @@ def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> Pr
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(body: ProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Only platform admins (superadmin / sub-admin) may create projects. Everyone
+    # else joins work through a submission link, which provisions their own private
+    # per-editor project on accept.
+    from ..services.permissions import require_platform_admin
+    require_platform_admin(current_user)
     project = Project(
         name=body.name,
         description=body.description,

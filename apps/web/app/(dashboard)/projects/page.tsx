@@ -248,6 +248,9 @@ export default function ProjectsPage() {
   usePageTitle("Projects");
   const router = useRouter();
   const { user } = useAuthStore();
+  // Only platform admins (superadmin / sub-admin) can create projects or requests.
+  // Everyone else joins work through a submission link, so we hide all "New" affordances.
+  const canCreate = !!(user?.is_superadmin || user?.is_subadmin);
   const [viewMode, setViewMode] = React.useState<ViewMode>("grid");
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [isCreating, setIsCreating] = React.useState(false);
@@ -429,6 +432,7 @@ export default function ProjectsPage() {
             </button>
           </div>
 
+          {canCreate && (
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
               <Button size="sm">
@@ -470,6 +474,7 @@ export default function ProjectsPage() {
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
+          )}
 
           <Dialog.Root
             open={dialogOpen}
@@ -633,11 +638,19 @@ export default function ProjectsPage() {
           <EmptyState
             icon={FolderOpen}
             title="No projects yet"
-            description="Create your first project to start organizing assets."
-            action={{
-              label: "New Project",
-              onClick: () => setDialogOpen(true),
-            }}
+            description={
+              canCreate
+                ? "Create your first project to start organizing assets."
+                : "You'll see projects here once you join one through a submission link."
+            }
+            action={
+              canCreate
+                ? {
+                    label: "New Project",
+                    onClick: () => setDialogOpen(true),
+                  }
+                : undefined
+            }
           />
         </div>
       ) : (
@@ -671,7 +684,7 @@ export default function ProjectsPage() {
             viewMode={viewMode}
             emptyMessage="You haven't created any projects yet."
             onNewProject={() => setDialogOpen(true)}
-            showNewButton
+            showNewButton={canCreate}
             userId={user?.id}
             onMutate={() => mutate()}
           />

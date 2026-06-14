@@ -38,6 +38,7 @@ from ..schemas.submission import (
     ChildProjectItem,
 )
 from ..services.share_service import build_default_project_share_link
+from ..services.permissions import require_platform_admin
 
 router = APIRouter(tags=["submissions"])
 
@@ -110,6 +111,9 @@ def create_submission_link(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Creating a video request (which provisions per-editor projects) is an admin
+    # action; non-admins can only join an existing request via its submission link.
+    require_platform_admin(current_user)
     title = body.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
@@ -141,6 +145,7 @@ def create_request_from_project(
     brief/examples for every editor); pass as_reference=false to add it as a plain
     child folder instead. Either way, editors who accept the link upload into their
     own private per-editor projects."""
+    require_platform_admin(current_user)
     project = db.query(Project).filter(
         Project.id == project_id, Project.deleted_at.is_(None),
     ).first()

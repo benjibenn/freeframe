@@ -10,6 +10,7 @@ import { api } from '@/lib/api'
 import { useToast } from '@/components/shared/toast'
 import { ProjectSettingsDialog } from './project-settings-dialog'
 import { ConvertToRequestDialog } from './convert-to-request-dialog'
+import { useAuthStore } from '@/stores/auth-store'
 import type { Project } from '@/types'
 
 interface ProjectCardProps {
@@ -34,9 +35,12 @@ export function ProjectCard({
   const [convertOpen, setConvertOpen] = React.useState(false)
   const toast = useToast()
 
+  const { user } = useAuthStore()
+  const isAdmin = !!(user?.is_superadmin || user?.is_subadmin)
+
   // A request's per-editor projects (submission_link_id set) can't be added to a
-  // request again.
-  const canConvert = !project.submission_link_id
+  // request again. Only admins can create/extend requests.
+  const canConvert = isAdmin && !project.submission_link_id
 
   const handleCopyLink = async () => {
     try {
