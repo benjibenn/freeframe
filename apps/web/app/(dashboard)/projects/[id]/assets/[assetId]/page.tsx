@@ -13,6 +13,7 @@ import { CommentPanel } from '@/components/review/comment-panel'
 import { CommentInput } from '@/components/review/comment-input'
 import { AssetStatusSelect } from '@/components/review/asset-status-select'
 import { AssetTagsEditor } from '@/components/review/asset-tags-editor'
+import { AssetMetadataEditor } from '@/components/projects/asset-metadata'
 // ApprovalBar removed for now
 import { VersionSwitcher } from '@/components/review/version-switcher'
 import { ShareDialog } from '@/components/review/share-dialog'
@@ -527,6 +528,12 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                       </div>
                     )}
                   </div>
+                  <AssetMetadataEditor
+                    asset={asset}
+                    projectId={asset.project_id}
+                    members={members}
+                    canEdit={canEditTags}
+                  />
                 </div>
               )}
             </div>

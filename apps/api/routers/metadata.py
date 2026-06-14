@@ -23,7 +23,7 @@ from ..schemas.metadata import (
     MetadataFieldCreate,
     MetadataFieldResponse,
 )
-from ..services.permissions import require_project_role
+from ..services.permissions import require_project_role, is_platform_admin
 
 router = APIRouter(tags=["metadata"])
 
@@ -119,7 +119,8 @@ def list_metadata_fields(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
+    if not is_platform_admin(current_user):
+        require_project_role(db, project_id, current_user, ProjectRole.viewer)
     fields = db.query(MetadataField).filter(
         MetadataField.project_id == project_id,
         MetadataField.deleted_at.is_(None),
@@ -162,7 +163,8 @@ def set_asset_metadata(
     current_user: User = Depends(get_current_user),
 ):
     project_id = _get_project_for_asset(db, asset_id)
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    if not is_platform_admin(current_user):
+        require_project_role(db, project_id, current_user, ProjectRole.editor)
 
     for item in body:
         # Validate field exists and belongs to this project
@@ -206,7 +208,8 @@ def get_asset_metadata(
     current_user: User = Depends(get_current_user),
 ):
     project_id = _get_project_for_asset(db, asset_id)
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
+    if not is_platform_admin(current_user):
+        require_project_role(db, project_id, current_user, ProjectRole.viewer)
     return _get_asset_metadata_responses(db, asset_id)
 
 

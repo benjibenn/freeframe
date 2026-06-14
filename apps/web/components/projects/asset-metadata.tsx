@@ -2,20 +2,18 @@
 
 import * as React from 'react'
 import useSWR, { mutate as globalMutate } from 'swr'
-import { Star, ChevronDown, Check, CalendarDays, Tag, X } from 'lucide-react'
+import { Star, ChevronDown, Check, CalendarDays } from 'lucide-react'
 import * as Select from '@radix-ui/react-select'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Avatar } from '@/components/shared/avatar'
 import type {
   Asset,
-  AssetStatus,
   MetadataField,
   AssetMetadata,
   User,
   MetadataFieldType,
+  ProjectMember,
 } from '@/types'
 
 // ─── Star rating ──────────────────────────────────────────────────────────────
@@ -173,95 +171,96 @@ function CustomFieldInput({
 interface AssetMetadataEditorProps {
   asset: Asset
   projectId: string
+  /** Project members — used to populate the assignee dropdown. */
+  members?: ProjectMember[]
+  /** When false the editor renders nothing (editing is editor+ / admin only). */
+  canEdit: boolean
   onUpdated?: () => void
 }
 
-export function AssetMetadataEditor({ asset, projectId, onUpdated }: AssetMetadataEditorProps) {
+/**
+ * Editor for an asset's built-in fields (rating, assignee, due date) and any
+ * project custom fields. Tags live in their own editor (AssetTagsEditor); status
+ * lives in AssetStatusSelect. Built-ins save via PATCH /assets/{id}; custom fields
+ * via PUT /assets/{id}/metadata.
+ */
+export function AssetMetadataEditor({
+  asset,
+  projectId,
+  members,
+  canEdit,
+  onUpdated,
+}: AssetMetadataEditorProps) {
   const assetKey = `/assets/${asset.id}`
 
-  // Built-in fields
-  const [status, setStatus] = React.useState<AssetStatus>(asset.status)
   const [rating, setRating] = React.useState<number | null>(asset.rating)
-  const [dueDate, setDueDate] = React.useState<string>(asset.due_date ?? '')
-  const [keywords, setKeywords] = React.useState<string[]>(asset.keywords ?? [])
-  const [keywordInput, setKeywordInput] = React.useState('')
+  const [dueDate, setDueDate] = React.useState<string>(
+    asset.due_date ? asset.due_date.slice(0, 10) : '',
+  )
   const [assigneeId, setAssigneeId] = React.useState<string>(asset.assignee_id ?? '')
-
   const [saving, setSaving] = React.useState(false)
   const [msg, setMsg] = React.useState('')
 
-  // Custom fields
+  // Reset when navigating to a different asset.
+  React.useEffect(() => {
+    setRating(asset.rating)
+    setDueDate(asset.due_date ? asset.due_date.slice(0, 10) : '')
+    setAssigneeId(asset.assignee_id ?? '')
+    setMsg('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asset.id])
+
+  // Custom fields defined on the project + this asset's current values.
   const { data: metadataFields } = useSWR<MetadataField[]>(
-    `/projects/${projectId}/metadata-fields`,
-    () => api.get<MetadataField[]>(`/projects/${projectId}/metadata-fields`),
+    canEdit ? `/projects/${projectId}/metadata-fields` : null,
+    (k: string) => api.get<MetadataField[]>(k),
   )
-
   const { data: assetMetadata } = useSWR<AssetMetadata[]>(
-    `/assets/${asset.id}/metadata`,
-    () => api.get<AssetMetadata[]>(`/assets/${asset.id}/metadata`),
-  )
-
-  // Existing tags in this project — drive the autocomplete suggestions.
-  const { data: projectTags } = useSWR<{ tag: string; count: number }[]>(
-    `/projects/${projectId}/tags`,
-    () => api.get<{ tag: string; count: number }[]>(`/projects/${projectId}/tags`),
+    canEdit ? `/assets/${asset.id}/metadata` : null,
+    (k: string) => api.get<AssetMetadata[]>(k),
   )
 
   const [customValues, setCustomValues] = React.useState<Record<string, unknown>>({})
-
   React.useEffect(() => {
     if (assetMetadata && metadataFields) {
       const map: Record<string, unknown> = {}
-      for (const m of assetMetadata) {
-        map[m.field_id] = m.value
-      }
+      for (const m of assetMetadata) map[m.field_id] = m.value
       setCustomValues(map)
     }
   }, [assetMetadata, metadataFields])
 
-  // Tags persist immediately (own endpoint) so they save independently of the
-  // metadata Save button.
-  const persistTags = async (next: string[]) => {
-    const prev = keywords
-    setKeywords(next)
-    try {
-      await api.put(`/assets/${asset.id}/tags`, { tags: next })
-      globalMutate(assetKey)
-      globalMutate(`/projects/${projectId}/tags`)
-      onUpdated?.()
-    } catch (err: unknown) {
-      setKeywords(prev) // revert on failure
-      setMsg(err instanceof Error ? err.message : 'Failed to save tags')
-    }
+  // Member display names for the assignee dropdown.
+  const memberIds = React.useMemo(
+    () => Array.from(new Set((members ?? []).map((m) => m.user_id))),
+    [members],
+  )
+  const { data: memberUsers } = useSWR<User[]>(
+    canEdit && memberIds.length > 0 ? `/users?ids=${memberIds.join(',')}` : null,
+    (k: string) => api.get<User[]>(k),
+  )
+  const userName = (id: string) => {
+    const u = memberUsers?.find((x) => x.id === id)
+    return u?.name || u?.email || id.slice(0, 8)
   }
-
-  const handleAddKeyword = () => {
-    const kw = keywordInput.trim().toLowerCase().replace(/\s+/g, ' ')
-    setKeywordInput('')
-    if (kw && !keywords.includes(kw)) {
-      persistTags([...keywords, kw])
-    }
-  }
-
-  const handleRemoveKeyword = (kw: string) => {
-    persistTags(keywords.filter((k) => k !== kw))
-  }
-
-  const tagSuggestions = (projectTags ?? [])
-    .map((t) => t.tag)
-    .filter((t) => !keywords.includes(t))
 
   const handleSave = async () => {
     setSaving(true)
     setMsg('')
     try {
-      await api.patch(`/assets/${asset.id}/metadata`, {
-        status,
+      await api.patch(`/assets/${asset.id}`, {
         rating,
         due_date: dueDate || null,
         assignee_id: assigneeId || null,
-        custom_fields: customValues,
       })
+      if (metadataFields && metadataFields.length > 0) {
+        const fieldIds = new Set(metadataFields.map((f) => f.id))
+        const payload = Object.entries(customValues)
+          .filter(([fid]) => fieldIds.has(fid))
+          .map(([field_id, value]) => ({ field_id, value }))
+        if (payload.length > 0) {
+          await api.put(`/assets/${asset.id}/metadata`, payload)
+        }
+      }
       setMsg('Saved.')
       globalMutate(assetKey)
       onUpdated?.()
@@ -271,6 +270,8 @@ export function AssetMetadataEditor({ asset, projectId, onUpdated }: AssetMetada
       setSaving(false)
     }
   }
+
+  if (!canEdit) return null
 
   return (
     <div className="space-y-4">
@@ -283,13 +284,18 @@ export function AssetMetadataEditor({ asset, projectId, onUpdated }: AssetMetada
       {/* Assignee */}
       <div className="flex flex-col gap-1.5">
         <label className="text-xs font-medium text-text-tertiary uppercase tracking-wide">Assignee</label>
-        <input
-          type="text"
+        <select
           value={assigneeId}
           onChange={(e) => setAssigneeId(e.target.value)}
-          placeholder="User ID"
-          className="flex h-8 w-full rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"
-        />
+          className="flex h-8 w-full rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"
+        >
+          <option value="">Unassigned</option>
+          {(members ?? []).map((m) => (
+            <option key={m.user_id} value={m.user_id}>
+              {userName(m.user_id)}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Due date */}
@@ -306,55 +312,6 @@ export function AssetMetadataEditor({ asset, projectId, onUpdated }: AssetMetada
         />
       </div>
 
-      {/* Keywords */}
-      <div className="flex flex-col gap-1.5">
-        <label className="text-xs font-medium text-text-tertiary uppercase tracking-wide flex items-center gap-1">
-          <Tag className="h-3 w-3" />
-          Tags
-        </label>
-        <div className="flex flex-wrap gap-1.5 mb-1">
-          {keywords.map((kw) => (
-            <span
-              key={kw}
-              className="inline-flex items-center gap-1 rounded-full bg-bg-tertiary border border-border px-2 py-0.5 text-xs text-text-secondary"
-            >
-              {kw}
-              <button
-                type="button"
-                onClick={() => handleRemoveKeyword(kw)}
-                className="text-text-tertiary hover:text-text-primary transition-colors"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            list={`tag-suggestions-${asset.id}`}
-            value={keywordInput}
-            onChange={(e) => setKeywordInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                handleAddKeyword()
-              }
-            }}
-            placeholder="Add tag..."
-            className="flex h-8 flex-1 rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"
-          />
-          <datalist id={`tag-suggestions-${asset.id}`}>
-            {tagSuggestions.map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
-          <Button type="button" variant="secondary" size="sm" onClick={handleAddKeyword}>
-            Add
-          </Button>
-        </div>
-      </div>
-
       {/* Custom fields */}
       {metadataFields && metadataFields.length > 0 && (
         <div className="space-y-3 border-t border-border pt-4">
@@ -368,9 +325,7 @@ export function AssetMetadataEditor({ asset, projectId, onUpdated }: AssetMetada
               <CustomFieldInput
                 field={field}
                 value={customValues[field.id]}
-                onChange={(v) =>
-                  setCustomValues((prev) => ({ ...prev, [field.id]: v }))
-                }
+                onChange={(v) => setCustomValues((prev) => ({ ...prev, [field.id]: v }))}
               />
             </div>
           ))}

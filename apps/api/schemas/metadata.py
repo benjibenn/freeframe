@@ -6,9 +6,15 @@ from typing import Any, Literal, Optional
 from ..models.share import SharePermission
 
 
+# Field types the model (models.metadata.FieldType) actually supports. Keep this in
+# sync with that enum — listing types here that the DB enum lacks (e.g. url/boolean)
+# turns a create into a 500 and breaks response serialization.
+FieldTypeLiteral = Literal["text", "number", "date", "select", "multi_select"]
+
+
 class MetadataFieldCreate(BaseModel):
     name: str
-    field_type: Literal["text", "number", "date", "select", "multi_select", "url", "boolean"]
+    field_type: FieldTypeLiteral
     options: Optional[list[str]] = None  # for select/multi_select
     required: bool = False
 
@@ -17,7 +23,9 @@ class MetadataFieldResponse(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
     name: str
-    field_type: Literal["text", "number", "date", "select", "multi_select", "url", "boolean"]
+    # Plain str: the ORM hands back a FieldType enum member, which serializes to its
+    # value cleanly here (a Literal rejects the enum member → ResponseValidationError).
+    field_type: str
     options: Optional[list[str]] = None
     required: bool
     model_config = {"from_attributes": True}
