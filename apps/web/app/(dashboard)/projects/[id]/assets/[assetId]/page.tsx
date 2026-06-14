@@ -12,6 +12,7 @@ import { AnnotationOverlay } from '@/components/review/annotation-overlay'
 import { CommentPanel } from '@/components/review/comment-panel'
 import { CommentInput } from '@/components/review/comment-input'
 import { AssetStatusSelect } from '@/components/review/asset-status-select'
+import { AssetTagsEditor } from '@/components/review/asset-tags-editor'
 // ApprovalBar removed for now
 import { VersionSwitcher } from '@/components/review/version-switcher'
 import { ShareDialog } from '@/components/review/share-dialog'
@@ -487,6 +488,12 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
                   <div className="space-y-3">
                     <AssetStatusSelect assetId={asset.id} taskStageId={asset.task_stage_id ?? null} />
+                    <AssetTagsEditor
+                      assetId={asset.id}
+                      projectId={asset.project_id}
+                      initialTags={asset.keywords ?? []}
+                      canEdit={currentRole === 'owner' || currentRole === 'editor'}
+                    />
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-text-tertiary">Name</span>
                       <span className="text-xs text-text-primary font-medium truncate ml-4">{asset.name}</span>
