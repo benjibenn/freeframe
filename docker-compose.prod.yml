@@ -120,6 +120,14 @@ services:
         condition: service_healthy
     command: sh -c "celery -A apps.api.tasks.celery_app worker -Q transcoding -c $${TRANSCODING_CONCURRENCY:-2} --loglevel=warning"
     restart: unless-stopped
+    # Override the API image's HTTP healthcheck — workers serve no HTTP. Ping this
+    # specific worker node over the broker instead.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A apps.api.tasks.celery_app inspect ping -d celery@$$HOSTNAME --timeout 8 >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 12s
+      start_period: 40s
+      retries: 3
 
   email_worker:
     build:
@@ -132,6 +140,12 @@ services:
         condition: service_healthy
     command: sh -c "celery -A apps.api.tasks.celery_app worker -Q email_high,email_low -c $${EMAIL_CONCURRENCY:-2} --loglevel=warning"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A apps.api.tasks.celery_app inspect ping -d celery@$$HOSTNAME --timeout 8 >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 12s
+      start_period: 40s
+      retries: 3
 
   beat:
     build:
@@ -144,6 +158,14 @@ services:
         condition: service_healthy
     command: sh -c "celery -A apps.api.tasks.celery_app beat --loglevel=warning -s /tmp/celerybeat-schedule"
     restart: unless-stopped
+    # beat is a scheduler (no broker queue to ping) — just confirm the process is
+    # alive. The [b]eat pattern avoids pgrep matching its own command line.
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'celery.*[b]eat' >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 8s
+      start_period: 20s
+      retries: 3
 
   web:
     build:
