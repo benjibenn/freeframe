@@ -38,7 +38,7 @@ from ..schemas.submission import (
     ChildProjectItem,
 )
 from ..services.share_service import build_default_project_share_link
-from ..services.permissions import require_platform_admin
+from ..services.permissions import require_platform_admin, is_platform_admin
 
 router = APIRouter(tags=["submissions"])
 
@@ -50,7 +50,9 @@ def _get_owned_link(db: Session, link_id: uuid.UUID, user: User) -> SubmissionLi
     ).first()
     if not link:
         raise HTTPException(status_code=404, detail="Submission link not found")
-    if link.created_by != user.id:
+    # Platform admins (superadmin / sub-admin) co-manage every request, so any admin
+    # may inspect/manage a link regardless of which admin created it.
+    if link.created_by != user.id and not is_platform_admin(user):
         raise HTTPException(status_code=403, detail="Not your submission link")
     return link
 
@@ -187,10 +189,13 @@ def list_submission_links(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    links = db.query(SubmissionLink).filter(
-        SubmissionLink.created_by == current_user.id,
-        SubmissionLink.deleted_at.is_(None),
-    ).order_by(SubmissionLink.created_at.desc()).all()
+    # Platform admins (superadmin / sub-admin) all share the same submissions section,
+    # so they see every request regardless of which admin created it. Non-admins only
+    # ever see links they created (though creation itself is admin-gated).
+    query = db.query(SubmissionLink).filter(SubmissionLink.deleted_at.is_(None))
+    if not is_platform_admin(current_user):
+        query = query.filter(SubmissionLink.created_by == current_user.id)
+    links = query.order_by(SubmissionLink.created_at.desc()).all()
     counts = _count_map(db, [l.id for l in links])
     out = []
     for l in links:
