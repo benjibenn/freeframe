@@ -119,9 +119,9 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   )
   const currentMember = members?.find((m) => m.user_id === user?.id)
   const currentRole = currentMember?.role ?? 'viewer'
-  const canComment = currentRole !== 'viewer'
-  // Platform admins manage every project, so they can tag without explicit membership.
+  // Platform admins manage every project, so they can comment/tag without explicit membership.
   const isPlatformAdmin = !!(user?.is_superadmin || user?.is_subadmin)
+  const canComment = isPlatformAdmin || currentRole !== 'viewer'
   const canEditTags =
     isPlatformAdmin || currentRole === 'owner' || currentRole === 'editor'
 

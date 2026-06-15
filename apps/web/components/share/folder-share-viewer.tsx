@@ -510,7 +510,7 @@ function ShareCommentList({ comments, loading, canComment, onReply }: ShareComme
                   <span className="text-2xs text-text-tertiary">{formatShortDate(comment.created_at)}</span>
                   <span className="ml-auto text-2xs text-text-tertiary">#{i + 1}</span>
                 </div>
-                <p className="text-sm text-text-secondary mt-1 leading-relaxed">{comment.body}</p>
+                <p className="text-sm text-text-secondary mt-1 leading-relaxed whitespace-pre-wrap break-words">{comment.body}</p>
                 {comment.timecode_start != null && (
                   <span className="inline-flex items-center gap-1 mt-1 text-[10px] text-accent font-mono bg-accent/10 px-1.5 py-0.5 rounded">
                     {Math.floor(comment.timecode_start / 60)}:{String(Math.floor(comment.timecode_start % 60)).padStart(2, '0')}

@@ -248,7 +248,7 @@ function GuestCommentList({ token, refreshKey }: GuestCommentListProps) {
               {new Date(comment.created_at).toLocaleDateString()}
             </span>
           </div>
-          <p className="text-sm text-zinc-300 leading-relaxed">{comment.body}</p>
+          <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap break-words">{comment.body}</p>
         </div>
       ))}
     </div>

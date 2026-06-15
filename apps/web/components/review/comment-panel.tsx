@@ -573,7 +573,7 @@ function CommentItem({
               </div>
             </div>
           ) : (
-            <p className="mt-1 text-[13px] text-text-secondary leading-relaxed break-words">
+            <p className="mt-1 text-[13px] text-text-secondary leading-relaxed break-words whitespace-pre-wrap">
               {comment.body}
             </p>
           )}

@@ -303,7 +303,8 @@ export function CommentInput({
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Escape") setMentionQuery(null);
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Shift+Enter submits; plain Enter inserts a newline (default textarea behavior).
+    if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }
@@ -414,7 +415,9 @@ export function CommentInput({
               ref={textareaRef}
               className="flex-1 resize-none bg-transparent px-2.5 py-2.5 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none min-h-[38px] max-h-[120px]"
               placeholder={
-                replyToId ? "Write a reply..." : "Leave your comment..."
+                replyToId
+                  ? "Write a reply... (Shift+Enter to send)"
+                  : "Leave your comment... (Shift+Enter to send)"
               }
               value={body}
               onChange={handleTextChange}
