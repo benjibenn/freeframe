@@ -24,6 +24,9 @@ export function LoginForm() {
   const [passwordError, setPasswordError] = useState('')
   const [generalError, setGeneralError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [ssoEnabled, setSsoEnabled] = useState(false)
+
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
   // Classic login fields
   const [classicEmail, setClassicEmail] = useState('')
@@ -48,6 +51,30 @@ export function LoginForm() {
       codeRefs.current[0]?.focus()
     }
   }, [step])
+
+  // On mount: surface any SSO error redirected back from the IdP callback, and
+  // ask the API whether SSO is configured (so we only show the button if so).
+  useEffect(() => {
+    const err = new URLSearchParams(window.location.search).get('error')
+    if (err) {
+      setGeneralError(
+        err === 'account_deactivated'
+          ? 'Your account is deactivated. Contact an administrator.'
+          : err === 'sso_unavailable'
+            ? 'Single sign-on is temporarily unavailable. Try again shortly.'
+            : 'Single sign-on failed. Please try again.',
+      )
+    }
+    api
+      .get<{ enabled: boolean }>('/auth/oidc/config')
+      .then((c) => setSsoEnabled(c.enabled))
+      .catch(() => setSsoEnabled(false))
+  }, [])
+
+  function handleSso() {
+    // Full-page navigation — this kicks off the server-side OIDC redirect flow.
+    window.location.href = `${API_URL}/auth/oidc/login`
+  }
 
   // ─── Step 1: Send magic code ──────────────────────────────────────────────
 
@@ -429,6 +456,19 @@ export function LoginForm() {
           Sign in with password instead
         </button>
       </div>
+
+      {ssoEnabled && (
+        <>
+          <div className="my-6 flex items-center gap-3">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-xs text-text-tertiary">or</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+          <Button type="button" variant="secondary" size="lg" onClick={handleSso} className="w-full">
+            Continue with SSO
+          </Button>
+        </>
+      )}
     </div>
   )
 }

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
-from .routers import auth, users, projects, upload, events, assets, me, comments, approvals, share, metadata, branding, notifications, admin, setup, folders, hls_proxy, submissions, activity, tasks, public_api
+from .routers import auth, oidc, users, projects, upload, events, assets, me, comments, approvals, share, metadata, branding, notifications, admin, setup, folders, hls_proxy, submissions, activity, tasks, public_api
 from .services.s3_service import ensure_bucket_exists
 from .middleware.global_rate_limit import GlobalRateLimitMiddleware
 from .middleware.setup_guard import SetupGuardMiddleware
@@ -42,6 +42,7 @@ app.add_middleware(GlobalRateLimitMiddleware)
 app.add_middleware(SetupGuardMiddleware)
 
 app.include_router(auth.router)
+app.include_router(oidc.router)
 app.include_router(users.router)
 app.include_router(projects.router)
 app.include_router(upload.router)
