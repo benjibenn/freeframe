@@ -58,6 +58,18 @@ class Settings(BaseSettings):
             self.oidc_redirect_uri,
         ])
 
+    # ---- Authentik portal (Phase 2 Shell) ----
+    # freeframe's /portal/apps endpoint reads each user's launchable apps from
+    # Authentik. Both must be set for the endpoint to work; otherwise it 503s.
+    # api_base is the Authentik origin (no trailing slash), e.g.
+    # https://deb-sso.debugged.com.my
+    authentik_api_base: str | None = None
+    authentik_service_token: str | None = None
+
+    @property
+    def portal_enabled(self) -> bool:
+        return bool(self.authentik_api_base and self.authentik_service_token)
+
     # Public (machine-to-machine) API key for the external integration that pulls
     # videos out to other platforms (e.g. Meta). Sent in the X-API-Key header.
     # If unset, the /public/* endpoints return 503 (disabled).
