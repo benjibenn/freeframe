@@ -132,3 +132,29 @@ entries:
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, adstash]]
       meta_launch_url: !Env ADSTASH_URL
       meta_description: "Launch & analysis (06/07)"
+
+  # ---------- portal service account (Phase ② Shell) ----------
+  # freeframe's /portal/apps endpoint authenticates to Authentik with this token
+  # to read each user's launchable apps via ?for_user=. That query is only
+  # honored for a superuser, so svc-portal is a member of "authentik Admins".
+  # The token VALUE comes from .env.authentik (PORTAL_SERVICE_TOKEN), kept out of
+  # git, and must match AUTHENTIK_SERVICE_TOKEN in freeframe's env.
+  - model: authentik_core.user
+    state: present
+    identifiers:
+      username: svc-portal
+    attrs:
+      name: "Portal Service Account"
+      type: service_account
+      path: goauthentik.io/service-accounts
+      groups:
+        - !Find [authentik_core.group, [name, "authentik Admins"]]
+  - model: authentik_core.token
+    state: present
+    identifiers:
+      identifier: svc-portal-token
+    attrs:
+      user: !Find [authentik_core.user, [username, svc-portal]]
+      intent: api
+      expiring: false
+      key: !Env PORTAL_SERVICE_TOKEN
