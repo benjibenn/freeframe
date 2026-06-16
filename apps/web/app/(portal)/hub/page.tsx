@@ -16,7 +16,7 @@ interface PortalApp {
 export default function HubPage() {
   const { data, error, isLoading } = useSWR<{ apps: PortalApp[] }>(
     '/portal/apps',
-    (path: string) => api.get(path),
+    () => api.get<{ apps: PortalApp[] }>('/portal/apps'),
   )
 
   if (isLoading) {
