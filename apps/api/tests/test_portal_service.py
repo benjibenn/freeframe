@@ -49,7 +49,7 @@ def _mock_httpx(monkeypatch, users_results, apps_results):
 def test_maps_email_to_tiles(configured, monkeypatch):
     calls = _mock_httpx(
         monkeypatch,
-        users_results=[{"pk": 7}],
+        users_results=[{"pk": 7, "email": "a@b.com"}],
         apps_results=[
             {"slug": "freeframe", "name": "FreeFrame",
              "meta_launch_url": "https://review.x", "meta_description": "Review", "meta_icon": None},
@@ -83,3 +83,34 @@ def test_authentik_error_propagates(configured, monkeypatch):
     monkeypatch.setattr(ps.httpx, "get", boom)
     with pytest.raises(httpx.HTTPError):
         ps.get_apps_for_email("a@b.com")
+
+
+def test_email_is_lowercased_for_lookup_and_cache(configured, monkeypatch):
+    # Authentik stores canonical lowercase email; the user record reflects that.
+    calls = _mock_httpx(monkeypatch, users_results=[{"pk": 7, "email": "a@b.com"}], apps_results=[])
+    ps.get_apps_for_email("A@B.com")
+    after_first = calls["count"]
+    # Same address, different case -> must hit the SAME cache entry (no new HTTP calls)
+    ps.get_apps_for_email("a@b.com")
+    assert calls["count"] == after_first
+
+
+def test_resolve_picks_exact_email_match(configured, monkeypatch):
+    # Defensive: if Authentik ever returns a near-miss alongside the exact match,
+    # we must resolve the pk of the EXACT (case-insensitive) email, not results[0].
+    captured = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "/users/" in url:
+            body = {"results": [
+                {"pk": 99, "email": "joe@x.com.my"},  # near-miss, first in list
+                {"pk": 7, "email": "joe@x.com"},       # the real one
+            ]}
+        else:
+            captured["for_user"] = params["for_user"]
+            body = {"results": []}
+        return httpx.Response(200, json=body, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(ps.httpx, "get", fake_get)
+    ps.get_apps_for_email("joe@x.com")
+    assert captured["for_user"] == 7  # not 99

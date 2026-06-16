@@ -30,12 +30,19 @@ def _cache_key(email: str) -> str:
 
 
 def resolve_user_pk(email: str) -> Optional[int]:
-    """Map an email to the Authentik user pk, or None if there is no such user."""
+    """Map an email to the Authentik user pk, or None if there is no exact match.
+
+    `email` must already be normalized to lowercase by the caller. We re-verify
+    an exact (case-insensitive) match in Python rather than trusting the order /
+    semantics of Authentik's ?email= filter.
+    """
     url = f"{settings.authentik_api_base}/api/v3/core/users/"
     resp = httpx.get(url, params={"email": email}, headers=_headers(), timeout=10.0)
     resp.raise_for_status()
-    results = resp.json().get("results", [])
-    return results[0]["pk"] if results else None
+    for user in resp.json().get("results", []):
+        if (user.get("email") or "").lower() == email:
+            return user["pk"]
+    return None
 
 
 def list_launchable_apps(pk: int) -> list[dict]:
@@ -58,6 +65,7 @@ def list_launchable_apps(pk: int) -> list[dict]:
 
 def get_apps_for_email(email: str) -> list[dict]:
     """Cached per-user tile list. Raises httpx.HTTPError if Authentik is unreachable."""
+    email = (email or "").strip().lower()
     r = get_redis()
     key = _cache_key(email)
     cached = r.get(key)
