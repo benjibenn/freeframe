@@ -30,8 +30,22 @@ export default function OidcCallbackPage() {
     // Strip the tokens out of the URL/history so they aren't left in the bar.
     window.history.replaceState(null, '', window.location.pathname)
 
+    // Only redirect to a same-origin path. `startsWith('/')` alone still admits
+    // protocol-relative ("//evil.com") and backslash ("/\evil.com") URLs that
+    // browsers resolve off-origin — an open redirect. Resolve against our own
+    // origin and require it to match, then keep only the path portion.
     const from = params.get('from')
-    const dest = from && from.startsWith('/') ? from : '/projects'
+    let dest = '/projects'
+    if (from) {
+      try {
+        const parsed = new URL(from, window.location.origin)
+        if (parsed.origin === window.location.origin) {
+          dest = parsed.pathname + parsed.search + parsed.hash
+        }
+      } catch {
+        // malformed `from` — fall back to the default destination
+      }
+    }
     useAuthStore
       .getState()
       .fetchUser()
