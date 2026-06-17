@@ -1,0 +1,36 @@
+name: Deploy
+
+# Auto-deploy to the production server (5.223.50.56) on every push to main.
+# The server holds a read-only deploy key for `git fetch`; this workflow SSHes
+# in (appleboy/ssh-action) and rebuilds the Docker stack. The api container runs
+# `alembic upgrade head` on start, so migrations apply automatically.
+#
+# IMPORTANT: the server is reset to origin/main on every deploy
+# (`git reset --hard` + `git clean -fd`). Do NOT hand-edit code on the server —
+# any change not in main is wiped on the next deploy. .env.prod is gitignored
+# and preserved.
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 30m
+          script: |
+            set -e
+            cd /opt/freeframe
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
+            docker compose -f docker-compose.prod.yml -f docker-compose.override.prod.yml build api web
+            docker compose -f docker-compose.prod.yml -f docker-compose.override.prod.yml up -d
+            docker image prune -f
