@@ -724,6 +724,7 @@ function ShareReviewScreen({
   const [AudioPlayer, setAudioPlayer] = React.useState<any>(null)
   const [CommentPanel, setCommentPanel] = React.useState<any>(null)
   const [CommentInput, setCommentInput] = React.useState<any>(null)
+  const [VersionSwitcher, setVersionSwitcher] = React.useState<any>(null)
   const [loaded, setLoaded] = React.useState(false)
 
   React.useEffect(() => {
@@ -735,13 +736,15 @@ function ShareReviewScreen({
       import('@/components/review/audio-player'),
       import('@/components/review/comment-panel'),
       import('@/components/review/comment-input'),
-    ]).then(([provider, video, image, audio, comments, input]) => {
+      import('@/components/review/version-switcher'),
+    ]).then(([provider, video, image, audio, comments, input, versionSwitcher]) => {
       setProvider(() => provider.ReviewProvider)
       setVideoPlayer(() => video.VideoPlayer)
       setImageViewer(() => image.ImageViewer)
       setAudioPlayer(() => audio.AudioPlayer)
       setCommentPanel(() => comments.CommentPanel)
       setCommentInput(() => input.CommentInput)
+      setVersionSwitcher(() => versionSwitcher.VersionSwitcher)
       setLoaded(true)
     })
   }, [])
@@ -764,6 +767,7 @@ function ShareReviewScreen({
         AudioPlayer={AudioPlayer}
         CommentPanel={CommentPanel}
         CommentInput={CommentInput}
+        VersionSwitcher={VersionSwitcher}
       />
     </ReviewProvider>
   )
@@ -771,7 +775,7 @@ function ShareReviewScreen({
 
 function ShareReviewInner({
   token, shareSession, assetName, permission, allowDownload, onBack,
-  VideoPlayer, ImageViewer, AudioPlayer, CommentPanel, CommentInput,
+  VideoPlayer, ImageViewer, AudioPlayer, CommentPanel, CommentInput, VersionSwitcher,
 }: any) {
   // Import hooks from the review system
   const { useReview } = require('@/components/review/review-provider')
@@ -781,6 +785,25 @@ function ShareReviewInner({
   const { asset, versions, isLoading, comments, refetchComments, addComment } = useReview()
   const { currentVersion, isDrawingMode, focusedCommentId } = useReviewStore()
   const [sidebarOpen, setSidebarOpen] = React.useState(true)
+  const [versionStreamUrl, setVersionStreamUrl] = React.useState<string | null>(null)
+
+  // In share mode the video player isn't version-aware, so fetch the selected
+  // version's stream here and feed it in (images/audio handle this via their
+  // own `version` prop). Keyed on currentVersion so switching reloads cleanly.
+  React.useEffect(() => {
+    if (!asset || asset.asset_type !== 'video' || !currentVersion?.id) return
+    let cancelled = false
+    // Clear the prior version's URL so the freshly-keyed player falls back to the
+    // asset's base stream during the fetch gap (avoids a stale-frame flash).
+    setVersionStreamUrl(null)
+    const sp = shareSession ? `&share_session=${encodeURIComponent(shareSession)}` : ''
+    fetch(`${API_URL}/share/${token}/stream/${asset.id}?version_id=${currentVersion.id}${sp}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d?.url) setVersionStreamUrl(d.url) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [token, shareSession, asset, currentVersion?.id])
+
   const [activeTab, setActiveTab] = React.useState<'comments' | 'fields'>('comments')
   const [AnnotationOverlay, setAnnotationOverlay] = React.useState<any>(null)
   const [AnnotationCanvas, setAnnotationCanvas] = React.useState<any>(null)
@@ -868,6 +891,9 @@ function ShareReviewInner({
           <span className="text-[13px] font-medium text-text-primary truncate">{assetName}</span>
         </div>
         <div className="flex items-center gap-2">
+          {VersionSwitcher && versions.length > 1 && (
+            <VersionSwitcher versions={versions} />
+          )}
           {allowDownload && (
             <button className="flex items-center gap-1.5 h-7 px-3 rounded-md text-xs font-medium text-text-inverse bg-accent hover:bg-accent-hover transition-colors" onClick={() => handleDownload(token, asset.id, shareSession)}>
               <Download className="h-3 w-3" /> Download
@@ -888,7 +914,8 @@ function ShareReviewInner({
               assetId={asset.id}
               comments={comments}
               className="flex-1"
-              initialStreamUrl={(asset as any).stream_url}
+              key={currentVersion?.id ?? asset.id}
+              initialStreamUrl={versionStreamUrl ?? (asset as any).stream_url}
               overlay={
                 <>
                   {AnnotationOverlay && <AnnotationOverlay key={focusedCommentId ?? 'none'} />}

@@ -157,8 +157,49 @@ export function ReviewProvider({
         } else if (data.latest_version) {
           setCurrentVersion(data.latest_version);
         }
-      } else if (data.latest_version) {
-        setCurrentVersion(data.latest_version);
+      } else {
+        // Share mode: load the asset's versions for the switcher. The share
+        // endpoint returns ready-only versions newest-first and caps the list
+        // to one when the link disables version history, so the UI hides the
+        // switcher when fewer than two come back.
+        try {
+          const API_URL =
+            process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+          const headers: Record<string, string> = {};
+          try {
+            const t = localStorage.getItem("ff_access_token");
+            if (t) headers["Authorization"] = `Bearer ${t}`;
+          } catch {}
+          const qs = shareSessionParam ? `?${shareSessionParam.slice(1)}` : "";
+          const vRes = await fetch(
+            `${API_URL}/share/${shareToken}/assets/${assetId}/versions${qs}`,
+            { headers },
+          );
+          const vData: Array<{
+            id: string;
+            version_number: number;
+            processing_status: AssetVersion["processing_status"];
+            created_at: string | null;
+          }> = vRes.ok ? await vRes.json() : [];
+          if (!mountedRef.current) return;
+          if (Array.isArray(vData) && vData.length > 0) {
+            const mapped: AssetVersion[] = vData.map((v) => ({
+              id: v.id,
+              asset_id: assetId,
+              version_number: v.version_number,
+              processing_status: v.processing_status,
+              created_by: "",
+              created_at: v.created_at ?? "",
+              deleted_at: null,
+            }));
+            setVersions(mapped);
+            setCurrentVersion(mapped[0]); // endpoint returns newest-first
+          } else if (data.latest_version) {
+            setCurrentVersion(data.latest_version);
+          }
+        } catch {
+          if (data.latest_version) setCurrentVersion(data.latest_version);
+        }
       }
     } catch (err) {
       if (!mountedRef.current) return;
