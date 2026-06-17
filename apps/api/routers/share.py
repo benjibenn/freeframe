@@ -166,6 +166,19 @@ def _get_latest_media_file(db: Session, asset_id: uuid.UUID) -> Optional[MediaFi
     return db.query(MediaFile).filter(MediaFile.version_id == version.id).first()
 
 
+def _get_media_file_for_version(db: Session, asset_id: uuid.UUID, version_id: uuid.UUID) -> Optional[MediaFile]:
+    """Get the first media file for a specific ready version of an asset, if it belongs to the asset."""
+    version = db.query(AssetVersion).filter(
+        AssetVersion.id == version_id,
+        AssetVersion.asset_id == asset_id,
+        AssetVersion.deleted_at.is_(None),
+        AssetVersion.processing_status == ProcessingStatus.ready,
+    ).first()
+    if not version:
+        return None
+    return db.query(MediaFile).filter(MediaFile.version_id == version.id).first()
+
+
 # ── Share links ───────────────────────────────────────────────────────────────
 
 @router.post("/assets/{asset_id}/share", response_model=ShareLinkResponse, status_code=status.HTTP_201_CREATED)
@@ -1374,6 +1387,7 @@ def get_share_stream_url(
     token: str,
     asset_id: uuid.UUID,
     share_session: Optional[str] = Query(None, alias="share_session"),
+    version_id: Optional[uuid.UUID] = Query(default=None),
     download: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
@@ -1390,7 +1404,13 @@ def get_share_stream_url(
     # Validate asset belongs to this share
     _validate_asset_in_share(db, link, asset)
 
-    media_file = _get_latest_media_file(db, asset.id)
+    # Only honor an explicit version when the link allows version switching; a
+    # guest must not be able to reach older versions by guessing an id otherwise.
+    media_file = None
+    if version_id and link.show_versions:
+        media_file = _get_media_file_for_version(db, asset.id, version_id)
+    if not media_file:
+        media_file = _get_latest_media_file(db, asset.id)
     if not media_file:
         raise HTTPException(status_code=404, detail="No ready media file found")
 
@@ -1434,6 +1454,45 @@ def get_share_stream_url(
         "thumbnail_url": thumb_url,
         "duration_seconds": media_file.duration_seconds,
     }
+
+
+@router.get("/share/{token}/assets/{asset_id}/versions")
+def list_share_asset_versions(
+    token: str,
+    asset_id: uuid.UUID,
+    share_session: Optional[str] = Query(None, alias="share_session"),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
+    """Public endpoint — list the ready versions of an asset in a share link.
+
+    Returns the full version history only when the link was created with
+    show_versions enabled; otherwise just the latest ready version, so links
+    that opt out never expose older versions.
+    """
+    link = validate_share_link_with_session(db, token, share_session=share_session, current_user=current_user)
+
+    asset = _get_asset(db, asset_id)
+    _validate_asset_in_share(db, link, asset)
+
+    versions = db.query(AssetVersion).filter(
+        AssetVersion.asset_id == asset.id,
+        AssetVersion.deleted_at.is_(None),
+        AssetVersion.processing_status == ProcessingStatus.ready,
+    ).order_by(AssetVersion.version_number.desc()).all()
+
+    if not link.show_versions:
+        versions = versions[:1]
+
+    return [
+        {
+            "id": str(v.id),
+            "version_number": v.version_number,
+            "processing_status": v.processing_status.value,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+        }
+        for v in versions
+    ]
 
 
 @router.get("/share/{token}/thumbnail/{asset_id}")

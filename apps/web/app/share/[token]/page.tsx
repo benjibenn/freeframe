@@ -523,7 +523,7 @@ function ShareMediaViewer({ asset, token, streamUrl, streamLoading }: ShareMedia
       {(asset.asset_type === 'image' || asset.asset_type === 'image_carousel') && (
         <div className="w-full h-full flex items-center justify-center p-4">
           <img
-            src={asset.thumbnail_url || asset.stream_url || `${API_URL}/share/${token}/thumbnail/${asset.id}`}
+            src={streamUrl || asset.thumbnail_url || asset.stream_url || `${API_URL}/share/${token}/thumbnail/${asset.id}`}
             alt={asset.name}
             className="max-h-full max-w-full object-contain"
             onError={(e) => {
@@ -687,6 +687,44 @@ function FieldRow({
 
 // ─── Share Viewer (single asset — Frame.io layout) ────────────────────────────
 
+// ─── Share version switcher ──────────────────────────────────────────────────
+
+interface ShareVersion {
+  id: string
+  version_number: number
+  processing_status: string
+  created_at: string | null
+}
+
+function ShareVersionSwitcher({
+  versions,
+  selectedVersionId,
+  onSelect,
+}: {
+  versions: ShareVersion[]
+  selectedVersionId: string | null
+  onSelect: (id: string) => void
+}) {
+  if (versions.length < 2) return null
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-2xs text-zinc-500 shrink-0">Version</span>
+      <select
+        value={selectedVersionId ?? versions[0]?.id ?? ''}
+        onChange={(e) => onSelect(e.target.value)}
+        className="rounded-md bg-white/10 text-white text-xs font-medium px-2 py-1 outline-none border border-white/10 hover:bg-white/15 transition-colors cursor-pointer"
+        aria-label="Select version"
+      >
+        {versions.map((v) => (
+          <option key={v.id} value={v.id} className="bg-zinc-900 text-white">
+            v{v.version_number}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
 interface ShareViewerProps {
   token: string
   asset: Asset & { thumbnail_url?: string; stream_url?: string }
@@ -694,6 +732,7 @@ interface ShareViewerProps {
   allowDownload: boolean
   branding: ProjectBranding | null
   shareName?: string
+  showVersions?: boolean
   onBack?: () => void
 }
 
@@ -704,22 +743,55 @@ function ShareViewer({
   allowDownload,
   branding,
   shareName,
+  showVersions = false,
   onBack,
 }: ShareViewerProps) {
   const [streamUrl, setStreamUrl] = React.useState<string | null>(asset.stream_url ?? null)
   const [streamLoading, setStreamLoading] = React.useState(false)
   const [commentKey, setCommentKey] = React.useState(0)
   const [sidebarOpen, setSidebarOpen] = React.useState(true)
+  const [versions, setVersions] = React.useState<ShareVersion[]>([])
+  const [selectedVersionId, setSelectedVersionId] = React.useState<string | null>(null)
 
-  // For video/audio assets, get a stream URL if not already provided
+  // When the link allows it, load the asset's version history. Default the
+  // selection to the latest (the API returns newest first) only when there's
+  // more than one, so single-version assets keep their existing behavior.
   React.useEffect(() => {
-    if (asset.stream_url) {
+    if (!showVersions) return
+    let cancelled = false
+    fetch(`${API_URL}/share/${token}/assets/${asset.id}/versions`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: ShareVersion[]) => {
+        if (cancelled || !Array.isArray(data)) return
+        setVersions(data)
+        if (data.length > 1) setSelectedVersionId(data[0].id)
+      })
+      .catch(() => {
+        if (!cancelled) setVersions([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [token, asset.id, showVersions])
+
+  // Resolve a stream URL. A selected version always fetches that version's
+  // media (for any type); otherwise fall back to the preloaded stream_url and
+  // only fetch for video/audio (images use the thumbnail endpoint).
+  React.useEffect(() => {
+    if (!selectedVersionId && asset.stream_url) {
       setStreamUrl(asset.stream_url)
       return
     }
-    if (asset.asset_type !== 'video' && asset.asset_type !== 'audio') return
+    const isImage = asset.asset_type === 'image' || asset.asset_type === 'image_carousel'
+    const needStream =
+      asset.asset_type === 'video' ||
+      asset.asset_type === 'audio' ||
+      (selectedVersionId != null && isImage)
+    if (!needStream) return
+
     setStreamLoading(true)
-    fetch(`${API_URL}/share/${token}/stream/${asset.id}`)
+    const qs = selectedVersionId ? `?version_id=${selectedVersionId}` : ''
+    fetch(`${API_URL}/share/${token}/stream/${asset.id}${qs}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data?.stream_url) setStreamUrl(data.stream_url)
@@ -727,7 +799,7 @@ function ShareViewer({
       })
       .catch(() => null)
       .finally(() => setStreamLoading(false))
-  }, [token, asset.asset_type, asset.stream_url, asset.id])
+  }, [token, asset.asset_type, asset.stream_url, asset.id, selectedVersionId])
 
   const displayName = shareName || branding?.custom_title || 'FreeFrame'
 
@@ -746,6 +818,17 @@ function ShareViewer({
         onBack={onBack}
         branding={branding}
       />
+
+      {/* Version switcher bar */}
+      {versions.length > 1 && (
+        <div className="shrink-0 flex items-center justify-end border-b border-white/[0.06] bg-zinc-950 px-4 py-1.5">
+          <ShareVersionSwitcher
+            versions={versions}
+            selectedVersionId={selectedVersionId}
+            onSelect={setSelectedVersionId}
+          />
+        </div>
+      )}
 
       {/* Main content: viewer + sidebar */}
       <div className="flex flex-col md:flex-row flex-1 overflow-hidden min-h-0">
@@ -1085,6 +1168,7 @@ export default function SharePage({
       asset={state.asset}
       permission={state.permission}
       allowDownload={state.allowDownload}
+      showVersions={state.showVersions}
       branding={state.branding}
     />
   )
