@@ -18,6 +18,8 @@ from ..middleware.api_key import require_api_key
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, AssetStatus, ProcessingStatus
 from ..models.user import User
 from ..models.project import Project
+from ..models.folder import Folder
+from ..models.submission import Submission
 from ..schemas.public_api import PublicVideoItem, PublicVideoListResponse, PublicVideoDownload
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
 
@@ -40,7 +42,7 @@ def _pick_media_file(files: list[MediaFile]) -> Optional[MediaFile]:
 
 @router.get("/videos", response_model=PublicVideoListResponse)
 def list_videos(
-    search: Optional[str] = Query(None, description="Filter by video name (partial, case-insensitive)"),
+    search: Optional[str] = Query(None, description="Filter by asset name, editor name/email, folder, project/set name, or submitter display name (partial, case-insensitive)"),
     author: Optional[str] = Query(None, description="Filter by author name or email (partial, case-insensitive)"),
     asset_status: Optional[AssetStatus] = Query(None, alias="status", description="Filter by review status"),
     asset_type: str = Query("video", description="'video' (default) or 'all' to include every media type"),
@@ -60,7 +62,29 @@ def list_videos(
     if asset_type != "all":
         query = query.filter(Asset.asset_type == AssetType.video)
     if search:
-        query = query.filter(Asset.name.ilike(f"%{search}%"))
+        like = f"%{search}%"
+        # Match the term against everything a picker user might recognise: the
+        # asset name, the editor (creator) name/email, the folder, the project /
+        # "set" name (which embeds the request title + submitter handle), and the
+        # submitter's display name. Related rows are matched via correlated
+        # EXISTS so a video is never duplicated or dropped from the page.
+        query = query.filter(or_(
+            Asset.name.ilike(like),
+            User.name.ilike(like),
+            User.email.ilike(like),
+            db.query(Folder.id).filter(
+                Folder.id == Asset.folder_id,
+                Folder.name.ilike(like),
+            ).exists(),
+            db.query(Project.id).filter(
+                Project.id == Asset.project_id,
+                Project.name.ilike(like),
+            ).exists(),
+            db.query(Submission.id).filter(
+                Submission.project_id == Asset.project_id,
+                Submission.display_name.ilike(like),
+            ).exists(),
+        ))
     if asset_status is not None:
         query = query.filter(Asset.status == asset_status)
     if author:
