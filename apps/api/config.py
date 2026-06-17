@@ -74,7 +74,12 @@ class Settings(BaseSettings):
     # videos out to other platforms (e.g. Meta). Sent in the X-API-Key header.
     # If unset, the /public/* endpoints return 503 (disabled).
     public_api_key: str | None = None
-    
+
+    # Fallback owner for briefs imported from Creative Flywheel via
+    # POST /public/v1/briefs when the brief has no resolvable owner email.
+    # The account is auto-created (active, verified) if it does not exist.
+    brief_import_fallback_email: str | None = None
+
     # Worker concurrency settings
     transcoding_concurrency: int = 2  # Number of concurrent video transcoding jobs
     email_concurrency: int = 2  # Number of concurrent email sending jobs
