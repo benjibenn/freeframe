@@ -19,9 +19,15 @@ def upgrade() -> None:
     op.add_column('submission_links', sa.Column('source_brief_id', sa.String(length=255), nullable=True))
     op.add_column('submission_links', sa.Column('brief_pdf_s3_key', sa.String(length=1024), nullable=True))
     op.create_index('ix_submission_links_source', 'submission_links', ['source'])
-    # Plain unique index: rows with NULL source (manual requests) are unconstrained
-    # in Postgres (NULLs distinct); only external (source, source_brief_id) pairs collide.
-    op.create_index('uq_submission_links_source_brief', 'submission_links', ['source', 'source_brief_id'], unique=True)
+    # Partial unique index: only active rows (deleted_at IS NULL) are constrained,
+    # so a soft-deleted row doesn't block a fresh import of the same brief.
+    op.create_index(
+        'uq_submission_links_source_brief',
+        'submission_links',
+        ['source', 'source_brief_id'],
+        unique=True,
+        postgresql_where=sa.text('deleted_at IS NULL'),
+    )
 
 
 def downgrade() -> None:

@@ -68,3 +68,9 @@ def test_no_owner_no_fallback_raises(patched, monkeypatch):
     db = _db_no_existing()
     with pytest.raises(ValueError):
         svc.upsert_brief_request(db, source_brief_id="B3", title="T", instructions="i", owner_email=None, pdf_bytes=b"%PDF")
+
+
+def test_rejects_unsafe_source_brief_id(patched):
+    db = _db_no_existing()
+    with pytest.raises(ValueError):
+        svc.upsert_brief_request(db, source_brief_id="../../etc/passwd", title="t", instructions="i", owner_email="a@b.com", pdf_bytes=b"%PDF")

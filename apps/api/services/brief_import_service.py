@@ -9,6 +9,7 @@ configured fallback account. The brief PDF is stored in object storage and a
 """
 from __future__ import annotations
 
+import re
 import secrets
 from typing import Optional
 
@@ -50,6 +51,8 @@ def upsert_brief_request(
     owner_email: Optional[str],
     pdf_bytes: bytes,
 ) -> tuple[SubmissionLink, bool]:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", source_brief_id or ""):
+        raise ValueError("invalid source_brief_id")
     owner = _resolve_owner(db, owner_email)
 
     s3_key = f"briefs/{source_brief_id}.pdf"
