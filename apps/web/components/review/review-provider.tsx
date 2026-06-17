@@ -68,7 +68,7 @@ export function ReviewProvider({
   const [error, setError] = useState<string | null>(null);
   const pauseHandlerRef = useRef<(() => void) | null>(null);
 
-  const { setCurrentAsset, setCurrentVersion, setPlayheadTime } =
+  const { currentVersion, setCurrentAsset, setCurrentVersion, setPlayheadTime } =
     useReviewStore();
 
   // Track whether component is still mounted to avoid state updates after unmount
@@ -213,8 +213,13 @@ export function ReviewProvider({
       if (shareToken) {
         const API_URL =
           process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        // Scope comments to the selected version so switching versions shows
+        // only that version's comments (the endpoint returns all when omitted).
+        const versionQs = currentVersion?.id
+          ? `&version_id=${currentVersion.id}`
+          : "";
         const res = await fetch(
-          `${API_URL}/share/${shareToken}/comments?asset_id=${assetId}${shareSessionParam}`,
+          `${API_URL}/share/${shareToken}/comments?asset_id=${assetId}${versionQs}${shareSessionParam}`,
         );
         if (res.ok) {
           const json = await res.json();
@@ -231,7 +236,7 @@ export function ReviewProvider({
     } catch {
       // Comments failing silently — asset is still viewable
     }
-  }, [assetId, shareToken]);
+  }, [assetId, shareToken, shareSessionParam, currentVersion?.id]);
 
   const refetchComments = useCallback(async () => {
     await fetchComments();
@@ -251,10 +256,17 @@ export function ReviewProvider({
   useEffect(() => {
     setIsLoading(true);
     setError(null);
-    Promise.all([fetchAsset(), fetchComments()]).finally(() => {
+    fetchAsset().finally(() => {
       if (mountedRef.current) setIsLoading(false);
     });
-  }, [fetchAsset, fetchComments]);
+  }, [fetchAsset]);
+
+  // Load comments independently of the asset so a version switch (which changes
+  // fetchComments via currentVersion) re-fetches comments WITHOUT re-running
+  // fetchAsset — re-running fetchAsset would reset currentVersion and loop.
+  useEffect(() => {
+    fetchComments();
+  }, [fetchComments]);
 
   const addComment = useCallback(
     async (payload: CreateCommentPayload): Promise<Comment> => {

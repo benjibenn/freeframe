@@ -194,20 +194,24 @@ function ErrorState({ expired }: ErrorStateProps) {
 interface GuestCommentListProps {
   token: string
   refreshKey: number
+  versionId: string | null
 }
 
-function GuestCommentList({ token, refreshKey }: GuestCommentListProps) {
+function GuestCommentList({ token, refreshKey, versionId }: GuestCommentListProps) {
   const [comments, setComments] = React.useState<GuestComment[]>([])
   const [loading, setLoading] = React.useState(true)
 
   React.useEffect(() => {
     setLoading(true)
-    fetch(`${API_URL}/share/${token}/comments`)
+    // Scope comments to the selected version so the version switcher shows only
+    // that version's comments (omitted = all, matching the backend default).
+    const vq = versionId ? `?version_id=${versionId}` : ''
+    fetch(`${API_URL}/share/${token}/comments${vq}`)
       .then((r) => (r.ok ? r.json() : Promise.resolve([])))
       .then((data: CommentsResponse) => setComments(data))
       .catch(() => setComments([]))
       .finally(() => setLoading(false))
-  }, [token, refreshKey])
+  }, [token, refreshKey, versionId])
 
   if (loading) {
     return (
@@ -555,6 +559,7 @@ interface ShareRightPanelProps {
   permission: SharePermission
   commentRefreshKey: number
   onCommentPosted: () => void
+  versionId: string | null
 }
 
 function ShareRightPanel({
@@ -563,6 +568,7 @@ function ShareRightPanel({
   permission,
   commentRefreshKey,
   onCommentPosted,
+  versionId,
 }: ShareRightPanelProps) {
   const [activeTab, setActiveTab] = React.useState<'comments' | 'fields'>('comments')
 
@@ -608,7 +614,7 @@ function ShareRightPanel({
             </div>
 
             {/* Comment list */}
-            <GuestCommentList token={token} refreshKey={commentRefreshKey} />
+            <GuestCommentList token={token} refreshKey={commentRefreshKey} versionId={versionId} />
 
             {/* Approval actions */}
             {permission === 'approve' && (
@@ -621,6 +627,7 @@ function ShareRightPanel({
             {(permission === 'comment' || permission === 'approve') ? (
               <GuestCommentInput
                 token={token}
+                versionId={versionId}
                 onCommentPosted={onCommentPosted}
                 className="border-t border-white/[0.06] bg-[#141416]"
               />
@@ -848,6 +855,7 @@ function ShareViewer({
             permission={permission}
             commentRefreshKey={commentKey}
             onCommentPosted={() => setCommentKey((k) => k + 1)}
+            versionId={selectedVersionId ?? versions[0]?.id ?? null}
           />
         )}
       </div>

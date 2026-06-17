@@ -109,9 +109,11 @@ interface GuestCommentInputProps {
   /** Called after a comment is successfully submitted */
   onCommentPosted?: () => void
   className?: string
+  /** The currently-selected version; tags the comment so it shows on that version */
+  versionId?: string | null
 }
 
-export function GuestCommentInput({ token, onCommentPosted, className }: GuestCommentInputProps) {
+export function GuestCommentInput({ token, onCommentPosted, className, versionId }: GuestCommentInputProps) {
   const [identity, setIdentity] = React.useState<GuestIdentity | null>(null)
   const [body, setBody] = React.useState('')
   const [submitting, setSubmitting] = React.useState(false)
@@ -147,6 +149,7 @@ export function GuestCommentInput({ token, onCommentPosted, className }: GuestCo
           body: trimmed,
           guest_email: identity.email,
           guest_name: identity.name,
+          ...(versionId ? { version_id: versionId } : {}),
         }),
       })
 
