@@ -55,10 +55,15 @@ interface ShareValidateResponse {
 interface GuestComment {
   id: string
   body: string
-  guest_name: string
-  guest_email: string
+  author?: { id: string; name: string; avatar_url?: string | null } | null
+  guest_author?: { id: string; name: string; email?: string | null } | null
   created_at: string
   timecode_start?: number | null
+}
+
+// Display name for a comment author — logged-in user, guest, or fallback.
+function commentAuthorName(comment: GuestComment): string {
+  return comment.author?.name || comment.guest_author?.name || 'Anonymous'
 }
 
 type CommentsResponse = GuestComment[]
@@ -235,9 +240,9 @@ function GuestCommentList({ token, refreshKey }: GuestCommentListProps) {
         >
           <div className="flex items-center gap-2 mb-1.5">
             <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-purple-500/20 text-2xs font-medium text-purple-400">
-              {comment.guest_name.charAt(0).toUpperCase()}
+              {commentAuthorName(comment).charAt(0).toUpperCase()}
             </div>
-            <span className="text-xs font-medium text-zinc-200">{comment.guest_name}</span>
+            <span className="text-xs font-medium text-zinc-200">{commentAuthorName(comment)}</span>
             {comment.timecode_start != null && (
               <span className="text-2xs text-zinc-500 font-mono bg-white/5 px-1.5 py-0.5 rounded">
                 {Math.floor(comment.timecode_start / 60)}:
