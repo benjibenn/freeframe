@@ -222,3 +222,8 @@ CLAUDE.md
 
 .DS_Store
 .worktrees/
+access.json
+postiz-server.json
+._*
+.portal-bak-*/
+.playwright-mcp/
