@@ -1,0 +1,101 @@
+# ============================================================
+# Authentik — self-hosted OIDC identity provider
+#
+# Host-agnostic: Authentik's web port is published ONLY on loopback
+# (127.0.0.1:9000). A reverse proxy on the host terminates TLS and forwards to
+# it — Apache (this deployment) or Traefik/nginx elsewhere. Authentik runs its
+# OWN Postgres + Redis so its data lifecycle is independent of anything else on
+# the box.
+#
+# Usage (on the server):
+#   cp .env.authentik.example .env.authentik   # then fill it in
+#   docker compose --env-file .env.authentik -f docker-compose.authentik.yml up -d
+#
+# Then point a reverse-proxy vhost for AUTHENTIK_DOMAIN at http://127.0.0.1:9000
+# (see apache/deb-sso.conf) and issue a cert with certbot.
+# ============================================================
+
+services:
+  authentik-postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AUTHENTIK_PG_USER}
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASSWORD}
+      POSTGRES_DB: ${AUTHENTIK_PG_DB}
+    volumes:
+      - authentik_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  authentik-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - authentik_redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  authentik-server:
+    image: ${AUTHENTIK_IMAGE}:${AUTHENTIK_TAG}
+    restart: unless-stopped
+    command: server
+    env_file:
+      - .env.authentik
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
+      AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_PG_USER}
+      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_PG_DB}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASSWORD}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD}
+      AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN}
+    volumes:
+      - ./blueprints:/blueprints/custom:ro
+      - authentik_media:/media
+    ports:
+      # Loopback only — Apache (host) terminates TLS and proxies here.
+      - "127.0.0.1:9000:9000"
+    depends_on:
+      authentik-postgres:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+
+  authentik-worker:
+    image: ${AUTHENTIK_IMAGE}:${AUTHENTIK_TAG}
+    restart: unless-stopped
+    command: worker
+    env_file:
+      - .env.authentik
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
+      AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_PG_USER}
+      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_PG_DB}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASSWORD}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+    volumes:
+      - ./blueprints:/blueprints/custom:ro
+      - authentik_media:/media
+    depends_on:
+      authentik-postgres:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+
+volumes:
+  authentik_pgdata:
+  authentik_redisdata:
+  authentik_media:

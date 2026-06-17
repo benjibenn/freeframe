@@ -40,6 +40,36 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     transcoder_engine: str = "ffmpeg"
 
+    # ---- OIDC / SSO (Authentik) ----
+    # When all four are set, the /auth/oidc/* endpoints are enabled and the
+    # frontend can offer "Log in with SSO". Unset = OIDC disabled, local login only.
+    # Issuer is the per-app issuer, e.g. https://auth.example.com/application/o/freeframe/
+    oidc_issuer: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = None
+    oidc_redirect_uri: str | None = None
+
+    @property
+    def oidc_enabled(self) -> bool:
+        return all([
+            self.oidc_issuer,
+            self.oidc_client_id,
+            self.oidc_client_secret,
+            self.oidc_redirect_uri,
+        ])
+
+    # ---- Authentik portal (Phase 2 Shell) ----
+    # freeframe's /portal/apps endpoint reads each user's launchable apps from
+    # Authentik. Both must be set for the endpoint to work; otherwise it 503s.
+    # api_base is the Authentik origin (no trailing slash), e.g.
+    # https://deb-sso.debugged.com.my
+    authentik_api_base: str | None = None
+    authentik_service_token: str | None = None
+
+    @property
+    def portal_enabled(self) -> bool:
+        return bool(self.authentik_api_base and self.authentik_service_token)
+
     # Public (machine-to-machine) API key for the external integration that pulls
     # videos out to other platforms (e.g. Meta). Sent in the X-API-Key header.
     # If unset, the /public/* endpoints return 503 (disabled).
