@@ -41,6 +41,13 @@ class SubmissionLink(Base):
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True
     )
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Provenance for requests auto-created from an external source (the data
+    # spine). NULL for normal hand-made requests. unique among ACTIVE rows
+    # (partial index where deleted_at IS NULL), so re-importing a brief upserts
+    # and a soft-deleted request doesn't block a fresh import.
+    source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    source_brief_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    brief_pdf_s3_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 

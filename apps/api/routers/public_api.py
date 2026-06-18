@@ -8,12 +8,14 @@ Served behind the `/api` prefix, so external callers hit:
     GET /api/public/v1/videos
     GET /api/public/v1/videos/{asset_id}/download
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 import uuid
 from typing import Optional
 from ..database import get_db
+from ..config import settings
+from ..services import brief_import_service
 from ..middleware.api_key import require_api_key
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, AssetStatus, ProcessingStatus
 from ..models.user import User
@@ -248,3 +250,38 @@ def get_video_download(
         original_filename=mf.original_filename,
         expires_in=DOWNLOAD_URL_EXPIRY,
     )
+
+
+@router.post("/briefs")
+def import_brief(
+    source_brief_id: str = Form(...),
+    title: str = Form(...),
+    instructions: str = Form(...),
+    owner_email: Optional[str] = Form(default=None),
+    pdf: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Create or update a submission request from an external (CF) brief.
+
+    Idempotent by (source, source_brief_id): re-posting the same brief updates
+    the existing request. Auth is the shared public API key (router dependency).
+    """
+    pdf_bytes = pdf.file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty PDF")
+    try:
+        link, created = brief_import_service.upsert_brief_request(
+            db,
+            source_brief_id=source_brief_id,
+            title=title,
+            instructions=instructions,
+            owner_email=owner_email,
+            pdf_bytes=pdf_bytes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return {
+        "request_url": f"{settings.frontend_url}/submit/{link.token}",
+        "token": link.token,
+        "created": created,
+    }
