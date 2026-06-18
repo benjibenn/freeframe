@@ -49,6 +49,56 @@ _ASSET_TYPE_TO_FILE_TYPE: dict[AssetType, FileType] = {
 MAX_IMPORT_OBJECTS = 1000
 
 
+def register_s3_object_as_asset(
+    db: Session,
+    project_id: uuid.UUID,
+    s3_key: str,
+    name: str,
+    size: int,
+    mime_type: str,
+    created_by: uuid.UUID,
+    folder_id: uuid.UUID | None = None,
+) -> Asset:
+    """Create Asset + AssetVersion(processing) + MediaFile(s3_key_raw=s3_key) for an object
+    already in S3, commit, enqueue process_asset transcode, and return the Asset."""
+    asset_type = mime_to_asset_type(mime_type)
+    file_type = _ASSET_TYPE_TO_FILE_TYPE[asset_type]
+
+    asset = Asset(
+        project_id=project_id,
+        name=name,
+        asset_type=asset_type,
+        created_by=created_by,
+        folder_id=folder_id,
+    )
+    db.add(asset)
+    db.flush()
+
+    version = AssetVersion(
+        asset_id=asset.id,
+        version_number=1,
+        processing_status=ProcessingStatus.processing,
+        created_by=created_by,
+    )
+    db.add(version)
+    db.flush()
+
+    media_file = MediaFile(
+        version_id=version.id,
+        file_type=file_type,
+        original_filename=name,
+        mime_type=mime_type,
+        file_size_bytes=size,
+        s3_key_raw=s3_key,
+    )
+    db.add(media_file)
+    db.commit()
+
+    send_task_safe(process_asset, str(asset.id), str(version.id))
+
+    return asset
+
+
 def import_prefix(
     db: Session,
     project_id: uuid.UUID,
@@ -107,41 +157,9 @@ def import_prefix(
 
         try:
             name = os.path.basename(key)
-            asset_type = mime_to_asset_type(mime_type)
-            file_type = _ASSET_TYPE_TO_FILE_TYPE[asset_type]
-
-            asset = Asset(
-                project_id=project_id,
-                name=name,
-                asset_type=asset_type,
-                created_by=created_by,
-                folder_id=folder_id,
+            asset = register_s3_object_as_asset(
+                db, project_id, key, name, size, mime_type, created_by, folder_id
             )
-            db.add(asset)
-            db.flush()
-
-            version = AssetVersion(
-                asset_id=asset.id,
-                version_number=1,
-                processing_status=ProcessingStatus.processing,
-                created_by=created_by,
-            )
-            db.add(version)
-            db.flush()
-
-            media_file = MediaFile(
-                version_id=version.id,
-                file_type=file_type,
-                original_filename=name,
-                mime_type=mime_type,
-                file_size_bytes=size,
-                s3_key_raw=key,
-            )
-            db.add(media_file)
-            db.commit()
-
-            send_task_safe(process_asset, str(asset.id), str(version.id))
-
             results.append({"id": str(asset.id), "name": name})
             imported += 1
         except Exception as e:

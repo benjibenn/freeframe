@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     # The account is auto-created (active, verified) if it does not exist.
     brief_import_fallback_email: str | None = None
 
+    # Google service account key JSON *contents* (not a file path).
+    # Required for the Drive → Backblaze sync feature.
+    # Copy the full JSON from the downloaded GCP key file into .env.prod.
+    google_service_account_json: str | None = None
+
     # Worker concurrency settings
     transcoding_concurrency: int = 2  # Number of concurrent video transcoding jobs
     email_concurrency: int = 2  # Number of concurrent email sending jobs

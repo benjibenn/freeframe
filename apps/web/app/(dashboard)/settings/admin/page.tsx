@@ -13,6 +13,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { useAuthStore } from "@/stores/auth-store";
 import { useRouter } from "next/navigation";
 import type { User, UserStatus } from "@/types";
+import { DriveSyncPanel } from "@/components/settings/drive-sync-panel";
 
 function BulkInviteDialog() {
   const [open, setOpen] = React.useState(false);
@@ -426,6 +427,8 @@ export default function AdminPage() {
           </div>
         )}
       </section>
+
+      <DriveSyncPanel />
     </div>
   );
 }

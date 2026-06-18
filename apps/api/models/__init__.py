@@ -12,3 +12,4 @@ from .activity import Mention, ActivityLog, Notification
 from .api_key import APIKey
 from .frame_tag import FrameTag
 from .tag_palette import TagPaletteLabel
+from .drive_sync import DriveSyncConnection, DriveSyncedFile

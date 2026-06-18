@@ -227,6 +227,12 @@ def put_object(s3_key: str, body: bytes, content_type: str | None = None, cache_
         kwargs["CacheControl"] = cache_control
     s3.put_object(**kwargs)
 
+def upload_fileobj(s3_key: str, fileobj, content_type: str) -> None:
+    """Stream a file-like object to B2 (boto3 handles multipart automatically)."""
+    get_s3_client().upload_fileobj(fileobj, settings.s3_bucket, s3_key,
+                                   ExtraArgs={"ContentType": content_type})
+
+
 def delete_object(s3_key: str) -> None:
     s3 = get_s3_client()
     s3.delete_object(Bucket=settings.s3_bucket, Key=s3_key)
