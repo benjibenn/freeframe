@@ -50,6 +50,7 @@ import {
 } from "@/components/projects/share-link-detail";
 import { NameDialog } from "@/components/projects/name-dialog";
 import { ShareCreateDialog } from "@/components/projects/share-create-dialog";
+import { BucketImportDialog } from "@/components/projects/bucket-import-dialog";
 import { ProjectMembersDialog } from "@/components/projects/project-members-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -119,6 +120,7 @@ export default function ProjectDetailPage() {
   const [assetToRename, setAssetToRename] = React.useState<AssetResponse | null>(null);
   const [assetToDelete, setAssetToDelete] = React.useState<AssetResponse | null>(null);
   const [mobileFoldersOpen, setMobileFoldersOpen] = React.useState(false);
+  const [bucketImportOpen, setBucketImportOpen] = React.useState(false);
 
   const { files: uploadFiles, startUpload } = useUploadStore();
   const { user } = useAuthStore();
@@ -937,6 +939,22 @@ export default function ProjectDetailPage() {
               }}
               actions={
                 <>
+                  {canUpload && (
+                    <Link
+                      href={`/projects/${projectId}/sort`}
+                      className="rounded-md border border-border bg-bg-secondary px-3 h-8 inline-flex items-center text-xs font-medium text-text-secondary hover:text-text-primary"
+                    >
+                      Sort
+                    </Link>
+                  )}
+                  {canUpload && (
+                    <button
+                      className="rounded-md border border-border bg-bg-secondary px-3 h-8 inline-flex items-center text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+                      onClick={(e) => { e.stopPropagation(); setBucketImportOpen(true); }}
+                    >
+                      Import
+                    </button>
+                  )}
                   {canManageMembers && (
                     <Button
                       variant="secondary"
@@ -1325,6 +1343,14 @@ export default function ProjectDetailPage() {
           setSelectedShareLink(token);
           setShowTrash(false);
         }}
+      />
+
+      {/* Bucket import dialog */}
+      <BucketImportDialog
+        projectId={projectId}
+        open={bucketImportOpen}
+        onOpenChange={setBucketImportOpen}
+        onImported={() => { mutateAssets(); mutateSubfolders(); }}
       />
 
       {/* Project members dialog */}

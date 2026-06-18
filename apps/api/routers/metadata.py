@@ -48,6 +48,12 @@ def _apply_smart_filter(db: Session, project_id: uuid.UUID, rules: dict):
         q = q.filter(Asset.asset_type == rules["asset_type"])
     if rules and "name_contains" in rules:
         q = q.filter(Asset.name.ilike(f"%{rules['name_contains']}%"))
+    if rules and "keywords" in rules:
+        # Tag-backed collections: match assets carrying every listed keyword.
+        # Mirrors the proven JSONB-containment filter in the assets list endpoint.
+        kws = rules["keywords"]
+        for kw in kws if isinstance(kws, list) else [kws]:
+            q = q.filter(Asset.keywords.contains([kw]))
     return q
 
 

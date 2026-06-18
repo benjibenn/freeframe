@@ -14,6 +14,7 @@ import { CommentInput } from '@/components/review/comment-input'
 import { AssetStatusSelect } from '@/components/review/asset-status-select'
 import { AssetTagsEditor } from '@/components/review/asset-tags-editor'
 import { AssetMetadataEditor } from '@/components/projects/asset-metadata'
+import { FrameTagBar } from '@/components/review/frame-tag-bar'
 // ApprovalBar removed for now
 import { VersionSwitcher } from '@/components/review/version-switcher'
 import { ShareDialog } from '@/components/review/share-dialog'
@@ -423,6 +424,15 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
         <div className="flex-1 flex flex-col bg-bg-primary overflow-hidden min-w-0">
           {/* Media viewer */}
           {renderMediaViewer()}
+          {/* Frame tag bar — video/audio only, version must be ready */}
+          {currentVersion && versionReady && (asset.asset_type === 'video' || asset.asset_type === 'audio') && (
+            <FrameTagBar
+              assetId={asset.id}
+              versionId={currentVersion.id}
+              durationSeconds={currentVersion.files?.[0]?.duration_seconds ?? 0}
+              canEdit={canEditTags}
+            />
+          )}
         </div>
 
         {/* Backdrop for the mobile comments overlay */}

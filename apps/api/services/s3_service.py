@@ -230,3 +230,16 @@ def put_object(s3_key: str, body: bytes, content_type: str | None = None, cache_
 def delete_object(s3_key: str) -> None:
     s3 = get_s3_client()
     s3.delete_object(Bucket=settings.s3_bucket, Key=s3_key)
+
+
+def list_objects_v2(prefix: str, max_keys: int = 1000) -> list[dict]:
+    """List objects under a prefix. Returns [{"key": str, "size": int}, ...]."""
+    s3 = get_s3_client()
+    paginator = s3.get_paginator("list_objects_v2")
+    out: list[dict] = []
+    for page in paginator.paginate(Bucket=settings.s3_bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            out.append({"key": obj["Key"], "size": obj.get("Size", 0)})
+            if len(out) >= max_keys:
+                return out
+    return out

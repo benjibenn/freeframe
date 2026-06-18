@@ -148,7 +148,7 @@ export interface Asset {
   task_stage_id?: string | null;
   folder_id: string | null;
   due_date: string | null;
-  keywords: string[];
+  keywords: string[] | null;
   created_by: string;
   created_at: string;
   updated_at: string;

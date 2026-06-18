@@ -8,7 +8,7 @@ from typing import Optional
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
-from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, FileType, ProcessingStatus
+from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, AssetStatus, FileType, ProcessingStatus
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.share import AssetShare
 from ..models.activity import Mention, Notification, NotificationType
@@ -135,6 +135,7 @@ def list_assets(
     include_failed: bool = Query(False, description="Include assets whose latest version failed processing"),
     folder_id: Optional[str] = Query(None, description="Filter by folder. 'root' for root level, UUID for specific folder."),
     tag: Optional[list[str]] = Query(None, description="Filter to assets carrying ALL of these tags. Searches the whole project (ignores folder)."),
+    exclude_archived: bool = Query(False, description="Exclude assets with status=archived. Defaults to False so the project grid is unchanged."),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -146,6 +147,9 @@ def list_assets(
         Asset.project_id == project_id,
         Asset.deleted_at.is_(None),
     )
+
+    if exclude_archived:
+        query = query.filter(Asset.status != AssetStatus.archived)
 
     tags = normalize_tags(tag)
     if tags:
@@ -237,6 +241,62 @@ def set_asset_tags(
     asset.keywords = normalize_tags(body.tags)
     db.commit()
     db.refresh(asset)
+    return _build_asset_response(asset, db)
+
+
+def _load_editable_asset(asset_id: uuid.UUID, db: Session, current_user: User) -> Asset:
+    """Fetch a live asset and enforce tag-edit permission (admin or editor+)."""
+    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if not is_platform_admin(current_user):
+        require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    return asset
+
+
+@router.post("/assets/{asset_id}/tags/{tag}", response_model=AssetResponse)
+def add_asset_tag(
+    asset_id: uuid.UUID,
+    tag: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a single normalized keyword. Idempotent. Atomic vs PUT /tags so fast
+    keyboard tagging can't clobber concurrent writes."""
+    asset = _load_editable_asset(asset_id, db, current_user)
+    normalized = normalize_tags([tag])
+    if not normalized:
+        raise HTTPException(status_code=422, detail="Tag is empty after normalization")
+    canonical = normalized[0]
+    current = list(asset.keywords or [])
+    if canonical not in current:
+        if len(current) >= MAX_TAGS:
+            raise HTTPException(status_code=409, detail=f"Tag limit ({MAX_TAGS}) reached")
+        current.append(canonical)
+        asset.keywords = current
+        db.commit()
+        db.refresh(asset)
+    return _build_asset_response(asset, db)
+
+
+@router.delete("/assets/{asset_id}/tags/{tag}", response_model=AssetResponse)
+def remove_asset_tag(
+    asset_id: uuid.UUID,
+    tag: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove a single normalized keyword. Idempotent."""
+    asset = _load_editable_asset(asset_id, db, current_user)
+    normalized = normalize_tags([tag])
+    if not normalized:
+        return _build_asset_response(asset, db)
+    canonical = normalized[0]
+    current = list(asset.keywords or [])
+    if canonical in current:
+        asset.keywords = [t for t in current if t != canonical]
+        db.commit()
+        db.refresh(asset)
     return _build_asset_response(asset, db)
 
 

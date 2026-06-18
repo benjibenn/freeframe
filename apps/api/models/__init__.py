@@ -10,3 +10,4 @@ from .metadata import MetadataField, AssetMetadata, Collection, CollectionShare
 from .branding import ProjectBranding, WatermarkSettings
 from .activity import Mention, ActivityLog, Notification
 from .api_key import APIKey
+from .frame_tag import FrameTag
