@@ -14,7 +14,7 @@ import { CommentInput } from '@/components/review/comment-input'
 import { AssetStatusSelect } from '@/components/review/asset-status-select'
 import { AssetTagsEditor } from '@/components/review/asset-tags-editor'
 import { AssetMetadataEditor } from '@/components/projects/asset-metadata'
-import { FrameTagBar } from '@/components/review/frame-tag-bar'
+import { TagStampBar } from '@/components/review/tag-stamp-bar'
 // ApprovalBar removed for now
 import { VersionSwitcher } from '@/components/review/version-switcher'
 import { ShareDialog } from '@/components/review/share-dialog'
@@ -426,11 +426,15 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           {renderMediaViewer()}
           {/* Frame tag bar — video/audio only, version must be ready */}
           {currentVersion && versionReady && (asset.asset_type === 'video' || asset.asset_type === 'audio') && (
-            <FrameTagBar
+            <TagStampBar
+              projectId={projectId}
               assetId={asset.id}
               versionId={currentVersion.id}
               durationSeconds={currentVersion.files?.[0]?.duration_seconds ?? 0}
               canEdit={canEditTags}
+              enableHotkeys={true}
+              getCurrentTime={() => useReviewStore.getState().playheadTime}
+              onSeek={(t) => useReviewStore.getState().seekTo(t, true)}
             />
           )}
         </div>

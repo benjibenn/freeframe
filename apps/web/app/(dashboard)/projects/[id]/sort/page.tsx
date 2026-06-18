@@ -3,7 +3,8 @@
 import * as React from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { api } from '@/lib/api'
-import type { Asset, AssetStatus } from '@/types'
+import type { AssetResponse, AssetStatus } from '@/types'
+import { TagStampBar } from '@/components/review/tag-stamp-bar'
 import { useVideoPlayer } from '@/hooks/use-video-player'
 import { useSorterQueue } from '@/hooks/use-sorter-queue'
 import { useSorterStore, getBindings } from '@/stores/sorter-store'
@@ -16,7 +17,7 @@ import { useToast } from '@/components/shared/toast'
 type Op =
   | { type: 'tag-add'; assetId: string; tag: string }
   | { type: 'tag-remove'; assetId: string; tag: string }
-  | { type: 'archive'; asset: Asset; index: number; prevStatus: AssetStatus }
+  | { type: 'archive'; asset: AssetResponse; index: number; prevStatus: AssetStatus }
 
 export default function SorterPage() {
   const router = useRouter()
@@ -138,7 +139,7 @@ export default function SorterPage() {
         case 'next': queue.next(); break
         case 'seek': { const t = player.videoRef.current?.currentTime ?? 0; player.seek(t + action.delta); break }
         case 'togglePlay': player.togglePlay(); break
-        case 'slot': { const kw = bindings[action.slot]; if (kw) toggleSlot(action.slot, kw); break }
+        case 'slot': break // 1-9 repurposed to TagStampBar hotkeys
         case 'applyAll': Object.values(bindings).forEach((kw) => kw && applyTag(kw)); break
         case 'focusTag': setTagInputOpen(true); break
         case 'filter': /* phase-1: filter UI handled by SlotBar/query; no-op hook point */ break
@@ -191,6 +192,19 @@ export default function SorterPage() {
       <div className="flex items-center justify-center px-4 pb-4">
         <SlotBar projectId={projectId} currentTags={current.keywords ?? []} onToggleSlot={toggleSlot} />
       </div>
+
+      {current.latest_version?.id && (
+        <TagStampBar
+          projectId={projectId}
+          assetId={current.id}
+          versionId={current.latest_version.id}
+          durationSeconds={current.latest_version.files?.[0]?.duration_seconds ?? 0}
+          canEdit={true}
+          enableHotkeys={true}
+          getCurrentTime={() => player.videoRef.current?.currentTime ?? 0}
+          onSeek={(t) => player.seek(t)}
+        />
+      )}
 
       {tagInputOpen && (
         <TagInput
