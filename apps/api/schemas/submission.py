@@ -30,6 +30,7 @@ class SubmissionLinkPublic(BaseModel):
     title: str
     instructions: Optional[str] = None
     requires_auth: bool
+    has_brief: bool = False
 
 
 class SubmissionAcceptResponse(BaseModel):

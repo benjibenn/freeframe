@@ -23,7 +23,6 @@ from ..services.auth_service import get_user_by_email
 from ..services import s3_service
 
 SOURCE = "creative-flywheel"
-_PDF_URL_EXPIRY = 7 * 24 * 3600  # 7d (presigned max); refreshed on each re-finalize
 
 
 def _resolve_owner(db: Session, owner_email: Optional[str]) -> User:
@@ -57,10 +56,7 @@ def upsert_brief_request(
 
     s3_key = f"briefs/{source_brief_id}.pdf"
     s3_service.put_object(s3_key, pdf_bytes, content_type="application/pdf")
-    pdf_url = s3_service.generate_presigned_get_url(
-        s3_key, expires_in=_PDF_URL_EXPIRY, download_filename=f"{source_brief_id}.pdf"
-    )
-    full_instructions = f"{instructions}\n\n\U0001F4C4 Brief PDF: {pdf_url}"
+    full_instructions = instructions
 
     link = (
         db.query(SubmissionLink)

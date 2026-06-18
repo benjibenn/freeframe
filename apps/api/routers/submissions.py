@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -38,6 +39,7 @@ from ..schemas.submission import (
     ChildProjectItem,
 )
 from ..services.share_service import build_default_project_share_link
+from ..services import s3_service
 from ..services.permissions import require_platform_admin, is_platform_admin
 
 router = APIRouter(tags=["submissions"])
@@ -604,7 +606,24 @@ def resolve_submission_link(
         title=link.title,
         instructions=link.instructions,
         requires_auth=current_user is None,
+        has_brief=bool(link.brief_pdf_s3_key),
     )
+
+
+@router.get("/submit/{token}/brief.pdf")
+def get_submission_brief_pdf(token: str, db: Session = Depends(get_db)):
+    """Public: redirect to the brief PDF for a submission request, if it has one.
+
+    Token-gated like the submit page (no API key). Redirects to a fresh
+    short-lived presigned URL so the link never goes stale.
+    """
+    link = _validate_active(
+        db.query(SubmissionLink).filter(SubmissionLink.token == token).first()
+    )
+    if not link.brief_pdf_s3_key:
+        raise HTTPException(status_code=404, detail="No brief PDF for this request")
+    url = s3_service.generate_presigned_get_url(link.brief_pdf_s3_key, expires_in=3600, download_filename="brief.pdf")
+    return RedirectResponse(url)
 
 
 @router.post("/submit/{token}/accept", response_model=SubmissionAcceptResponse)

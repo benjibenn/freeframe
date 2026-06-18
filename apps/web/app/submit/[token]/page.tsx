@@ -10,6 +10,7 @@ interface SubmissionLinkPublic {
   title: string
   instructions: string | null
   requires_auth: boolean
+  has_brief: boolean
 }
 
 type Phase = 'loading' | 'needs_auth' | 'accepting' | 'error'
@@ -81,6 +82,16 @@ export default function SubmitPage() {
               {link.instructions ||
                 'Sign in or create an account to upload your submission. Your uploads stay private — only you and the project owner can see them.'}
             </p>
+            {link.has_brief && (
+              <a
+                href={`${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/brief.pdf`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mb-6 inline-flex items-center gap-2 text-sm text-accent hover:underline"
+              >
+                📄 View brief (PDF)
+              </a>
+            )}
             <Button size="lg" className="w-full" onClick={() => router.push(loginHref)}>
               Sign in to submit
             </Button>

@@ -33,7 +33,7 @@ def test_creates_new_request(patched):
     assert added.source == "creative-flywheel"
     assert added.source_brief_id == "B1"
     assert added.created_by == "owner-id"
-    assert "do the thing" in added.instructions and "pdf.test" in added.instructions
+    assert added.instructions == "do the thing"
     assert added.brief_pdf_s3_key == "briefs/B1.pdf"
 
 
@@ -47,7 +47,7 @@ def test_updates_existing_request(patched):
     )
     assert created is False
     assert existing.title == "New Title"
-    assert "updated" in existing.instructions
+    assert existing.instructions == "updated"
     db.add.assert_not_called()
 
 
