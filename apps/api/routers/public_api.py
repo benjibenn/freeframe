@@ -22,7 +22,7 @@ from ..models.user import User
 from ..models.project import Project
 from ..models.folder import Folder
 from ..models.submission import Submission
-from ..schemas.public_api import PublicVideoItem, PublicVideoListResponse, PublicVideoDownload
+from ..schemas.public_api import PublicVideoItem, PublicVideoListResponse, PublicVideoDownload, PublicUserItem
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
 
 router = APIRouter(prefix="/public/v1", tags=["public-api"], dependencies=[Depends(require_api_key)])
@@ -252,11 +252,32 @@ def get_video_download(
     )
 
 
+@router.get("/users", response_model=list[PublicUserItem])
+def list_users(db: Session = Depends(get_db)):
+    """List users that have an admin-granted `uid` display number.
+
+    Lets external integrations offer the roster of identifiable editors as a
+    picklist (e.g. the ads naming convention attributing an ad to its creator).
+    Only users WITH a uid are returned — the uid is the deliberate "known
+    editor" marker — ordered by uid so the list is stable and human-friendly.
+    Soft-deleted users are excluded.
+    """
+    users = (
+        db.query(User)
+        .filter(User.deleted_at.is_(None), User.uid.isnot(None))
+        .order_by(User.uid.asc())
+        .all()
+    )
+    return [
+        PublicUserItem(uid=u.uid, name=u.name, email=u.email, nickname=u.nickname)
+        for u in users
+    ]
+
+
 @router.post("/briefs")
 def import_brief(
     source_brief_id: str = Form(...),
     title: str = Form(...),
-    instructions: str = Form(...),
     owner_email: Optional[str] = Form(default=None),
     pdf: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -274,7 +295,6 @@ def import_brief(
             db,
             source_brief_id=source_brief_id,
             title=title,
-            instructions=instructions,
             owner_email=owner_email,
             pdf_bytes=pdf_bytes,
         )

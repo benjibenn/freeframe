@@ -48,3 +48,13 @@ class PublicVideoDownload(BaseModel):
     file_size_bytes: Optional[int] = None
     original_filename: Optional[str] = None
     expires_in: int
+
+
+class PublicUserItem(BaseModel):
+    """A user the external integration can attribute work to. Only users with an
+    admin-granted `uid` are exposed here — the uid is the deliberate "known
+    editor" marker. The internal UUID is intentionally NOT included."""
+    uid: int
+    name: str
+    email: str
+    nickname: Optional[str] = None
