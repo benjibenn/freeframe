@@ -76,6 +76,7 @@ export interface User {
   status: UserStatus;
   is_superadmin: boolean;
   is_subadmin: boolean;
+  uid: number | null;
   email_verified: boolean;
   invite_token?: string | null;
   preferences: Record<string, unknown>;

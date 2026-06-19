@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Optional
-from sqlalchemy import String, Enum, DateTime, JSON, func
+from sqlalchemy import String, Enum, DateTime, JSON, Integer, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 try:
@@ -28,6 +28,9 @@ class User(Base):
     # Sub-admin: a delegated reviewer who can see all platform activity and comment
     # on any asset, but cannot manage users or change roles (that stays superadmin-only).
     is_subadmin: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Admin-granted human-readable display number, separate from the UUID PK.
+    # NULL = not granted. Unique across all rows (Postgres treats NULLs as distinct).
+    uid: Mapped[Optional[int]] = mapped_column(Integer, unique=True, nullable=True)
     email_verified: Mapped[bool] = mapped_column(default=False)
     invite_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     invite_token_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

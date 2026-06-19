@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import uuid
 
@@ -9,7 +10,7 @@ from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User, UserStatus
 from ..models.api_key import APIKey, generate_api_key, hash_api_key, API_KEY_PREFIX
-from ..schemas.auth import UserResponse, UpdateUserRoleRequest, UpdateSubadminRequest
+from ..schemas.auth import UserResponse, UpdateUserRoleRequest, UpdateSubadminRequest, UpdateUidRequest
 from ..schemas.api_key import APIKeyResponse, APIKeyCreate, APIKeyCreated
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -145,6 +146,114 @@ def update_user_subadmin(
 
     user.is_subadmin = body.is_subadmin
     db.commit()
+    db.refresh(user)
+    return user
+
+
+# ── User display number (uid) ────────────────────────────────────────────────────
+
+def _lowest_free_uid(db: Session) -> int:
+    """Lowest positive integer (>= 1) not present in the ``uid`` column across ALL
+    user rows — including deactivated AND soft-deleted — so freed numbers are reused
+    but never collide with a retained one."""
+    taken = {
+        row[0]
+        for row in db.query(User.uid).filter(User.uid.isnot(None)).all()
+    }
+    n = 1
+    while n in taken:
+        n += 1
+    return n
+
+
+@router.post("/users/{user_id}/uid:grant", response_model=UserResponse)
+def grant_user_uid(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Auto-assign the lowest-free display number to a user. Superadmin only.
+
+    Rejects re-grant (409) if the user already has a uid — admin must edit instead.
+    On a unique-constraint race, recomputes the lowest-free number once and retries.
+    """
+    _require_superadmin(current_user)
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.uid is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"User already has uid {user.uid}; edit it instead of re-granting",
+        )
+
+    for attempt in range(2):
+        user.uid = _lowest_free_uid(db)
+        try:
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+            if attempt == 1:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Could not assign a uid due to a concurrent grant; retry",
+                )
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+
+    db.refresh(user)
+    return user
+
+
+@router.patch("/users/{user_id}/uid", response_model=UserResponse)
+def update_user_uid(
+    user_id: uuid.UUID,
+    body: UpdateUidRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Explicitly set, change, or clear (revoke) a user's display number. Superadmin only.
+
+    ``uid=None`` clears it. An integer >= 1 sets it; ``< 1`` -> 422. A value already
+    held by another user -> 409 naming the holder. The unique constraint is the
+    ultimate source of truth.
+    """
+    _require_superadmin(current_user)
+
+    if body.uid is not None and body.uid < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="uid must be a positive integer (>= 1)",
+        )
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if body.uid is not None:
+        holder = (
+            db.query(User)
+            .filter(User.uid == body.uid, User.id != user_id)
+            .first()
+        )
+        if holder is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"uid {body.uid} is already assigned to {holder.name}",
+            )
+
+    user.uid = body.uid
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"uid {body.uid} is already assigned to another user",
+        )
     db.refresh(user)
     return user
 

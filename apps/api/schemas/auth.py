@@ -29,6 +29,7 @@ class UserResponse(BaseModel):
     email_verified: bool = False
     is_superadmin: bool = False
     is_subadmin: bool = False
+    uid: int | None = None
     invite_token: str | None = None
     preferences: dict = {}
 
@@ -72,6 +73,9 @@ class UpdateUserRoleRequest(BaseModel):
 
 class UpdateSubadminRequest(BaseModel):
     is_subadmin: bool
+
+class UpdateUidRequest(BaseModel):
+    uid: int | None
 
 class DeactivateUserRequest(BaseModel):
     user_id: uuid.UUID

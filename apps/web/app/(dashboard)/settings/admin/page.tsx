@@ -15,6 +15,10 @@ import { useRouter } from "next/navigation";
 import type { User, UserStatus } from "@/types";
 import { DriveSyncPanel } from "@/components/settings/drive-sync-panel";
 
+// Centralized so a backend rename (FastAPI rejecting the literal `:`) is a
+// one-line change here. Currently: POST /admin/users/{id}/uid:grant
+const uidGrantPath = (userId: string) => `/admin/users/${userId}/uid:grant`;
+
 function BulkInviteDialog() {
   const [open, setOpen] = React.useState(false);
   const [emails, setEmails] = React.useState("");
@@ -164,6 +168,128 @@ function userStatusBadge(status: UserStatus) {
   );
 }
 
+function UidCell({ u }: { u: User }) {
+  const [editing, setEditing] = React.useState(false);
+  const [value, setValue] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+
+  const startEdit = () => {
+    setValue(u.uid != null ? String(u.uid) : "");
+    setEditing(true);
+  };
+
+  const handleGrant = async () => {
+    setBusy(true);
+    try {
+      await api.post(uidGrantPath(u.id));
+      mutate("/admin/users");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to grant uid";
+      alert(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // PATCH with an explicit value (integer >= 1) or null (revoke).
+  const patchUid = async (uid: number | null) => {
+    setBusy(true);
+    try {
+      await api.patch(`/admin/users/${u.id}/uid`, { uid });
+      mutate("/admin/users");
+      setEditing(false);
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to update uid";
+      alert(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSave = () => {
+    const trimmed = value.trim();
+    const n = Number(trimmed);
+    if (!trimmed || !Number.isInteger(n) || n < 1) {
+      alert("uid must be an integer >= 1");
+      return;
+    }
+    if (n === u.uid) {
+      setEditing(false);
+      return;
+    }
+    patchUid(n);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <Input
+          type="number"
+          min={1}
+          step={1}
+          autoFocus
+          value={value}
+          disabled={busy}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleSave();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              setEditing(false);
+            }
+          }}
+          className="h-7 w-20 px-2 py-1 text-sm"
+        />
+        <Button size="sm" variant="ghost" onClick={handleSave} disabled={busy}>
+          Save
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setEditing(false)}
+          disabled={busy}
+        >
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
+  if (u.uid == null) {
+    return (
+      <Button variant="ghost" size="sm" onClick={handleGrant} loading={busy}>
+        Grant uid
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={startEdit}
+        title="Click to edit"
+        className="rounded px-1.5 py-0.5 font-mono text-sm text-text-primary hover:bg-bg-tertiary transition-colors"
+      >
+        {u.uid}
+      </button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => patchUid(null)}
+        loading={busy}
+        className="text-status-error hover:text-status-error"
+      >
+        Revoke
+      </Button>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const { user, isSuperAdmin } = useAuthStore();
   const router = useRouter();
@@ -303,6 +429,9 @@ export default function AdminPage() {
                   <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap">
                     Status
                   </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap">
+                    UID
+                  </th>
                   <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary whitespace-nowrap hidden md:table-cell">
                     Joined
                   </th>
@@ -346,6 +475,9 @@ export default function AdminPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">{userStatusBadge(u.status)}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <UidCell u={u} />
+                    </td>
                     <td className="px-4 py-3 text-xs text-text-tertiary whitespace-nowrap hidden md:table-cell">
                       {u.created_at
                         ? new Date(u.created_at).toLocaleDateString()
