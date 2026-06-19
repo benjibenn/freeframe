@@ -139,12 +139,16 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
     from ..models.submission import SubmissionLink
     link_ids = list({p.submission_link_id for p in projects if p.submission_link_id})
     request_titles = {}
+    brief_pdf_urls = {}
     if link_ids:
-        request_titles = dict(
-            db.query(SubmissionLink.id, SubmissionLink.title)
+        for lid, title, token, pdf_key in (
+            db.query(SubmissionLink.id, SubmissionLink.title, SubmissionLink.token, SubmissionLink.brief_pdf_s3_key)
             .filter(SubmissionLink.id.in_(link_ids))
             .all()
-        )
+        ):
+            request_titles[lid] = title
+            if pdf_key:
+                brief_pdf_urls[lid] = f"/submit/{token}/brief.pdf"
 
     result = []
     for p in projects:
@@ -158,6 +162,7 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
         if p.submission_link_id is not None:
             resp.submission_link_id = p.submission_link_id
             resp.request_title = request_titles.get(p.submission_link_id)
+            resp.brief_pdf_url = brief_pdf_urls.get(p.submission_link_id)
         result.append(resp)
 
     return result
@@ -192,6 +197,13 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
     ).scalar() or 0
     default_link = get_default_project_share_link(db, project_id)
     resp.share_token = default_link.token if default_link else None
+    if project.submission_link_id is not None:
+        from ..models.submission import SubmissionLink
+        link = db.query(SubmissionLink).filter(SubmissionLink.id == project.submission_link_id).first()
+        if link:
+            resp.request_title = link.title
+            if link.brief_pdf_s3_key:
+                resp.brief_pdf_url = f"/submit/{link.token}/brief.pdf"
     return resp
 
 @router.patch("/{project_id}", response_model=ProjectResponse)

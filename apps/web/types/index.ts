@@ -122,6 +122,7 @@ export interface Project {
   // (a "video request"). The projects page nests it under the request.
   submission_link_id?: string | null;
   request_title?: string | null;
+  brief_pdf_url?: string | null;
 }
 
 export interface ProjectMember {

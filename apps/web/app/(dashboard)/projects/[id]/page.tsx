@@ -939,6 +939,16 @@ export default function ProjectDetailPage() {
               }}
               actions={
                 <>
+                  {project?.brief_pdf_url && (
+                    <a
+                      href={`${process.env.NEXT_PUBLIC_API_URL || ''}${project.brief_pdf_url}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline"
+                    >
+                      📄 View brief (PDF)
+                    </a>
+                  )}
                   {canUpload && (
                     <Link
                       href={`/projects/${projectId}/sort`}

@@ -32,6 +32,7 @@ class ProjectResponse(BaseModel):
     # instead of listing it flat. Null for ordinary projects.
     submission_link_id: uuid.UUID | None = None
     request_title: str | None = None
+    brief_pdf_url: str | None = None
     model_config = {"from_attributes": True}
 
 class ProjectMemberResponse(BaseModel):

@@ -29,6 +29,7 @@ def _mock_project(
     p.is_public = False
     p.poster_url = None
     p.poster_s3_key = None
+    p.submission_link_id = None
     p.asset_count = 0
     p.storage_bytes = 0
     p.member_count = 1
@@ -178,3 +179,9 @@ def test_update_project(client, auth_headers, mock_db, test_user):
     )
     assert resp.status_code == 200
     assert resp.json()["name"] == "New Name"
+
+
+# NOTE: a get_project brief_pdf_url unit test was intentionally omitted — the
+# mock-DB get_project path 500s on main independent of this change (pre-existing
+# harness breakage with ProjectResponse.model_validate on a MagicMock). The
+# brief_pdf_url wiring is verified live instead.
