@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import uuid
@@ -10,7 +11,7 @@ from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User, UserStatus
 from ..models.api_key import APIKey, generate_api_key, hash_api_key, API_KEY_PREFIX
-from ..schemas.auth import UserResponse, UpdateUserRoleRequest, UpdateSubadminRequest, UpdateUidRequest
+from ..schemas.auth import UserResponse, UpdateUserRoleRequest, UpdateSubadminRequest, UpdateUidRequest, UpdateNicknameRequest
 from ..schemas.api_key import APIKeyResponse, APIKeyCreate, APIKeyCreated
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -253,6 +254,65 @@ def update_user_uid(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"uid {body.uid} is already assigned to another user",
+        )
+    db.refresh(user)
+    return user
+
+
+# ── User display nickname ─────────────────────────────────────────────────────────
+
+@router.patch("/users/{user_id}/nickname", response_model=UserResponse)
+def update_user_nickname(
+    user_id: uuid.UUID,
+    body: UpdateNicknameRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Set, change, or clear a user's display nickname. Superadmin only.
+
+    Whitespace is trimmed. An empty/whitespace-only value (or ``null``) clears it.
+    A value longer than 50 chars -> 422. A nickname already held (case-insensitively)
+    by another user -> 409 naming the holder; case is preserved on store. The
+    functional unique index ``uq_users_nickname_lower`` is the ultimate source of truth.
+    """
+    _require_superadmin(current_user)
+
+    value = body.nickname.strip() if body.nickname is not None else None
+
+    # Structural validation first (mirrors the uid endpoint's < 1 check).
+    if value and len(value) > 50:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="nickname must be at most 50 characters",
+        )
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not value:
+        # Empty / whitespace-only / None -> clear.
+        user.nickname = None
+    else:
+        holder = (
+            db.query(User)
+            .filter(func.lower(User.nickname) == value.lower(), User.id != user_id)
+            .first()
+        )
+        if holder is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"nickname '{value}' is already taken by {holder.name}",
+            )
+        user.nickname = value
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"nickname '{value}' is already taken by another user",
         )
     db.refresh(user)
     return user

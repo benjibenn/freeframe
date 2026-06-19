@@ -30,6 +30,7 @@ class UserResponse(BaseModel):
     is_superadmin: bool = False
     is_subadmin: bool = False
     uid: int | None = None
+    nickname: str | None = None
     invite_token: str | None = None
     preferences: dict = {}
 
@@ -76,6 +77,9 @@ class UpdateSubadminRequest(BaseModel):
 
 class UpdateUidRequest(BaseModel):
     uid: int | None
+
+class UpdateNicknameRequest(BaseModel):
+    nickname: str | None
 
 class DeactivateUserRequest(BaseModel):
     user_id: uuid.UUID

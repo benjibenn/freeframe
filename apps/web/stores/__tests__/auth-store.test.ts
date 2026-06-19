@@ -24,6 +24,7 @@ const mockUser: User = {
   is_superadmin: false,
   is_subadmin: false,
   uid: null,
+  nickname: null,
   email_verified: true,
   preferences: {},
   created_at: '2024-01-01T00:00:00Z',

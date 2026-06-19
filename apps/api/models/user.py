@@ -31,6 +31,9 @@ class User(Base):
     # Admin-granted human-readable display number, separate from the UUID PK.
     # NULL = not granted. Unique across all rows (Postgres treats NULLs as distinct).
     uid: Mapped[Optional[int]] = mapped_column(Integer, unique=True, nullable=True)
+    # Admin-granted human-readable display nickname. NULL = not set. Uniqueness is
+    # enforced case-insensitively via the functional unique index uq_users_nickname_lower.
+    nickname: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     email_verified: Mapped[bool] = mapped_column(default=False)
     invite_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     invite_token_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
