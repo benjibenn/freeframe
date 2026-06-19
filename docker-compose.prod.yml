@@ -118,7 +118,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: sh -c "celery -A apps.api.tasks.celery_app worker -Q transcoding -c $${TRANSCODING_CONCURRENCY:-2} --loglevel=warning"
+    command: sh -c "celery -A apps.api.tasks.celery_app worker -Q transcoding,default -c $${TRANSCODING_CONCURRENCY:-2} --loglevel=warning"
     restart: unless-stopped
     # Override the API image's HTTP healthcheck — workers serve no HTTP. Ping this
     # specific worker node over the broker instead.
