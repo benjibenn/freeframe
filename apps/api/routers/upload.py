@@ -50,13 +50,16 @@ def initiate_upload(
         if asset.project_id != body.project_id:
             raise HTTPException(status_code=400, detail="Asset does not belong to the specified project")
     else:
+        from ..services import brief_import_service
         asset_type = mime_to_asset_type(body.mime_type)
+        cf = brief_import_service.cf_ids_for_project(db, project)
         asset = Asset(
             project_id=body.project_id,
             name=body.asset_name,
             asset_type=asset_type,
             created_by=current_user.id,
             folder_id=body.folder_id,
+            **cf,
         )
         # New videos land in the configured default task stage (e.g. "Pending")
         # so they show up triaged in the admin task list right away.

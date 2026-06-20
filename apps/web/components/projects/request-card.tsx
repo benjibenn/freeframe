@@ -15,6 +15,10 @@ export interface VideoRequest {
   created_at: string
   submission_count: number
   reference_project_id?: string | null
+  // CF campaign labels (null for hand-made requests).
+  persona_label?: string | null
+  angle_label?: string | null
+  problem?: string | null
 }
 
 function submitUrl(token: string): string {

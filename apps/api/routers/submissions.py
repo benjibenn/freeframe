@@ -607,6 +607,9 @@ def resolve_submission_link(
         instructions=link.instructions,
         requires_auth=current_user is None,
         has_brief=bool(link.brief_pdf_s3_key),
+        persona_label=link.persona_label,
+        angle_label=link.angle_label,
+        problem=link.problem,
     )
 
 

@@ -11,6 +11,9 @@ interface SubmissionLinkPublic {
   instructions: string | null
   requires_auth: boolean
   has_brief: boolean
+  persona_label: string | null
+  angle_label: string | null
+  problem: string | null
 }
 
 type Phase = 'loading' | 'needs_auth' | 'accepting' | 'error'
@@ -78,6 +81,18 @@ export default function SubmitPage() {
         {phase === 'needs_auth' && link && (
           <div className="animate-slide-up">
             <h1 className="mb-1 text-xl font-semibold text-text-primary">{link.title}</h1>
+            {(link.persona_label || link.angle_label || link.problem) && (
+              <p className="mb-3 text-xs text-text-tertiary">
+                Campaign:{' '}
+                {[
+                  link.persona_label,
+                  link.angle_label,
+                  link.problem ? `Problem: ${link.problem}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+            )}
             <p className="mb-6 text-sm text-text-secondary">
               {link.instructions ||
                 'Sign in or create an account to upload your submission. Your uploads stay private — only you and the project owner can see them.'}

@@ -4,7 +4,9 @@ import uuid
 from sqlalchemy.orm import Session
 
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, ProcessingStatus, FileType
+from ..models.project import Project
 from ..schemas.upload import mime_to_asset_type
+from . import brief_import_service
 from .s3_service import list_objects_v2
 from ..tasks.celery_app import send_task_safe
 from ..tasks.transcode_tasks import process_asset
@@ -64,12 +66,18 @@ def register_s3_object_as_asset(
     asset_type = mime_to_asset_type(mime_type)
     file_type = _ASSET_TYPE_TO_FILE_TYPE[asset_type]
 
+    project = db.query(Project).filter(Project.id == project_id).first()
+    cf = brief_import_service.cf_ids_for_project(db, project) if project else {
+        "cf_brief_id": None, "cf_persona_id": None, "cf_angle_id": None,
+    }
+
     asset = Asset(
         project_id=project_id,
         name=name,
         asset_type=asset_type,
         created_by=created_by,
         folder_id=folder_id,
+        **cf,
     )
     db.add(asset)
     db.flush()

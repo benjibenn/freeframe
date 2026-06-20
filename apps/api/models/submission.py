@@ -48,6 +48,15 @@ class SubmissionLink(Base):
     source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
     source_brief_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     brief_pdf_s3_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    # External (CF) lineage ids + human labels for the campaign this request came
+    # from (the data spine). NULL for hand-made requests. The ids are stamped onto
+    # every asset created under this request; the labels surface in the UI.
+    persona_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    angle_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    brief_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    persona_label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    angle_label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    problem: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 

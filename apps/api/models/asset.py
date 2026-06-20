@@ -44,6 +44,12 @@ class Asset(Base):
     folder_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("folders.id"), nullable=True, index=True)
     due_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     keywords: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
+    # External (CF) lineage stamped at asset-creation time from the request's
+    # SubmissionLink. NULL for assets not created under an imported request.
+    # Indexed so external integrations (UploadUnicorn) can filter by campaign.
+    cf_brief_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    cf_persona_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    cf_angle_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -12,6 +12,11 @@ def _make_link(brief_pdf_s3_key=None):
     link.title = "Test Brief"
     link.instructions = "Do the thing"
     link.brief_pdf_s3_key = brief_pdf_s3_key
+    # Hand-made request: no CF lineage (must be real None, not a MagicMock, so the
+    # Optional[str] response fields validate).
+    link.persona_label = None
+    link.angle_label = None
+    link.problem = None
     return link
 
 

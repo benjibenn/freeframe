@@ -21,6 +21,10 @@ class SubmissionLinkResponse(BaseModel):
     submission_count: int = 0
     # Shared reference project (None = strict isolation, the default).
     reference_project_id: Optional[uuid.UUID] = None
+    # CF campaign labels (None for hand-made requests).
+    persona_label: Optional[str] = None
+    angle_label: Optional[str] = None
+    problem: Optional[str] = None
     model_config = {"from_attributes": True}
 
 
@@ -31,6 +35,10 @@ class SubmissionLinkPublic(BaseModel):
     instructions: Optional[str] = None
     requires_auth: bool
     has_brief: bool = False
+    # CF campaign labels (None for hand-made requests).
+    persona_label: Optional[str] = None
+    angle_label: Optional[str] = None
+    problem: Optional[str] = None
 
 
 class SubmissionAcceptResponse(BaseModel):

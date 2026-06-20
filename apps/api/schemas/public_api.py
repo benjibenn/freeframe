@@ -31,6 +31,11 @@ class PublicVideoItem(BaseModel):
     thumbnail_url: Optional[str] = None
     # Short-lived presigned URL to download the original video file.
     download_url: Optional[str] = None
+    # External (CF) lineage stamped onto the asset at creation (NULL if the asset
+    # wasn't created under an imported request). The handoff to UploadUnicorn.
+    cf_brief_id: Optional[str] = None
+    cf_persona_id: Optional[str] = None
+    cf_angle_id: Optional[str] = None
 
 
 class PublicVideoListResponse(BaseModel):

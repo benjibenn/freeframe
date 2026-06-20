@@ -200,6 +200,9 @@ def list_videos(
                 original_filename=mf.original_filename if mf else None,
                 thumbnail_url=thumbnail_url,
                 download_url=download_url,
+                cf_brief_id=a.cf_brief_id,
+                cf_persona_id=a.cf_persona_id,
+                cf_angle_id=a.cf_angle_id,
             )
         )
 
@@ -279,6 +282,12 @@ def import_brief(
     source_brief_id: str = Form(...),
     title: str = Form(...),
     owner_email: Optional[str] = Form(default=None),
+    persona_id: Optional[str] = Form(default=None),
+    angle_id: Optional[str] = Form(default=None),
+    brief_id: Optional[str] = Form(default=None),
+    persona_label: Optional[str] = Form(default=None),
+    angle_label: Optional[str] = Form(default=None),
+    problem: Optional[str] = Form(default=None),
     pdf: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
@@ -286,6 +295,8 @@ def import_brief(
 
     Idempotent by (source, source_brief_id): re-posting the same brief updates
     the existing request. Auth is the shared public API key (router dependency).
+    The CF lineage fields (persona/angle/brief id + label) are optional, so older
+    callers that omit them stay backward-compatible.
     """
     pdf_bytes = pdf.file.read()
     if not pdf_bytes:
@@ -297,6 +308,12 @@ def import_brief(
             title=title,
             owner_email=owner_email,
             pdf_bytes=pdf_bytes,
+            persona_id=persona_id,
+            angle_id=angle_id,
+            brief_id=brief_id,
+            persona_label=persona_label,
+            angle_label=angle_label,
+            problem=problem,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))

@@ -237,6 +237,24 @@ export default function RequestDetailPage() {
             {request?.instructions && (
               <p className="mt-1 text-sm text-text-secondary max-w-2xl">{request.instructions}</p>
             )}
+            {(request?.persona_label || request?.angle_label || request?.problem) && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {[
+                  request?.persona_label,
+                  request?.angle_label,
+                  request?.problem ? `Problem: ${request.problem}` : null,
+                ]
+                  .filter(Boolean)
+                  .map((label) => (
+                    <span
+                      key={label as string}
+                      className="rounded-full border border-border bg-bg-secondary px-2 py-0.5 text-2xs text-text-tertiary"
+                    >
+                      {label}
+                    </span>
+                  ))}
+              </div>
+            )}
             <p className="mt-1 flex items-center gap-1.5 text-xs text-text-tertiary">
               <Users className="h-3 w-3" />
               {request?.submission_count ?? subs?.length ?? 0} submission
