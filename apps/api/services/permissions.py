@@ -43,11 +43,20 @@ def require_project_role(
     project_id: uuid.UUID,
     user: User,
     minimum_role: ProjectRole,
-) -> ProjectMember:
+) -> ProjectMember | None:
     """Require the user to have at least `minimum_role` on the project.
 
     Role hierarchy (descending): owner > editor > reviewer > viewer
+
+    Platform admins (superadmin / sub-admin) satisfy any role requirement without an
+    explicit membership row — mirroring the read-side bypass in `can_view_project` /
+    `can_access_asset`. This lets admins upload into and edit the isolated per-submitter
+    submission projects they can already see but were never added to as members.
+    Returns None for admins (no membership row exists); callers use this purely as a
+    guard and never read the return value.
     """
+    if is_platform_admin(user):
+        return None
     ROLE_RANK = {
         ProjectRole.owner: 4,
         ProjectRole.editor: 3,
