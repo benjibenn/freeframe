@@ -44,12 +44,13 @@ interface PaletteChipProps {
   tag: PaletteTag
   index: number
   canEdit: boolean
-  onStamp: (tag: PaletteTag) => void
+  isPending: boolean
+  onStamp: (tag: PaletteTag, shiftKey: boolean) => void
   onUpdate: (id: string, patch: { label?: string; color?: string }) => Promise<void>
   onDelete: (id: string) => Promise<void>
 }
 
-function PaletteChip({ tag, index, canEdit, onStamp, onUpdate, onDelete }: PaletteChipProps) {
+function PaletteChip({ tag, index, canEdit, isPending, onStamp, onUpdate, onDelete }: PaletteChipProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(tag.label)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -103,10 +104,19 @@ function PaletteChip({ tag, index, canEdit, onStamp, onUpdate, onDelete }: Palet
   return (
     <span className="inline-flex items-center gap-1 group/chip">
       <button
-        onClick={() => onStamp(tag)}
+        onClick={(e) => onStamp(tag, e.shiftKey)}
         onDoubleClick={() => canEdit && setEditing(true)}
-        title={index < 9 ? `${tag.label} (press ${index + 1})` : tag.label}
-        className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-all hover:opacity-80 active:scale-95"
+        title={
+          isPending
+            ? `Click to end range with "${tag.label}"`
+            : index < 9
+              ? `${tag.label} (press ${index + 1} · Shift+${index + 1} or Shift+click to start range)`
+              : `${tag.label} · Shift+click to start range`
+        }
+        className={cn(
+          'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-all hover:opacity-80 active:scale-95',
+          isPending && 'ring-2 ring-offset-1 ring-offset-bg-secondary animate-pulse',
+        )}
         style={chipStyle(tag.color)}
       >
         {index < 9 && (
@@ -229,6 +239,7 @@ function AddLabelForm({ onAdd }: AddLabelFormProps) {
 interface StampedRowProps {
   id: string
   timecodeStart: number
+  timecodeEnd?: number
   label: string
   color: string
   canEdit: boolean
@@ -236,7 +247,7 @@ interface StampedRowProps {
   onDelete: (id: string) => Promise<void>
 }
 
-function StampedRow({ id, timecodeStart, label, color, canEdit, onSeek, onDelete }: StampedRowProps) {
+function StampedRow({ id, timecodeStart, timecodeEnd, label, color, canEdit, onSeek, onDelete }: StampedRowProps) {
   return (
     <div className="flex items-center gap-2 group/stamp">
       <button
@@ -250,7 +261,9 @@ function StampedRow({ id, timecodeStart, label, color, canEdit, onSeek, onDelete
           {label}
         </span>
         <span className="font-mono text-[11px] text-text-tertiary">
-          {formatTimecode(timecodeStart)}
+          {timecodeEnd !== undefined
+            ? `${formatTimecode(timecodeStart)} → ${formatTimecode(timecodeEnd)}`
+            : formatTimecode(timecodeStart)}
         </span>
       </button>
       {canEdit && (
@@ -282,8 +295,11 @@ export function TagStampBar({
   const { frameTags, createFrameTag, deleteFrameTag } = useFrameTags(assetId, versionId)
   const { toast } = useToast()
 
-  // ── Stamp a palette tag at current time ──────────────────────────────────────
-  const stampTag = async (tag: PaletteTag) => {
+  // ── Pending range (Shift+click or Shift+hotkey starts a range) ───────────────
+  const [pendingRange, setPendingRange] = useState<{ label: string; color: string; start: number } | null>(null)
+
+  // ── Stamp a palette tag at current time (point) ───────────────────────────────
+  const stampPoint = async (tag: PaletteTag) => {
     const t = getCurrentTime()
     try {
       await createFrameTag(t, tag.label)
@@ -293,25 +309,55 @@ export function TagStampBar({
     }
   }
 
+  // ── Handle chip click (Shift = range mode) ────────────────────────────────────
+  const handleChipStamp = async (tag: PaletteTag, shiftKey: boolean) => {
+    const t = getCurrentTime()
+    if (pendingRange) {
+      if (t <= pendingRange.start) {
+        toast('Range end must be after the start point', 'error')
+        return
+      }
+      try {
+        await createFrameTag(pendingRange.start, pendingRange.label, t)
+        toast(`Range "${pendingRange.label}" saved (${formatTimecode(pendingRange.start)} → ${formatTimecode(t)})`, 'success', 2500)
+      } catch {
+        toast(`Failed to save range`, 'error')
+      }
+      setPendingRange(null)
+    } else if (shiftKey) {
+      setPendingRange({ label: tag.label, color: tag.color, start: t })
+      toast(`Range started for "${tag.label}" at ${formatTimecode(t)} — click any chip to end (Esc to cancel)`, 'info', 5000)
+    } else {
+      await stampPoint(tag)
+    }
+  }
+
   // ── Hotkeys 1–9 ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!enableHotkeys || !canEdit) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isEditableTarget(document.activeElement)) return
+
+      if (e.key === 'Escape' && pendingRange) {
+        e.preventDefault()
+        setPendingRange(null)
+        toast('Range cancelled', 'info', 1500)
+        return
+      }
+
       const digit = parseInt(e.key, 10)
       if (isNaN(digit) || digit < 1 || digit > 9) return
       const tag = palette[digit - 1]
       if (!tag) return
       e.preventDefault()
-      void stampTag(tag)
+      void handleChipStamp(tag, e.shiftKey)
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-    // stampTag intentionally omitted — palette is the real dep; recreating on every render is fine
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enableHotkeys, canEdit, palette])
+  }, [enableHotkeys, canEdit, palette, pendingRange])
 
   // ── Palette label handlers ────────────────────────────────────────────────────
   const handleUpdate = async (id: string, patch: { label?: string; color?: string }) => {
@@ -361,6 +407,18 @@ export function TagStampBar({
   return (
     <div className="px-3 py-2 border-t border-border bg-bg-secondary space-y-2">
 
+      {/* ── Pending range banner ── */}
+      {pendingRange && (
+        <div
+          className="flex items-center gap-2 rounded px-2 py-1 text-[11px] border animate-pulse"
+          style={{ backgroundColor: `${pendingRange.color}18`, borderColor: `${pendingRange.color}55`, color: pendingRange.color }}
+        >
+          <span className="font-semibold uppercase tracking-wide">Range: {pendingRange.label}</span>
+          <span className="text-text-tertiary font-mono">started @ {formatTimecode(pendingRange.start)}</span>
+          <span className="text-text-tertiary">— click any chip to end · Esc to cancel</span>
+        </div>
+      )}
+
       {/* ── Palette chips ── */}
       <div className="flex flex-wrap items-center gap-1.5">
         {palette.map((tag, i) => (
@@ -369,7 +427,8 @@ export function TagStampBar({
             tag={tag}
             index={i}
             canEdit={canEdit}
-            onStamp={stampTag}
+            isPending={!!pendingRange}
+            onStamp={handleChipStamp}
             onUpdate={handleUpdate}
             onDelete={handleDeleteLabel}
           />
@@ -383,20 +442,41 @@ export function TagStampBar({
       {/* ── Marker strip ── */}
       {sortedStamps.length > 0 && durationSeconds > 0 && (
         <div className="relative w-full h-4 rounded-sm bg-bg-tertiary overflow-visible">
-          {sortedStamps.map((stamp) => (
-            <button
-              key={stamp.id}
-              title={`${stamp.label} @ ${formatTimecode(stamp.timecode_start)}`}
-              onClick={() => onSeek(stamp.timecode_start)}
-              className="absolute top-0 -translate-x-1/2 w-2 h-4 flex items-center justify-center hover:scale-110 transition-transform"
-              style={{ left: `${timeToPercent(stamp.timecode_start)}%` }}
-            >
-              <span
-                className="block w-1.5 h-4 rounded-[2px] opacity-90"
-                style={{ backgroundColor: colorForLabel(stamp.label) }}
-              />
-            </button>
-          ))}
+          {sortedStamps.map((stamp) => {
+            const color = colorForLabel(stamp.label)
+            if (stamp.timecode_end !== undefined) {
+              const startPct = timeToPercent(stamp.timecode_start)
+              const endPct = timeToPercent(stamp.timecode_end)
+              return (
+                <button
+                  key={stamp.id}
+                  title={`${stamp.label}: ${formatTimecode(stamp.timecode_start)} → ${formatTimecode(stamp.timecode_end)}`}
+                  onClick={() => onSeek(stamp.timecode_start)}
+                  className="absolute top-0 h-4 hover:opacity-80 transition-opacity rounded-[2px]"
+                  style={{
+                    left: `${startPct}%`,
+                    width: `${Math.max(endPct - startPct, 0.5)}%`,
+                    backgroundColor: `${color}cc`,
+                    borderLeft: `2px solid ${color}`,
+                  }}
+                />
+              )
+            }
+            return (
+              <button
+                key={stamp.id}
+                title={`${stamp.label} @ ${formatTimecode(stamp.timecode_start)}`}
+                onClick={() => onSeek(stamp.timecode_start)}
+                className="absolute top-0 -translate-x-1/2 w-2 h-4 flex items-center justify-center hover:scale-110 transition-transform"
+                style={{ left: `${timeToPercent(stamp.timecode_start)}%` }}
+              >
+                <span
+                  className="block w-1.5 h-4 rounded-[2px] opacity-90"
+                  style={{ backgroundColor: color }}
+                />
+              </button>
+            )
+          })}
         </div>
       )}
 
@@ -408,6 +488,7 @@ export function TagStampBar({
               key={stamp.id}
               id={stamp.id}
               timecodeStart={stamp.timecode_start}
+              timecodeEnd={stamp.timecode_end}
               label={stamp.label}
               color={colorForLabel(stamp.label)}
               canEdit={canEdit}

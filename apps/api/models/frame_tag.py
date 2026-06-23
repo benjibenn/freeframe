@@ -16,6 +16,7 @@ class FrameTag(Base):
     asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id"), nullable=False, index=True)
     version_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("asset_versions.id"), nullable=False, index=True)
     timecode_start: Mapped[float] = mapped_column(Float, nullable=False)
+    timecode_end: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     label: Mapped[str] = mapped_column(String(255), nullable=False)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

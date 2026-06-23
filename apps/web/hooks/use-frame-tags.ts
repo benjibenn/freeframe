@@ -8,6 +8,7 @@ export interface FrameTag {
   asset_id: string
   version_id: string
   timecode_start: number
+  timecode_end?: number
   label: string
   created_by: string
   created_at: string
@@ -29,12 +30,13 @@ export function useFrameTags(assetId: string | null, versionId: string | null) {
 
   const frameTags = data ?? []
 
-  async function createFrameTag(timecodeStart: number, label: string): Promise<FrameTag> {
+  async function createFrameTag(timecodeStart: number, label: string, timecodeEnd?: number): Promise<FrameTag> {
     if (!assetId) throw new Error('No asset selected')
     if (!versionId) throw new Error('No version selected')
     const tag = await api.post<FrameTag>(`/assets/${assetId}/frame-tags`, {
       version_id: versionId,
       timecode_start: timecodeStart,
+      timecode_end: timecodeEnd ?? null,
       label,
     })
     await mutate()

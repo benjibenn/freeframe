@@ -9,6 +9,7 @@ from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, AssetStatus, FileType, ProcessingStatus
+from ..models.frame_tag import FrameTag
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.share import AssetShare
 from ..models.activity import Mention, Notification, NotificationType
@@ -135,6 +136,7 @@ def list_assets(
     include_failed: bool = Query(False, description="Include assets whose latest version failed processing"),
     folder_id: Optional[str] = Query(None, description="Filter by folder. 'root' for root level, UUID for specific folder."),
     tag: Optional[list[str]] = Query(None, description="Filter to assets carrying ALL of these tags. Searches the whole project (ignores folder)."),
+    frame_label: Optional[list[str]] = Query(None, description="Filter to assets that have at least one frame tag with ANY of these labels."),
     exclude_archived: bool = Query(False, description="Exclude assets with status=archived. Defaults to False so the project grid is unchanged."),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -152,15 +154,30 @@ def list_assets(
         query = query.filter(Asset.status != AssetStatus.archived)
 
     tags = normalize_tags(tag)
+    labels = [l.strip().lower() for l in (frame_label or []) if l.strip()]
+    filtering = bool(tags or labels)
+
     if tags:
         # Tag filtering is project-wide (across all folders) — selecting a tag is a
         # search, not folder navigation. Each tag narrows further (AND / containment).
         for t in tags:
             query = query.filter(Asset.keywords.contains([t]))
-    elif folder_id == "root":
-        query = query.filter(Asset.folder_id.is_(None))
-    elif folder_id is not None:
-        query = query.filter(Asset.folder_id == uuid.UUID(folder_id))
+
+    if labels:
+        # Filter to assets that have at least one non-deleted frame tag with any of the given labels.
+        subq = (
+            db.query(FrameTag.asset_id)
+            .filter(FrameTag.label.in_(labels), FrameTag.deleted_at.is_(None))
+            .distinct()
+            .subquery()
+        )
+        query = query.filter(Asset.id.in_(subq))
+
+    if not filtering:
+        if folder_id == "root":
+            query = query.filter(Asset.folder_id.is_(None))
+        elif folder_id is not None:
+            query = query.filter(Asset.folder_id == uuid.UUID(folder_id))
 
     assets = query.all()
 

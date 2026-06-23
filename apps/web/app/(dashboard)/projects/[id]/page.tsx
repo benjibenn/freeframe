@@ -26,6 +26,7 @@ import {
   Users,
   PanelLeft,
   Tag as TagIcon,
+  Clock,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatBytes } from "@/lib/utils";
 import { api } from "@/lib/api";
@@ -85,6 +86,7 @@ export default function ProjectDetailPage() {
   );
   const [showTrash, setShowTrash] = React.useState(false);
   const [selectedTags, setSelectedTags] = React.useState<string[]>([]);
+  const [selectedMomentLabels, setSelectedMomentLabels] = React.useState<string[]>([]);
   const [showShareLinks, setShowShareLinks] = React.useState(false);
   const [selectedShareLink, setSelectedShareLink] = React.useState<
     string | null
@@ -207,8 +209,13 @@ export default function ProjectDetailPage() {
   // When tags are selected, the view becomes a project-wide tag search (ignores the
   // current folder); otherwise it's the normal folder-scoped listing.
   const filteringByTag = selectedTags.length > 0;
-  const assetsQuery = filteringByTag
-    ? selectedTags.map((t) => `tag=${encodeURIComponent(t)}`).join("&")
+  const filteringByLabel = selectedMomentLabels.length > 0;
+  const filteringByTag_orLabel = filteringByTag || filteringByLabel;
+  const assetsQuery = filteringByTag_orLabel
+    ? [
+        ...selectedTags.map((t) => `tag=${encodeURIComponent(t)}`),
+        ...selectedMomentLabels.map((l) => `frame_label=${encodeURIComponent(l)}`),
+      ].join("&")
     : folderParam;
   const {
     data: assets,
@@ -225,9 +232,20 @@ export default function ProjectDetailPage() {
     (key: string) => api.get<{ tag: string; count: number }[]>(key),
   );
 
+  // Frame tag labels (moment tags) used in this project.
+  const { data: momentLabels } = useSWR<{ label: string; count: number }[]>(
+    `/projects/${projectId}/frame-tag-labels`,
+    (key: string) => api.get<{ label: string; count: number }[]>(key),
+  );
+
   const toggleTag = (tag: string) =>
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
+
+  const toggleMomentLabel = (label: string) =>
+    setSelectedMomentLabels((prev) =>
+      prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label],
     );
 
   // Subfolders for current view
@@ -727,6 +745,50 @@ export default function ProjectDetailPage() {
               </div>
             )}
 
+          {/* Moment label filter bar */}
+          {!showTrash && !showShareLinks &&
+            ((momentLabels && momentLabels.length > 0) || filteringByLabel) && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="flex items-center gap-1 text-2xs font-medium uppercase tracking-wide text-text-tertiary mr-0.5">
+                  <Clock className="h-3 w-3" />
+                  Moments
+                </span>
+                {(momentLabels ?? []).map((m) => {
+                  const active = selectedMomentLabels.includes(m.label);
+                  return (
+                    <button
+                      key={m.label}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleMomentLabel(m.label);
+                      }}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs transition-colors",
+                        active
+                          ? "border-accent bg-accent/10 text-accent"
+                          : "border-border bg-bg-secondary text-text-secondary hover:border-border-focus hover:text-text-primary",
+                      )}
+                    >
+                      {m.label}
+                      <span className="text-text-tertiary">{m.count}</span>
+                    </button>
+                  );
+                })}
+                {filteringByLabel && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedMomentLabels([]);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs text-text-tertiary hover:text-text-primary transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                    Clear
+                  </button>
+                )}
+              </div>
+            )}
+
           {/* Asset grid, Share links, or Trash view */}
           {showShareLinks && !selectedShareLink ? (
             <ShareLinksTable
@@ -818,7 +880,7 @@ export default function ProjectDetailPage() {
           ) : (
             <AssetGrid
               assets={assets ?? []}
-              folders={filteringByTag ? [] : (subfolders ?? [])}
+              folders={filteringByTag_orLabel ? [] : (subfolders ?? [])}
               currentFolderId={currentFolderId}
               projectId={projectId}
               projectName={project?.name ?? 'Project'}

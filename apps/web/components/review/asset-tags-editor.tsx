@@ -5,11 +5,6 @@ import useSWR, { mutate as globalMutate } from 'swr'
 import { Tag, X } from 'lucide-react'
 import { api } from '@/lib/api'
 
-/**
- * Tag editor for the asset review "Fields" tab. Tags are stored in Asset.keywords;
- * each add/remove persists immediately via PUT /assets/{id}/tags. Read-only (chips
- * only, no input) when the viewer can't edit.
- */
 export function AssetTagsEditor({
   assetId,
   projectId,
@@ -24,8 +19,10 @@ export function AssetTagsEditor({
   const [tags, setTags] = React.useState<string[]>(initialTags)
   const [input, setInput] = React.useState('')
   const [error, setError] = React.useState('')
+  const [highlight, setHighlight] = React.useState(0)
+  const [dropdownOpen, setDropdownOpen] = React.useState(false)
+  const wrapperRef = React.useRef<HTMLDivElement>(null)
 
-  // Reset local state when navigating to a different asset.
   React.useEffect(() => {
     setTags(initialTags)
     setInput('')
@@ -38,6 +35,17 @@ export function AssetTagsEditor({
     (k: string) => api.get<{ tag: string; count: number }[]>(k),
   )
 
+  // Close dropdown when clicking outside
+  React.useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
   const persist = async (next: string[]) => {
     const prev = tags
     setTags(next)
@@ -47,22 +55,26 @@ export function AssetTagsEditor({
       globalMutate(`/assets/${assetId}`)
       globalMutate(`/projects/${projectId}/tags`)
     } catch (e: unknown) {
-      setTags(prev) // revert on failure
+      setTags(prev)
       setError(e instanceof Error ? e.message : 'Failed to save tags')
     }
   }
 
-  const addTag = () => {
-    const t = input.trim().toLowerCase().replace(/\s+/g, ' ')
+  const addTag = (value?: string) => {
+    const t = (value ?? input).trim().toLowerCase().replace(/\s+/g, ' ')
     setInput('')
+    setDropdownOpen(false)
+    setHighlight(0)
     if (t && !tags.includes(t)) persist([...tags, t])
   }
 
   const removeTag = (t: string) => persist(tags.filter((x) => x !== t))
 
+  const q = input.trim().toLowerCase()
   const suggestions = (projectTags ?? [])
     .map((t) => t.tag)
-    .filter((t) => !tags.includes(t))
+    .filter((t) => !tags.includes(t) && (q === '' || t.includes(q)))
+    .slice(0, 8)
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -97,36 +109,61 @@ export function AssetTagsEditor({
       )}
 
       {canEdit && (
-        <>
-          <div className="flex gap-2">
+        <div ref={wrapperRef} className="relative flex gap-2">
+          <div className="relative flex-1">
             <input
               type="text"
-              list={`asset-tag-suggestions-${assetId}`}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value)
+                setHighlight(0)
+                setDropdownOpen(true)
+              }}
+              onFocus={() => setDropdownOpen(true)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault()
-                  addTag()
+                  addTag(suggestions[highlight] ?? undefined)
+                } else if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setHighlight((h) => Math.min(h + 1, suggestions.length - 1))
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setHighlight((h) => Math.max(h - 1, 0))
+                } else if (e.key === 'Escape') {
+                  setDropdownOpen(false)
                 }
               }}
               placeholder="Add tag..."
-              className="flex h-8 flex-1 rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"
+              className="flex h-8 w-full rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"
             />
-            <button
-              type="button"
-              onClick={addTag}
-              className="rounded-md border border-border bg-bg-secondary px-3 h-8 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-            >
-              Add
-            </button>
+            {dropdownOpen && suggestions.length > 0 && (
+              <ul className="absolute z-50 left-0 right-0 top-full mt-1 rounded-md border border-border bg-bg-secondary shadow-lg overflow-hidden">
+                {suggestions.map((t, i) => (
+                  <li key={t}>
+                    <button
+                      type="button"
+                      onMouseEnter={() => setHighlight(i)}
+                      onMouseDown={(e) => { e.preventDefault(); addTag(t) }}
+                      className={`w-full text-left px-3 py-1.5 text-sm ${
+                        i === highlight ? 'bg-bg-hover text-text-primary' : 'text-text-secondary'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          <datalist id={`asset-tag-suggestions-${assetId}`}>
-            {suggestions.map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
-        </>
+          <button
+            type="button"
+            onClick={() => addTag()}
+            className="rounded-md border border-border bg-bg-secondary px-3 h-8 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          >
+            Add
+          </button>
+        </div>
       )}
 
       {error && <p className="text-xs text-status-error">{error}</p>}
