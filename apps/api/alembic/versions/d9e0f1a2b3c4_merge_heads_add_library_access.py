@@ -1,6 +1,6 @@
-"""merge migration heads + add library_access table
+"""merge heads and add library_access table
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: d9e0f1a2b3c4
 Revises: f9a0b1c2d3e4, c4d5e6f7a8b9
 Create Date: 2026-06-23
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
-revision: str = 'a1b2c3d4e5f6'
+revision: str = 'd9e0f1a2b3c4'
 down_revision: Union[str, Sequence[str], None] = ('f9a0b1c2d3e4', 'c4d5e6f7a8b9')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
