@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
-import { Trash2, Check, X, Video } from 'lucide-react'
+import { Trash2, Check, X, Plus, Square } from 'lucide-react'
 import { cn, formatTimecode } from '@/lib/utils'
 import { useTagPalette, type PaletteTag } from '@/hooks/use-tag-palette'
 import { useFrameTags } from '@/hooks/use-frame-tags'
@@ -44,13 +44,25 @@ interface PaletteChipProps {
   tag: PaletteTag
   index: number
   canEdit: boolean
-  isPending: boolean
-  onStamp: (tag: PaletteTag) => void
+  pendingStart: number | null
+  onStart: () => void
+  onEnd: () => void
+  onCancelPending: () => void
   onUpdate: (id: string, patch: { label?: string; color?: string }) => Promise<void>
   onDelete: (id: string) => Promise<void>
 }
 
-function PaletteChip({ tag, index, canEdit, isPending, onStamp, onUpdate, onDelete }: PaletteChipProps) {
+function PaletteChip({
+  tag,
+  index,
+  canEdit,
+  pendingStart,
+  onStart,
+  onEnd,
+  onCancelPending,
+  onUpdate,
+  onDelete,
+}: PaletteChipProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(tag.label)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -64,11 +76,8 @@ function PaletteChip({ tag, index, canEdit, isPending, onStamp, onUpdate, onDele
 
   const commitEdit = async () => {
     const trimmed = draft.trim()
-    if (trimmed && trimmed !== tag.label) {
-      await onUpdate(tag.id, { label: trimmed })
-    } else {
-      setDraft(tag.label)
-    }
+    if (trimmed && trimmed !== tag.label) await onUpdate(tag.id, { label: trimmed })
+    else setDraft(tag.label)
     setEditing(false)
   }
 
@@ -77,9 +86,13 @@ function PaletteChip({ tag, index, canEdit, isPending, onStamp, onUpdate, onDele
     setEditing(false)
   }
 
+  // Renaming mode
   if (editing) {
     return (
-      <span className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5" style={{ borderColor: `${tag.color}66`, backgroundColor: `${tag.color}26` }}>
+      <span
+        className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5"
+        style={{ borderColor: `${tag.color}66`, backgroundColor: `${tag.color}26` }}
+      >
         <input
           ref={inputRef}
           value={draft}
@@ -91,41 +104,62 @@ function PaletteChip({ tag, index, canEdit, isPending, onStamp, onUpdate, onDele
           className="w-20 text-[11px] bg-transparent outline-none"
           style={{ color: tag.color }}
         />
-        <button onClick={() => void commitEdit()} className="text-text-tertiary hover:text-text-primary transition-colors" title="Save">
-          <Check className="h-3 w-3" />
+        <button onClick={() => void commitEdit()} className="text-text-tertiary hover:text-text-primary transition-colors"><Check className="h-3 w-3" /></button>
+        <button onClick={cancelEdit} className="text-text-tertiary hover:text-text-primary transition-colors"><X className="h-3 w-3" /></button>
+      </span>
+    )
+  }
+
+  // Pending state — chip pulses, shows start time, End button appears
+  if (pendingStart !== null) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide animate-pulse"
+          style={chipStyle(tag.color)}
+        >
+          <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0" style={swatchStyle(tag.color)} />
+          {tag.label}
+          <span className="font-mono text-[10px] opacity-70 ml-0.5">{formatTimecode(pendingStart)}</span>
+        </span>
+        <button
+          onClick={onEnd}
+          title="Mark end here"
+          className="inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[11px] font-semibold transition-all hover:opacity-80 active:scale-95"
+          style={{ backgroundColor: `${tag.color}40`, borderColor: `${tag.color}88`, color: tag.color }}
+        >
+          <Square className="h-2.5 w-2.5 fill-current" />
+          End
         </button>
-        <button onClick={cancelEdit} className="text-text-tertiary hover:text-text-primary transition-colors" title="Cancel">
+        <button
+          onClick={onCancelPending}
+          title="Cancel stamp"
+          className="p-0.5 rounded hover:bg-bg-hover text-text-tertiary hover:text-status-error transition-colors"
+        >
           <X className="h-3 w-3" />
         </button>
       </span>
     )
   }
 
+  // Normal state — clicking chip marks start
   return (
     <span className="inline-flex items-center gap-1 group/chip">
       <button
-        onClick={() => onStamp(tag)}
+        onClick={onStart}
         onDoubleClick={() => canEdit && setEditing(true)}
         title={
-          isPending
-            ? `Click to end "${tag.label}" range here`
-            : index < 9
-              ? `${tag.label} — click to start stamp (press ${index + 1})`
-              : `${tag.label} — click to start stamp`
+          index < 9
+            ? `Mark start for "${tag.label}" (press ${index + 1})`
+            : `Mark start for "${tag.label}"`
         }
-        className={cn(
-          'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-all hover:opacity-80 active:scale-95',
-          isPending && 'opacity-70',
-        )}
+        className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-all hover:opacity-80 active:scale-95"
         style={chipStyle(tag.color)}
       >
         {index < 9 && (
           <span className="text-[9px] font-mono opacity-60">{index + 1}</span>
         )}
-        <span
-          className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-          style={swatchStyle(tag.color)}
-        />
+        <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0" style={swatchStyle(tag.color)} />
         {tag.label}
       </button>
       {canEdit && (
@@ -141,47 +175,35 @@ function PaletteChip({ tag, index, canEdit, isPending, onStamp, onUpdate, onDele
   )
 }
 
-// ─── Video Stamp input (replaces Add-label form) ─────────────────────────────
+// ─── Add label form ───────────────────────────────────────────────────────────
 
 const DEFAULT_COLORS = [
   '#f59e0b', '#10b981', '#f43f5e', '#6366f1', '#0ea5e9', '#ec4899', '#84cc16', '#f97316',
 ]
 
-interface VideoStampInputProps {
+interface AddLabelFormProps {
   open: boolean
-  palette: PaletteTag[]
-  onStamp: (tag: PaletteTag) => void
-  onAddAndStamp: (label: string, color: string) => Promise<void>
+  onAdd: (label: string, color: string) => Promise<void>
   onClose: () => void
 }
 
-function VideoStampInput({ open, palette, onStamp, onAddAndStamp, onClose }: VideoStampInputProps) {
-  const [query, setQuery] = useState('')
-  const [highlight, setHighlight] = useState(0)
-  const [newColor, setNewColor] = useState(DEFAULT_COLORS[0])
+function AddLabelForm({ open, onAdd, onClose }: AddLabelFormProps) {
+  const [label, setLabel] = useState('')
+  const [color, setColor] = useState(DEFAULT_COLORS[0])
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (open) {
-      setQuery('')
-      setHighlight(0)
+      setLabel('')
+      setColor(DEFAULT_COLORS[0])
       setTimeout(() => inputRef.current?.focus(), 0)
     }
   }, [open])
 
-  const q = query.trim().toLowerCase()
-  const suggestions = palette.filter((p) => q === '' || p.label.includes(q))
-  const isNew = q.length > 0 && !palette.some((p) => p.label === q)
-
   const commit = async () => {
-    const match = suggestions[highlight] ?? (suggestions.length === 1 ? suggestions[0] : null)
-    if (match && !isNew) {
-      onStamp(match)
-    } else if (isNew) {
-      await onAddAndStamp(q, newColor)
-    } else if (suggestions[highlight]) {
-      onStamp(suggestions[highlight])
-    }
+    const trimmed = label.trim().toLowerCase()
+    if (!trimmed) return
+    await onAdd(trimmed, color)
     onClose()
   }
 
@@ -191,57 +213,31 @@ function VideoStampInput({ open, palette, onStamp, onAddAndStamp, onClose }: Vid
     <span className="inline-flex items-center gap-1 rounded border border-border-focus bg-bg-elevated px-1.5 py-0.5">
       <input
         ref={inputRef}
-        value={query}
-        onChange={(e) => { setQuery(e.target.value); setHighlight(0) }}
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') { e.preventDefault(); void commit() }
           if (e.key === 'Escape') { e.preventDefault(); onClose() }
-          if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => Math.min(h + 1, suggestions.length - 1)) }
-          if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)) }
         }}
-        placeholder="stamp label…"
+        placeholder="New label…"
         className="w-24 text-[11px] bg-transparent outline-none text-text-primary placeholder:text-text-tertiary"
       />
-      {/* Suggestions dropdown */}
-      {suggestions.length > 0 && (
-        <span className="absolute bottom-full mb-1 left-0 min-w-[120px] rounded border border-border bg-bg-secondary shadow-lg overflow-hidden z-50 flex flex-col">
-          {suggestions.map((p, i) => (
-            <button
-              key={p.id}
-              type="button"
-              onMouseEnter={() => setHighlight(i)}
-              onMouseDown={(e) => { e.preventDefault(); onStamp(p); onClose() }}
-              className={cn(
-                'text-left px-2 py-1 text-[11px] font-semibold uppercase tracking-wide',
-                i === highlight ? 'bg-bg-hover' : '',
-              )}
-              style={{ color: p.color }}
-            >
-              {p.label}
-            </button>
-          ))}
-        </span>
-      )}
-      {/* Color picker for new labels */}
-      {isNew && (
-        <div className="flex gap-0.5">
-          {DEFAULT_COLORS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => setNewColor(c)}
-              className={cn('w-3 h-3 rounded-full border-2 transition-all', newColor === c ? 'border-white scale-110' : 'border-transparent')}
-              style={{ backgroundColor: c }}
-            />
-          ))}
-        </div>
-      )}
-      <button type="button" onClick={() => void commit()} className="text-text-tertiary hover:text-text-primary transition-colors" title="Stamp">
-        <Check className="h-3 w-3" />
-      </button>
-      <button type="button" onClick={onClose} className="text-text-tertiary hover:text-text-primary transition-colors" title="Cancel">
-        <X className="h-3 w-3" />
-      </button>
+      <div className="flex gap-0.5">
+        {DEFAULT_COLORS.map((c) => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => setColor(c)}
+            className={cn(
+              'w-3 h-3 rounded-full border-2 transition-all',
+              color === c ? 'border-white scale-110' : 'border-transparent',
+            )}
+            style={{ backgroundColor: c }}
+          />
+        ))}
+      </div>
+      <button type="button" onClick={() => void commit()} className="text-text-tertiary hover:text-text-primary transition-colors"><Check className="h-3 w-3" /></button>
+      <button type="button" onClick={onClose} className="text-text-tertiary hover:text-text-primary transition-colors"><X className="h-3 w-3" /></button>
     </span>
   )
 }
@@ -307,29 +303,34 @@ export function TagStampBar({
   const { frameTags, createFrameTag, deleteFrameTag } = useFrameTags(assetId, versionId)
   const { toast } = useToast()
 
-  // ── Pending range state ───────────────────────────────────────────────────────
   const [pendingRange, setPendingRange] = useState<{ label: string; color: string; start: number } | null>(null)
-  const [videoStampOpen, setVideoStampOpen] = useState(false)
+  const [addFormOpen, setAddFormOpen] = useState(false)
 
-  // ── Click a palette chip: first click starts range, same chip or any chip ends it ──
-  const handleChipStamp = async (tag: PaletteTag) => {
-    const t = getCurrentTime()
+  // ── Start stamp for a chip ────────────────────────────────────────────────────
+  const handleStart = (tag: PaletteTag) => {
     if (pendingRange) {
-      if (t <= pendingRange.start) {
-        toast('Seek past the start point first', 'error')
-        return
-      }
-      try {
-        await createFrameTag(pendingRange.start, pendingRange.label, t)
-        toast(`"${pendingRange.label}" stamped (${formatTimecode(pendingRange.start)} → ${formatTimecode(t)})`, 'success', 2500)
-      } catch {
-        toast('Failed to save stamp', 'error')
-      }
-      setPendingRange(null)
-    } else {
-      setPendingRange({ label: tag.label, color: tag.color, start: t })
-      toast(`"${tag.label}" started at ${formatTimecode(t)} — click any chip to end`, 'info', 4000)
+      toast(`Finish the "${pendingRange.label}" stamp first`, 'error', 2500)
+      return
     }
+    const t = getCurrentTime()
+    setPendingRange({ label: tag.label, color: tag.color, start: t })
+  }
+
+  // ── End stamp for the pending chip ────────────────────────────────────────────
+  const handleEnd = async (tag: PaletteTag) => {
+    if (!pendingRange || pendingRange.label !== tag.label) return
+    const t = getCurrentTime()
+    if (t <= pendingRange.start) {
+      toast('Seek past the start point first', 'error', 2500)
+      return
+    }
+    try {
+      await createFrameTag(pendingRange.start, pendingRange.label, t)
+      toast(`"${pendingRange.label}" stamped`, 'success', 2000)
+    } catch {
+      toast('Failed to save stamp', 'error')
+    }
+    setPendingRange(null)
   }
 
   // ── Hotkeys 1–9 and V ─────────────────────────────────────────────────────────
@@ -341,13 +342,13 @@ export function TagStampBar({
 
       if (e.key === 'Escape') {
         if (pendingRange) { setPendingRange(null); toast('Stamp cancelled', 'info', 1500) }
-        if (videoStampOpen) setVideoStampOpen(false)
+        if (addFormOpen) setAddFormOpen(false)
         return
       }
 
       if (e.key === 'v' || e.key === 'V') {
         e.preventDefault()
-        setVideoStampOpen((o) => !o)
+        setAddFormOpen((o) => !o)
         return
       }
 
@@ -356,59 +357,50 @@ export function TagStampBar({
       const tag = palette[digit - 1]
       if (!tag) return
       e.preventDefault()
-      void handleChipStamp(tag)
+
+      if (pendingRange) {
+        if (pendingRange.label === tag.label) {
+          void handleEnd(tag)
+        } else {
+          toast(`Finish the "${pendingRange.label}" stamp first`, 'error', 2500)
+        }
+      } else {
+        handleStart(tag)
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enableHotkeys, canEdit, palette, pendingRange, videoStampOpen])
+  }, [enableHotkeys, canEdit, palette, pendingRange, addFormOpen])
 
   // ── Palette label handlers ────────────────────────────────────────────────────
   const handleUpdate = async (id: string, patch: { label?: string; color?: string }) => {
-    try {
-      await updateLabel(id, patch)
-    } catch {
-      toast('Failed to update label', 'error')
-    }
+    try { await updateLabel(id, patch) }
+    catch { toast('Failed to update label', 'error') }
   }
 
   const handleDeleteLabel = async (id: string) => {
-    try {
-      await deleteLabel(id)
-    } catch {
-      toast('Failed to delete label', 'error')
-    }
+    try { await deleteLabel(id) }
+    catch { toast('Failed to delete label', 'error') }
   }
 
-  const handleAddAndStamp = async (label: string, color: string) => {
-    try {
-      await createLabel(label, color)
-      // Find the newly created palette entry and start a stamp for it
-      const t = getCurrentTime()
-      await createFrameTag(t, label.toLowerCase().trim())
-      setPendingRange(null)
-      toast(`New label "${label}" created and stamp started`, 'success', 2500)
-    } catch {
-      toast('Failed to add label', 'error')
-    }
+  const handleAddLabel = async (label: string, color: string) => {
+    try { await createLabel(label, color) }
+    catch { toast('Failed to add label', 'error') }
   }
 
   // ── Stamp delete ──────────────────────────────────────────────────────────────
   const handleDeleteStamp = async (id: string) => {
-    try {
-      await deleteFrameTag(id)
-    } catch {
-      toast('Failed to delete stamp', 'error')
-    }
+    try { await deleteFrameTag(id) }
+    catch { toast('Failed to delete stamp', 'error') }
   }
 
-  // ── Color lookup by label ─────────────────────────────────────────────────────
-  const colorForLabel = (label: string): string => {
-    return palette.find((p) => p.label === label)?.color ?? '#6366f1'
-  }
+  // ── Color lookup ──────────────────────────────────────────────────────────────
+  const colorForLabel = (label: string): string =>
+    palette.find((p) => p.label === label)?.color ?? '#6366f1'
 
-  // ── Marker strip positions ────────────────────────────────────────────────────
+  // ── Marker strip ──────────────────────────────────────────────────────────────
   const timeToPercent = (t: number) =>
     durationSeconds > 0 ? Math.max(0, Math.min(100, (t / durationSeconds) * 100)) : 0
 
@@ -417,28 +409,18 @@ export function TagStampBar({
   return (
     <div className="px-3 py-2 border-t border-border bg-bg-secondary space-y-2">
 
-      {/* ── Pending range banner ── */}
-      {pendingRange && (
-        <div
-          className="flex items-center gap-2 rounded px-2 py-1 text-[11px] border animate-pulse"
-          style={{ backgroundColor: `${pendingRange.color}18`, borderColor: `${pendingRange.color}55`, color: pendingRange.color }}
-        >
-          <span className="font-semibold uppercase tracking-wide">Range: {pendingRange.label}</span>
-          <span className="text-text-tertiary font-mono">started @ {formatTimecode(pendingRange.start)}</span>
-          <span className="text-text-tertiary">— click any chip to end · Esc to cancel</span>
-        </div>
-      )}
-
-      {/* ── Palette chips + Video Stamp ── */}
-      <div className="relative flex flex-wrap items-center gap-1.5">
+      {/* ── Palette chips + Add label ── */}
+      <div className="flex flex-wrap items-center gap-1.5">
         {palette.map((tag, i) => (
           <PaletteChip
             key={tag.id}
             tag={tag}
             index={i}
             canEdit={canEdit}
-            isPending={!!pendingRange}
-            onStamp={handleChipStamp}
+            pendingStart={pendingRange?.label === tag.label ? pendingRange.start : null}
+            onStart={() => handleStart(tag)}
+            onEnd={() => void handleEnd(tag)}
+            onCancelPending={() => setPendingRange(null)}
             onUpdate={handleUpdate}
             onDelete={handleDeleteLabel}
           />
@@ -447,22 +429,20 @@ export function TagStampBar({
           <span className="text-[11px] text-text-tertiary">No stamps configured</span>
         )}
         {canEdit && (
-          videoStampOpen ? (
-            <VideoStampInput
-              open={videoStampOpen}
-              palette={palette}
-              onStamp={(tag) => { void handleChipStamp(tag); setVideoStampOpen(false) }}
-              onAddAndStamp={handleAddAndStamp}
-              onClose={() => setVideoStampOpen(false)}
+          addFormOpen ? (
+            <AddLabelForm
+              open={addFormOpen}
+              onAdd={handleAddLabel}
+              onClose={() => setAddFormOpen(false)}
             />
           ) : (
             <button
-              onClick={() => setVideoStampOpen(true)}
-              title="Video Stamp (V)"
+              onClick={() => setAddFormOpen(true)}
+              title="Add label (V)"
               className="inline-flex items-center gap-0.5 rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-text-tertiary hover:text-text-secondary hover:border-border-focus transition-colors"
             >
-              <Video className="h-3 w-3" />
-              Video Stamp
+              <Plus className="h-3 w-3" />
+              Add label
             </button>
           )
         )}
