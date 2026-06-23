@@ -13,3 +13,4 @@ from .api_key import APIKey
 from .frame_tag import FrameTag
 from .tag_palette import TagPaletteLabel
 from .drive_sync import DriveSyncConnection, DriveSyncedFile
+from .library_access import LibraryAccess

@@ -15,6 +15,7 @@ import {
   ChevronsLeft,
   Activity,
   ListChecks,
+  Library,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useIsDesktop } from '@/hooks/use-media-query'
@@ -35,6 +36,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { href: '/projects', label: 'Projects', icon: Layers },
+  { href: '/library', label: 'Library', icon: Library },
   { href: '/submissions', label: 'Submissions', icon: Inbox },
 ]
 
