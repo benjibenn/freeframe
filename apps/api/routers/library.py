@@ -2,8 +2,11 @@
 
 Access rules:
   Platform admins (superadmin / sub-admin): see all assets across all projects.
-  Everyone else: only assets where they are the uploader (created_by == me)
-                 OR an admin has granted them access to that project/folder.
+  Everyone else: assets visible when ANY of the following is true:
+    1. created_by == me (own uploads, including submission projects)
+    2. explicit LibraryAccess grant for that project (folder_id IS NULL)
+    3. explicit LibraryAccess grant for that project+folder
+    4. user is a ProjectMember of the project (covers submission projects automatically)
 """
 import uuid
 from datetime import datetime
@@ -21,6 +24,7 @@ from ..models.project import Project
 from ..models.folder import Folder
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType
 from ..models.library_access import LibraryAccess
+from ..models.project import ProjectMember
 from ..services.permissions import is_platform_admin
 from ..services.s3_service import generate_presigned_get_url
 
@@ -88,7 +92,9 @@ def _access_filter(query, current_user: User):
     """Apply access-control filter to an Asset query for non-admin users."""
     return query.filter(
         or_(
+            # Own uploads (includes their submission project assets)
             Asset.created_by == current_user.id,
+            # Explicit library access grant at project level
             exists().where(
                 and_(
                     LibraryAccess.user_id == current_user.id,
@@ -96,11 +102,20 @@ def _access_filter(query, current_user: User):
                     LibraryAccess.folder_id.is_(None),
                 )
             ),
+            # Explicit library access grant at folder level
             exists().where(
                 and_(
                     LibraryAccess.user_id == current_user.id,
                     LibraryAccess.project_id == Asset.project_id,
                     LibraryAccess.folder_id == Asset.folder_id,
+                )
+            ),
+            # ProjectMember: covers submission projects and any explicit membership
+            exists().where(
+                and_(
+                    ProjectMember.user_id == current_user.id,
+                    ProjectMember.project_id == Asset.project_id,
+                    ProjectMember.deleted_at.is_(None),
                 )
             ),
         )
@@ -215,21 +230,16 @@ def list_library_projects(
     if is_platform_admin(current_user):
         projects = db.query(Project).filter(Project.deleted_at.is_(None)).order_by(Project.name).all()
     else:
-        granted_project_ids = (
-            db.query(LibraryAccess.project_id)
-            .filter(LibraryAccess.user_id == current_user.id)
-            .distinct()
-            .all()
-        )
-        pid_set = {r[0] for r in granted_project_ids}
-        # Also include projects where they have their own uploaded assets
-        owned_project_ids = (
-            db.query(Asset.project_id)
-            .filter(Asset.created_by == current_user.id, Asset.deleted_at.is_(None))
-            .distinct()
-            .all()
-        )
-        pid_set.update(r[0] for r in owned_project_ids)
+        pid_set: set = set()
+        # Library access grants
+        for r in db.query(LibraryAccess.project_id).filter(LibraryAccess.user_id == current_user.id).distinct().all():
+            pid_set.add(r[0])
+        # Own uploaded assets
+        for r in db.query(Asset.project_id).filter(Asset.created_by == current_user.id, Asset.deleted_at.is_(None)).distinct().all():
+            pid_set.add(r[0])
+        # ProjectMember (submission projects and other explicit memberships)
+        for r in db.query(ProjectMember.project_id).filter(ProjectMember.user_id == current_user.id, ProjectMember.deleted_at.is_(None)).distinct().all():
+            pid_set.add(r[0])
         if not pid_set:
             return []
         projects = db.query(Project).filter(Project.id.in_(pid_set), Project.deleted_at.is_(None)).order_by(Project.name).all()

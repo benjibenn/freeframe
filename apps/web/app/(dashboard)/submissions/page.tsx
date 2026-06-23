@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus, Pencil, X } from 'lucide-react'
+import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus, Pencil, X, Film, FolderOpen } from 'lucide-react'
+import { useAuthStore } from '@/stores/auth-store'
 
 interface SubmissionLink {
   id: string
@@ -28,12 +29,79 @@ interface SubmissionItem {
   created_at: string
 }
 
+interface MySubmissionItem {
+  submission_id: string
+  project_id: string
+  project_name: string
+  link_id: string
+  link_title: string
+  link_token: string
+  asset_count: number
+  created_at: string
+}
+
 function submitUrl(token: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   return `${origin}/submit/${token}`
 }
 
+// ─── Editor view ──────────────────────────────────────────────────────────────
+
+function MySubmissionsView() {
+  const [items, setItems] = useState<MySubmissionItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api.get<MySubmissionItem[]>('/my-submissions')
+      .then(setItems)
+      .catch((err) => setError(err instanceof ApiError ? err.detail : 'Failed to load submissions.'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-16 animate-pulse rounded-lg bg-bg-secondary" />)}</div>
+  if (error) return <div className="rounded-md border border-status-error/30 bg-status-error/10 px-3 py-2.5 text-sm text-status-error">{error}</div>
+  if (items.length === 0) return <p className="text-sm text-text-tertiary">You haven&apos;t submitted anything yet.</p>
+
+  return (
+    <div className="space-y-3">
+      {items.map((item) => (
+        <div key={item.submission_id} className="flex items-center justify-between gap-4 rounded-lg border border-border bg-bg-secondary px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-text-primary truncate">{item.link_title}</p>
+            <p className="text-xs text-text-tertiary flex items-center gap-1 mt-0.5">
+              <Film className="h-3 w-3 shrink-0" />
+              {item.asset_count} {item.asset_count === 1 ? 'asset' : 'assets'}
+              <span className="mx-1">·</span>
+              <FolderOpen className="h-3 w-3 shrink-0" />
+              {item.project_name}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              href={`/submit/${item.link_token}`}
+              className="text-xs text-text-tertiary hover:text-text-primary underline"
+            >
+              Submit more
+            </Link>
+            <Link
+              href={`/projects/${item.project_id}`}
+              className="rounded-md border border-border bg-bg-secondary px-3 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            >
+              View project
+            </Link>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
 export default function SubmissionsPage() {
+  const { user } = useAuthStore()
+  const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
   const [links, setLinks] = useState<SubmissionLink[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -55,8 +123,10 @@ export default function SubmissionsPage() {
   }
 
   useEffect(() => {
-    load()
-  }, [])
+    if (isPlatformAdmin) load()
+    else setLoading(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlatformAdmin])
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
@@ -86,6 +156,20 @@ export default function SubmissionsPage() {
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to disable link.')
     }
+  }
+
+  if (!isPlatformAdmin) {
+    return (
+      <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
+        <div className="mb-6">
+          <h1 className="text-xl font-semibold text-text-primary">My Submissions</h1>
+          <p className="text-sm text-text-secondary">
+            Submission requests you&apos;ve participated in. Click &quot;View project&quot; to see your uploaded assets.
+          </p>
+        </div>
+        <MySubmissionsView />
+      </div>
+    )
   }
 
   return (

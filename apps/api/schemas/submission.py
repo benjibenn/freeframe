@@ -75,3 +75,14 @@ class SubmissionItem(BaseModel):
 class SubmissionUpdate(BaseModel):
     # Empty/whitespace clears the override (falls back to the submitter's account name).
     display_name: Optional[str] = None
+
+
+class MySubmissionItem(BaseModel):
+    submission_id: uuid.UUID
+    project_id: uuid.UUID
+    project_name: str
+    link_id: uuid.UUID
+    link_title: str
+    link_token: str
+    asset_count: int
+    created_at: datetime

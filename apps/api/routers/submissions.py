@@ -37,6 +37,7 @@ from ..schemas.submission import (
     ReferenceResponse,
     AttachProjectRequest,
     ChildProjectItem,
+    MySubmissionItem,
 )
 from ..services.share_service import build_default_project_share_link
 from ..services import s3_service
@@ -184,6 +185,48 @@ def create_request_from_project(
     resp = SubmissionLinkResponse.model_validate(link)
     resp.submission_count = 0
     return resp
+
+
+@router.get("/my-submissions", response_model=list[MySubmissionItem])
+def get_my_submissions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Returns submission links the current user has submitted to, with asset counts."""
+    subs = db.query(Submission).filter(Submission.user_id == current_user.id).all()
+    if not subs:
+        return []
+
+    link_ids = list({s.submission_link_id for s in subs})
+    project_ids = list({s.project_id for s in subs})
+
+    links = {l.id: l for l in db.query(SubmissionLink).filter(SubmissionLink.id.in_(link_ids)).all()}
+    projects = {p.id: p for p in db.query(Project).filter(Project.id.in_(project_ids)).all()}
+    asset_counts = {
+        r[0]: r[1]
+        for r in db.query(Asset.project_id, func.count(Asset.id))
+        .filter(Asset.project_id.in_(project_ids), Asset.deleted_at.is_(None))
+        .group_by(Asset.project_id)
+        .all()
+    }
+
+    result = []
+    for s in sorted(subs, key=lambda x: x.created_at, reverse=True):
+        link = links.get(s.submission_link_id)
+        project = projects.get(s.project_id)
+        if not link or not project:
+            continue
+        result.append(MySubmissionItem(
+            submission_id=s.id,
+            project_id=s.project_id,
+            project_name=project.name,
+            link_id=link.id,
+            link_title=link.title,
+            link_token=link.token,
+            asset_count=asset_counts.get(s.project_id, 0),
+            created_at=s.created_at,
+        ))
+    return result
 
 
 @router.get("/submission-links", response_model=list[SubmissionLinkResponse])
