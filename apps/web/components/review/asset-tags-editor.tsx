@@ -5,6 +5,7 @@ import ReactDOM from 'react-dom'
 import useSWR, { mutate as globalMutate } from 'swr'
 import { Tag, X } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useTagPalette } from '@/hooks/use-tag-palette'
 
 export function AssetTagsEditor({
   assetId,
@@ -37,6 +38,7 @@ export function AssetTagsEditor({
     canEdit ? `/projects/${projectId}/tags` : null,
     (k: string) => api.get<{ tag: string; count: number }[]>(k),
   )
+  const { palette } = useTagPalette(canEdit ? projectId : null)
 
   // Close dropdown when clicking outside
   React.useEffect(() => {
@@ -89,8 +91,11 @@ export function AssetTagsEditor({
   const removeTag = (t: string) => persist(tags.filter((x) => x !== t))
 
   const q = input.trim().toLowerCase()
-  const suggestions = (projectTags ?? [])
-    .map((t) => t.tag)
+  const allSuggestions = [
+    ...(projectTags ?? []).map((t) => t.tag),
+    ...palette.map((p) => p.label),
+  ]
+  const suggestions = Array.from(new Set(allSuggestions))
     .filter((t) => !tags.includes(t) && (q === '' || t.includes(q)))
     .slice(0, 8)
 
