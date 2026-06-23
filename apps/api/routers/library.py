@@ -23,6 +23,7 @@ from ..models.user import User
 from ..models.project import Project
 from ..models.folder import Folder
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType
+from ..models.frame_tag import FrameTag
 from ..models.library_access import LibraryAccess
 from ..models.project import ProjectMember
 from ..services.permissions import is_platform_admin
@@ -42,9 +43,20 @@ class LibraryAssetItem(BaseModel):
     folder_id: Optional[uuid.UUID] = None
     folder_name: Optional[str] = None
     keywords: Optional[list] = None
+    frame_labels: Optional[list[str]] = None
     thumbnail_url: Optional[str] = None
     created_by: uuid.UUID
     created_at: datetime
+
+
+class LibraryTagItem(BaseModel):
+    tag: str
+    count: int
+
+
+class LibraryLabelItem(BaseModel):
+    label: str
+    count: int
 
 
 class LibraryAccessGrant(BaseModel):
@@ -174,6 +186,16 @@ def list_library_assets(
     project_ids = list({a.project_id for a in assets})
     folder_ids = list({a.folder_id for a in assets if a.folder_id})
 
+    # Bulk load unique frame labels per asset
+    frame_labels_by_asset: dict = {}
+    for (aid, lbl) in (
+        db.query(FrameTag.asset_id, FrameTag.label)
+        .filter(FrameTag.asset_id.in_(asset_ids), FrameTag.deleted_at.is_(None))
+        .distinct()
+        .all()
+    ):
+        frame_labels_by_asset.setdefault(aid, []).append(lbl)
+
     projects = {p.id: p for p in db.query(Project).filter(Project.id.in_(project_ids)).all()}
     folders = {f.id: f for f in db.query(Folder).filter(Folder.id.in_(folder_ids)).all()} if folder_ids else {}
 
@@ -212,6 +234,7 @@ def list_library_assets(
             folder_id=a.folder_id,
             folder_name=folder.name if folder else None,
             keywords=a.keywords,
+            frame_labels=sorted(set(frame_labels_by_asset.get(a.id, []))),
             thumbnail_url=generate_presigned_get_url(thumb_key) if thumb_key else None,
             created_by=a.created_by,
             created_at=a.created_at,
@@ -244,6 +267,53 @@ def list_library_projects(
             return []
         projects = db.query(Project).filter(Project.id.in_(pid_set), Project.deleted_at.is_(None)).order_by(Project.name).all()
     return [LibraryProjectOption(id=p.id, name=p.name) for p in projects]
+
+
+# ─── Tag / frame-label catalogues (for filter dropdowns) ─────────────────────
+
+@router.get("/library/tags", response_model=list[LibraryTagItem])
+def list_library_tags(
+    project_id: Optional[uuid.UUID] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from collections import Counter
+    query = db.query(Asset.keywords).filter(Asset.deleted_at.is_(None), Asset.keywords.isnot(None))
+    if not is_platform_admin(current_user):
+        query = _access_filter(query, current_user)
+    if project_id:
+        query = query.filter(Asset.project_id == project_id)
+    counter: Counter = Counter()
+    for (kws,) in query.all():
+        if kws:
+            for tag in kws:
+                counter[tag] += 1
+    return [LibraryTagItem(tag=t, count=c) for t, c in sorted(counter.items())]
+
+
+@router.get("/library/frame-labels", response_model=list[LibraryLabelItem])
+def list_library_frame_labels(
+    project_id: Optional[uuid.UUID] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from collections import Counter
+    asset_q = db.query(Asset.id).filter(Asset.deleted_at.is_(None))
+    if not is_platform_admin(current_user):
+        asset_q = _access_filter(asset_q, current_user)
+    if project_id:
+        asset_q = asset_q.filter(Asset.project_id == project_id)
+    asset_ids = [r[0] for r in asset_q.all()]
+    if not asset_ids:
+        return []
+    counter: Counter = Counter()
+    for (lbl,) in (
+        db.query(FrameTag.label)
+        .filter(FrameTag.asset_id.in_(asset_ids), FrameTag.deleted_at.is_(None))
+        .all()
+    ):
+        counter[lbl] += 1
+    return [LibraryLabelItem(label=l, count=c) for l, c in sorted(counter.items())]
 
 
 # ─── Access grant management (admin only) ────────────────────────────────────

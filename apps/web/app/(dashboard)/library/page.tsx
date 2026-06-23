@@ -4,7 +4,7 @@ import * as React from 'react'
 import Link from 'next/link'
 import useSWR, { mutate } from 'swr'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Library, Film, Search, X, Plus, Trash2, ChevronDown, FolderOpen, Users } from 'lucide-react'
+import { Library, Film, Search, X, Plus, Trash2, ChevronDown, FolderOpen, Users, Play, Check } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -23,6 +23,7 @@ interface LibraryAssetItem {
   folder_id: string | null
   folder_name: string | null
   keywords: string[] | null
+  frame_labels: string[] | null
   thumbnail_url: string | null
   created_by: string
   created_at: string
@@ -37,6 +38,8 @@ interface LibraryPage {
 
 interface ProjectOption { id: string; name: string }
 interface FolderOption { id: string; name: string }
+interface TagOption { tag: string; count: number }
+interface LabelOption { label: string; count: number }
 
 interface AccessGrant {
   id: string
@@ -54,6 +57,121 @@ interface UserSummary {
   name: string | null
   email: string
   grants: AccessGrant[]
+}
+
+// ─── Multi-select dropdown ────────────────────────────────────────────────────
+
+function MultiSelectDropdown({
+  label,
+  options,
+  selected,
+  onToggle,
+  onClear,
+  color = 'default',
+}: {
+  label: string
+  options: { value: string; count: number }[]
+  selected: string[]
+  onToggle: (v: string) => void
+  onClear: () => void
+  color?: 'default' | 'purple'
+}) {
+  const [open, setOpen] = React.useState(false)
+  const [search, setSearch] = React.useState('')
+  const ref = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const filtered = options.filter((o) =>
+    o.value.toLowerCase().includes(search.toLowerCase()),
+  )
+
+  const activeClass = color === 'purple'
+    ? 'border-purple-400/60 bg-purple-500/10 text-purple-400'
+    : 'border-accent bg-accent-muted text-accent'
+
+  const checkActiveClass = color === 'purple'
+    ? 'border-purple-400 bg-purple-400'
+    : 'border-accent bg-accent'
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          'flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-sm transition-colors select-none',
+          selected.length > 0
+            ? activeClass
+            : 'border-border bg-bg-secondary text-text-secondary hover:text-text-primary hover:border-border-focus',
+        )}
+      >
+        {label}
+        {selected.length > 0 && (
+          <span className="rounded-full bg-current/20 px-1.5 py-0.5 text-[10px] font-bold leading-none tabular-nums">
+            {selected.length}
+          </span>
+        )}
+        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform duration-150', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 z-30 mt-1 w-56 rounded-lg border border-border bg-bg-secondary shadow-xl">
+          {options.length > 8 && (
+            <div className="border-b border-border p-2">
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search…"
+                autoFocus
+                className="w-full rounded-md bg-bg-primary px-2.5 py-1.5 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none"
+              />
+            </div>
+          )}
+          <div className="max-h-60 overflow-y-auto p-1">
+            {filtered.length === 0 ? (
+              <p className="py-3 text-center text-xs text-text-tertiary">No matches</p>
+            ) : (
+              filtered.map((o) => (
+                <button
+                  key={o.value}
+                  onClick={() => onToggle(o.value)}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-text-primary hover:bg-bg-hover transition-colors"
+                >
+                  <span
+                    className={cn(
+                      'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors',
+                      selected.includes(o.value) ? checkActiveClass : 'border-border',
+                    )}
+                  >
+                    {selected.includes(o.value) && <Check className="h-2.5 w-2.5 text-white stroke-[3]" />}
+                  </span>
+                  <span className="flex-1 truncate">{o.value}</span>
+                  <span className="text-text-tertiary tabular-nums">{o.count}</span>
+                </button>
+              ))
+            )}
+          </div>
+          {selected.length > 0 && (
+            <div className="border-t border-border p-1.5">
+              <button
+                onClick={() => { onClear(); setOpen(false) }}
+                className="w-full rounded py-1 text-center text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
+              >
+                Clear selection
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ─── Access management dialog (admin only) ───────────────────────────────────
@@ -129,7 +247,6 @@ function ManageAccessDialog() {
             Grant editors access to specific projects or folders. Editors always see assets they uploaded themselves.
           </Dialog.Description>
 
-          {/* Grant form */}
           <div className="mt-4 rounded-lg border border-border bg-bg-primary p-4 space-y-3">
             <p className="text-xs font-medium text-text-tertiary uppercase tracking-wide">Add access</p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -178,7 +295,6 @@ function ManageAccessDialog() {
             </div>
           </div>
 
-          {/* Current grants list */}
           <div className="mt-4 space-y-3">
             {(users ?? []).filter((u) => u.grants.length > 0).map((u) => (
               <div key={u.id} className="rounded-lg border border-border bg-bg-primary p-3 space-y-2">
@@ -234,7 +350,6 @@ export default function LibraryPage() {
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current) }
   }, [search])
 
-  // Reset page on filter change
   React.useEffect(() => { setPage(1) }, [debouncedSearch, projectFilter, tagFilter, frameLabelFilter])
 
   const queryParams = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) })
@@ -242,6 +357,8 @@ export default function LibraryPage() {
   if (projectFilter) queryParams.set('project_id', projectFilter)
   tagFilter.forEach((t) => queryParams.append('tag', t))
   frameLabelFilter.forEach((l) => queryParams.append('frame_label', l))
+
+  const tagParams = projectFilter ? `?project_id=${projectFilter}` : ''
 
   const { data, isLoading } = useSWR<LibraryPage>(
     `/library?${queryParams}`,
@@ -251,6 +368,14 @@ export default function LibraryPage() {
   const { data: projects } = useSWR<ProjectOption[]>(
     '/library/projects',
     (k: string) => api.get<ProjectOption[]>(k),
+  )
+  const { data: allTags } = useSWR<TagOption[]>(
+    `/library/tags${tagParams}`,
+    (k: string) => api.get<TagOption[]>(k),
+  )
+  const { data: allLabels } = useSWR<LabelOption[]>(
+    `/library/frame-labels${tagParams}`,
+    (k: string) => api.get<LabelOption[]>(k),
   )
 
   const total = data?.total ?? 0
@@ -262,14 +387,10 @@ export default function LibraryPage() {
   const toggleFrameLabel = (label: string) =>
     setFrameLabelFilter((prev) => prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label])
 
-  // Collect unique tags and frame labels from current results for filter chips
-  const allTags = React.useMemo(() => {
-    const s = new Set<string>()
-    for (const item of data?.items ?? []) {
-      for (const t of item.keywords ?? []) s.add(t)
-    }
-    return Array.from(s).sort()
-  }, [data])
+  const hasActiveFilters = tagFilter.length > 0 || frameLabelFilter.length > 0 || projectFilter || debouncedSearch
+
+  const tagOptions = (allTags ?? []).map((t) => ({ value: t.tag, count: t.count }))
+  const labelOptions = (allLabels ?? []).map((l) => ({ value: l.label, count: l.count }))
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-7xl">
@@ -308,7 +429,10 @@ export default function LibraryPage() {
             <select
               value={projectFilter}
               onChange={(e) => setProjectFilter(e.target.value)}
-              className="h-8 appearance-none rounded-md border border-border bg-bg-secondary pl-2.5 pr-7 text-sm text-text-primary focus:outline-none focus:border-border-focus cursor-pointer"
+              className={cn(
+                'h-8 appearance-none rounded-md border bg-bg-secondary pl-2.5 pr-7 text-sm focus:outline-none focus:border-border-focus cursor-pointer',
+                projectFilter ? 'border-accent text-accent' : 'border-border text-text-primary',
+              )}
             >
               <option value="">All projects</option>
               {(projects ?? []).map((p) => (
@@ -319,7 +443,31 @@ export default function LibraryPage() {
           </div>
         )}
 
-        {/* Active tag chips */}
+        {/* Keywords multi-select */}
+        {tagOptions.length > 0 && (
+          <MultiSelectDropdown
+            label="Keywords"
+            options={tagOptions}
+            selected={tagFilter}
+            onToggle={toggleTag}
+            onClear={() => setTagFilter([])}
+            color="default"
+          />
+        )}
+
+        {/* Video labels multi-select */}
+        {labelOptions.length > 0 && (
+          <MultiSelectDropdown
+            label="Video Labels"
+            options={labelOptions}
+            selected={frameLabelFilter}
+            onToggle={toggleFrameLabel}
+            onClear={() => setFrameLabelFilter([])}
+            color="purple"
+          />
+        )}
+
+        {/* Active filter chips */}
         {tagFilter.map((t) => (
           <button
             key={t}
@@ -335,11 +483,11 @@ export default function LibraryPage() {
             onClick={() => toggleFrameLabel(l)}
             className="inline-flex items-center gap-1 h-7 rounded-full bg-purple-500/10 border border-purple-400/40 text-purple-400 px-2.5 text-xs font-medium"
           >
-            ▶ {l}<X className="h-3 w-3" />
+            <Play className="h-2.5 w-2.5 fill-current" />{l}<X className="h-3 w-3" />
           </button>
         ))}
 
-        {(tagFilter.length > 0 || frameLabelFilter.length > 0 || projectFilter || debouncedSearch) && (
+        {hasActiveFilters && (
           <button
             onClick={() => { setSearch(''); setProjectFilter(''); setTagFilter([]); setFrameLabelFilter([]) }}
             className="text-xs text-text-tertiary hover:text-text-primary underline"
@@ -349,30 +497,9 @@ export default function LibraryPage() {
         )}
       </div>
 
-      {/* Tag filter chips (from results) */}
-      {allTags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          <span className="text-xs text-text-tertiary self-center mr-1">Tags:</span>
-          {allTags.map((t) => (
-            <button
-              key={t}
-              onClick={() => toggleTag(t)}
-              className={cn(
-                'h-6 rounded-full border px-2.5 text-xs font-medium transition-colors',
-                tagFilter.includes(t)
-                  ? 'bg-accent-muted border-accent text-accent'
-                  : 'border-border text-text-secondary hover:border-text-secondary',
-              )}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Asset grid */}
       {isLoading && (data?.items ?? []).length === 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {Array.from({ length: 12 }).map((_, i) => (
             <div key={i} className="aspect-video animate-pulse rounded-lg bg-bg-secondary" />
           ))}
@@ -389,7 +516,7 @@ export default function LibraryPage() {
         />
       ) : (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {(data?.items ?? []).map((item) => (
               <AssetCard key={item.id} item={item} onTagClick={toggleTag} onFrameLabelClick={toggleFrameLabel} />
             ))}
@@ -423,10 +550,14 @@ function AssetCard({
   onTagClick: (tag: string) => void
   onFrameLabelClick: (label: string) => void
 }) {
+  const keywords = item.keywords ?? []
+  const frameLabels = item.frame_labels ?? []
+  const extraKeywords = keywords.length > 3 ? keywords.length - 3 : 0
+
   return (
     <Link
       href={`/projects/${item.project_id}/assets/${item.id}`}
-      className="group flex flex-col gap-1.5 rounded-lg border border-border bg-bg-secondary overflow-hidden hover:border-border-focus transition-colors"
+      className="group flex flex-col rounded-lg border border-border bg-bg-secondary overflow-hidden hover:border-border-focus transition-colors"
     >
       {/* Thumbnail */}
       <div className="relative aspect-video bg-bg-tertiary overflow-hidden">
@@ -442,10 +573,32 @@ function AssetCard({
             <Film className="h-6 w-6 text-text-tertiary" />
           </div>
         )}
+
+        {/* Video label count badge — bottom-left of thumbnail */}
+        {frameLabels.length > 0 && (
+          <div className="group/labels absolute bottom-1.5 left-1.5">
+            <div className="flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-purple-300 backdrop-blur-sm">
+              <Play className="h-2.5 w-2.5 fill-current" />
+              {frameLabels.length} {frameLabels.length === 1 ? 'label' : 'labels'}
+            </div>
+            {/* Hover popover listing label names */}
+            <div className="absolute bottom-full left-0 mb-1.5 hidden group-hover/labels:block z-20 min-w-[120px] max-w-[180px] rounded-md border border-border bg-bg-primary p-1.5 shadow-xl">
+              {frameLabels.map((l) => (
+                <button
+                  key={l}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); onFrameLabelClick(l) }}
+                  className="block w-full truncate rounded px-2 py-1 text-left text-[11px] text-text-secondary hover:bg-bg-hover hover:text-purple-400 transition-colors"
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Info */}
-      <div className="px-2 pb-2 space-y-0.5">
+      <div className="px-2.5 py-2 space-y-1">
         <p className="text-xs font-medium text-text-primary truncate group-hover:text-accent transition-colors">
           {item.name}
         </p>
@@ -453,18 +606,21 @@ function AssetCard({
           {item.project_name}{item.folder_name ? ` / ${item.folder_name}` : ''}
         </p>
 
-        {/* Tags */}
-        {(item.keywords ?? []).length > 0 && (
-          <div className="flex flex-wrap gap-0.5 pt-0.5">
-            {(item.keywords ?? []).slice(0, 3).map((t) => (
+        {/* Keyword chips */}
+        {keywords.length > 0 && (
+          <div className="flex flex-wrap items-center gap-0.5 pt-0.5">
+            {keywords.slice(0, 3).map((t) => (
               <button
                 key={t}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTagClick(t) }}
-                className="rounded-full border border-border px-1.5 text-[9px] text-text-tertiary hover:text-text-primary hover:border-text-secondary transition-colors"
+                className="rounded-full border border-border px-1.5 text-[9px] text-text-tertiary hover:text-accent hover:border-accent transition-colors"
               >
                 {t}
               </button>
             ))}
+            {extraKeywords > 0 && (
+              <span className="text-[9px] text-text-tertiary">+{extraKeywords}</span>
+            )}
           </div>
         )}
       </div>
