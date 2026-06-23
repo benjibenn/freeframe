@@ -169,10 +169,41 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     router.push(`/projects/${projectId}/assets/${assetId}`)
   }
 
-  // Keyboard navigation for prev/next asset
+  // Keyboard navigation for prev/next asset + panel shortcuts
   useEffect(() => {
+    function focusField(shortcut: string) {
+      const el = document.querySelector<HTMLElement>(`[data-field-shortcut="${shortcut}"]`)
+      el?.focus()
+    }
+
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      const target = e.target as Element
+      const inInput = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target as HTMLElement).isContentEditable
+      if (inInput) return
+
+      // Panel tab switching
+      if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault()
+        setSidebarOpen(true)
+        setActiveTab('comments')
+        return
+      }
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault()
+        setSidebarOpen(true)
+        setActiveTab('fields')
+        return
+      }
+
+      // Field shortcuts — only fire when Fields tab is visible
+      if (activeTab === 'fields' && sidebarOpen) {
+        if (e.key === 's' || e.key === 'S') { e.preventDefault(); focusField('status'); return }
+        if (e.key === 't' || e.key === 'T') { e.preventDefault(); focusField('tags'); return }
+        if (e.key === 'a' || e.key === 'A') { e.preventDefault(); focusField('assignee'); return }
+        if (e.key === 'd' || e.key === 'D') { e.preventDefault(); focusField('duedate'); return }
+      }
+
+      // Asset navigation
       if (e.key === 'ArrowLeft' && prevAsset) {
         e.preventDefault()
         navigateAsset(prevAsset.id)
@@ -184,7 +215,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [prevAsset, nextAsset])
+  }, [prevAsset, nextAsset, activeTab, sidebarOpen])
 
   if (isLoading || !asset) {
     return (

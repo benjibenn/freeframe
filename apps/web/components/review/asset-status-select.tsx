@@ -55,6 +55,7 @@ export function AssetStatusSelect({
 
   const select = (
     <select
+      data-field-shortcut="status"
       value={current ?? ''}
       onChange={handleChange}
       disabled={saving}

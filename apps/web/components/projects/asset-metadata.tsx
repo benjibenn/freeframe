@@ -285,6 +285,7 @@ export function AssetMetadataEditor({
       <div className="flex flex-col gap-1.5">
         <label className="text-xs font-medium text-text-tertiary uppercase tracking-wide">Assignee</label>
         <select
+          data-field-shortcut="assignee"
           value={assigneeId}
           onChange={(e) => setAssigneeId(e.target.value)}
           className="flex h-8 w-full rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"
@@ -306,6 +307,7 @@ export function AssetMetadataEditor({
         </label>
         <input
           type="date"
+          data-field-shortcut="duedate"
           value={dueDate}
           onChange={(e) => setDueDate(e.target.value)}
           className="flex h-8 w-full rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"

@@ -134,6 +134,7 @@ export function AssetTagsEditor({
                   setDropdownOpen(false)
                 }
               }}
+              data-field-shortcut="tags"
               placeholder="Add tag..."
               className="flex h-8 w-full rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"
             />
