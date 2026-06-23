@@ -1,7 +1,7 @@
-"""add library_access table for per-user cross-project asset permissions
+"""merge migration heads + add library_access table
 
 Revision ID: a1b2c3d4e5f6
-Revises: c4d5e6f7a8b9
+Revises: f9a0b1c2d3e4, c4d5e6f7a8b9
 Create Date: 2026-06-23
 """
 from typing import Sequence, Union
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 revision: str = 'a1b2c3d4e5f6'
-down_revision: Union[str, Sequence[str], None] = 'c4d5e6f7a8b9'
+down_revision: Union[str, Sequence[str], None] = ('f9a0b1c2d3e4', 'c4d5e6f7a8b9')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
