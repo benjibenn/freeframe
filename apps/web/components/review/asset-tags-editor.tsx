@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import ReactDOM from 'react-dom'
 import useSWR, { mutate as globalMutate } from 'swr'
 import { Tag, X } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -21,7 +22,9 @@ export function AssetTagsEditor({
   const [error, setError] = React.useState('')
   const [highlight, setHighlight] = React.useState(0)
   const [dropdownOpen, setDropdownOpen] = React.useState(false)
+  const [dropdownRect, setDropdownRect] = React.useState<DOMRect | null>(null)
   const wrapperRef = React.useRef<HTMLDivElement>(null)
+  const inputRef = React.useRef<HTMLInputElement>(null)
 
   React.useEffect(() => {
     setTags(initialTags)
@@ -45,6 +48,21 @@ export function AssetTagsEditor({
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
+
+  // Track input position for the portal-rendered dropdown (escapes overflow:hidden parents)
+  React.useEffect(() => {
+    if (!dropdownOpen || !inputRef.current) { setDropdownRect(null); return }
+    const update = () => {
+      if (inputRef.current) setDropdownRect(inputRef.current.getBoundingClientRect())
+    }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [dropdownOpen])
 
   const persist = async (next: string[]) => {
     const prev = tags
@@ -109,54 +127,23 @@ export function AssetTagsEditor({
       )}
 
       {canEdit && (
-        <div ref={wrapperRef} className="relative flex gap-2">
-          <div className="relative flex-1">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value)
-                setHighlight(0)
-                setDropdownOpen(true)
-              }}
-              onFocus={() => setDropdownOpen(true)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  addTag(suggestions[highlight] ?? undefined)
-                } else if (e.key === 'ArrowDown') {
-                  e.preventDefault()
-                  setHighlight((h) => Math.min(h + 1, suggestions.length - 1))
-                } else if (e.key === 'ArrowUp') {
-                  e.preventDefault()
-                  setHighlight((h) => Math.max(h - 1, 0))
-                } else if (e.key === 'Escape') {
-                  setDropdownOpen(false)
-                }
-              }}
-              data-field-shortcut="tags"
-              placeholder="Add tag..."
-              className="flex h-8 w-full rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"
-            />
-            {dropdownOpen && suggestions.length > 0 && (
-              <ul className="absolute z-50 left-0 right-0 top-full mt-1 rounded-md border border-border bg-bg-secondary shadow-lg overflow-hidden">
-                {suggestions.map((t, i) => (
-                  <li key={t}>
-                    <button
-                      type="button"
-                      onMouseEnter={() => setHighlight(i)}
-                      onMouseDown={(e) => { e.preventDefault(); addTag(t) }}
-                      className={`w-full text-left px-3 py-1.5 text-sm ${
-                        i === highlight ? 'bg-bg-hover text-text-primary' : 'text-text-secondary'
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+        <div ref={wrapperRef} className="flex gap-2">
+          <input
+            ref={inputRef}
+            type="text"
+            value={input}
+            onChange={(e) => { setInput(e.target.value); setHighlight(0); setDropdownOpen(true) }}
+            onFocus={() => setDropdownOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); addTag(suggestions[highlight] ?? undefined) }
+              else if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => Math.min(h + 1, suggestions.length - 1)) }
+              else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)) }
+              else if (e.key === 'Escape') { setDropdownOpen(false) }
+            }}
+            data-field-shortcut="tags"
+            placeholder="Add tag..."
+            className="flex h-8 flex-1 rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"
+          />
           <button
             type="button"
             onClick={() => addTag()}
@@ -164,6 +151,29 @@ export function AssetTagsEditor({
           >
             Add
           </button>
+          {/* Portal: escapes overflow:hidden parents in the sidebar */}
+          {dropdownOpen && suggestions.length > 0 && dropdownRect && typeof document !== 'undefined' &&
+            ReactDOM.createPortal(
+              <ul
+                style={{ position: 'fixed', top: dropdownRect.bottom + 4, left: dropdownRect.left, width: dropdownRect.width, zIndex: 9999 }}
+                className="rounded-md border border-border bg-bg-secondary shadow-lg overflow-hidden"
+              >
+                {suggestions.map((t, i) => (
+                  <li key={t}>
+                    <button
+                      type="button"
+                      onMouseEnter={() => setHighlight(i)}
+                      onMouseDown={(e) => { e.preventDefault(); addTag(t) }}
+                      className={`w-full text-left px-3 py-1.5 text-sm ${i === highlight ? 'bg-bg-hover text-text-primary' : 'text-text-secondary'}`}
+                    >
+                      {t}
+                    </button>
+                  </li>
+                ))}
+              </ul>,
+              document.body,
+            )
+          }
         </div>
       )}
 
