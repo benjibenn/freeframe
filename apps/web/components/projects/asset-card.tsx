@@ -110,6 +110,7 @@ export function AssetCard({
           <img
             src={thumbnailUrl}
             alt={asset.name}
+            loading="lazy"
             onError={() => setImgError(true)}
             className={cn(
               'h-full w-full transition-transform duration-200 group-hover:scale-[1.02]',

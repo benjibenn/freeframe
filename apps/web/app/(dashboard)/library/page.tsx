@@ -713,6 +713,7 @@ function AssetCard({
           <img
             src={item.thumbnail_url}
             alt=""
+            loading="lazy"
             className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"
           />
         ) : (
