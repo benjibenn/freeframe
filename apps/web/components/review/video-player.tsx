@@ -251,20 +251,20 @@ export function VideoPlayer({
           break;
         case "ArrowLeft":
           e.preventDefault();
-          seek(currentTime - 5);
+          seek(currentTime - 3);
           break;
         case "ArrowRight":
           e.preventDefault();
-          seek(currentTime + 5);
+          seek(currentTime + 3);
           break;
         case "KeyJ":
-          seek(currentTime - 10);
+          seek(currentTime - 3);
           break;
         case "KeyK":
           togglePlay();
           break;
         case "KeyL":
-          seek(currentTime + 10);
+          seek(currentTime + 3);
           break;
       }
     };

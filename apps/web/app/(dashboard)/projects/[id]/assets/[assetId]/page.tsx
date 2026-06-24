@@ -52,9 +52,9 @@ const ASSET_SHORTCUTS = [
     title: 'Playback',
     items: [
       { keys: ['Space'], label: 'Play / pause' },
-      { keys: ['J'], label: 'Jump back 10 s' },
+      { keys: ['J'], label: 'Jump back 3 s' },
       { keys: ['K'], label: 'Play / pause' },
-      { keys: ['L'], label: 'Jump forward 10 s' },
+      { keys: ['L'], label: 'Jump forward 3 s' },
     ],
   },
   {
