@@ -125,7 +125,7 @@ export default function ProjectDetailPage() {
   const [bucketImportOpen, setBucketImportOpen] = React.useState(false);
 
   const { files: uploadFiles, startUpload } = useUploadStore();
-  const { user } = useAuthStore();
+  const { user, isSuperAdmin } = useAuthStore();
 
   const {
     tree,
@@ -323,6 +323,11 @@ export default function ProjectDetailPage() {
   const { data: assigneeUsers } = useSWR<User[]>(
     assigneeIds.length > 0 ? `/users?ids=${assigneeIds.join(",")}` : null,
     () => api.get<User[]>(`/users?ids=${assigneeIds.join(",")}`),
+  );
+
+  const { data: platformStorage } = useSWR<{ total_bytes: number }>(
+    isSuperAdmin ? "/admin/storage-usage" : null,
+    () => api.get<{ total_bytes: number }>("/admin/storage-usage"),
   );
 
   const assigneesMap: Record<string, User> = React.useMemo(() => {
@@ -648,39 +653,33 @@ export default function ProjectDetailPage() {
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Storage indicator — matches global sidebar bottom section (p-2 + space-y-1) */}
-        {(() => {
-          const used = project?.storage_bytes ?? 0;
-          const limit = 10 * 1024 * 1024 * 1024; // 10 GB default limit
-          const pct = limit > 0 ? Math.min((used / limit) * 100, 100) : 0;
-          const isCritical = pct >= 90;
-          const isWarning = pct >= 80;
-          return (
-            <div className="border-t border-border shrink-0 p-2 space-y-1">
-              <div className="flex flex-col gap-1 px-2.5 py-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-text-secondary">Storage</span>
-                  <span className={cn(
-                    "text-[10px] tabular-nums",
-                    isCritical ? "text-status-error font-medium" : isWarning ? "text-amber-400 font-medium" : "text-text-tertiary",
-                  )}>
-                    {formatBytes(used)} / {formatBytes(limit)}
-                  </span>
-                </div>
-                <div className="h-1 w-full rounded-full bg-bg-hover overflow-hidden">
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-all duration-300",
-                      isCritical ? "bg-status-error" : isWarning ? "bg-amber-400" : "bg-accent",
-                    )}
-                    style={{ width: `${Math.max(pct, 1)}%` }}
-                  />
-                </div>
+        {/* Storage indicator */}
+        {isSuperAdmin ? (
+          <div className="border-t border-border shrink-0 p-2 space-y-1">
+            <div className="flex flex-col gap-1 px-2.5 py-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-text-secondary">Storage</span>
+                <span className="text-[10px] tabular-nums text-text-tertiary">
+                  {platformStorage ? formatBytes(platformStorage.total_bytes) : "—"}
+                </span>
               </div>
-              <div className="h-5" />
+              <p className="text-[10px] text-text-tertiary">Platform total (Backblaze)</p>
             </div>
-          );
-        })()}
+            <div className="h-5" />
+          </div>
+        ) : (
+          <div className="border-t border-border shrink-0 p-2 space-y-1">
+            <div className="flex flex-col gap-1 px-2.5 py-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-text-secondary">Storage</span>
+                <span className="text-[10px] tabular-nums text-text-tertiary">
+                  {formatBytes(project?.storage_bytes ?? 0)}
+                </span>
+              </div>
+            </div>
+            <div className="h-5" />
+          </div>
+        )}
       </div>
 
       {/* ─── Main Content ───────────────────────────────────────────────── */}

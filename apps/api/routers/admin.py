@@ -9,6 +9,7 @@ import uuid
 
 from ..database import get_db
 from ..middleware.auth import get_current_user
+from ..models.asset import Asset
 from ..models.user import User, UserStatus
 from ..models.api_key import APIKey, generate_api_key, hash_api_key, API_KEY_PREFIX
 from ..schemas.auth import UserResponse, UpdateUserRoleRequest, UpdateSubadminRequest, UpdateUidRequest, UpdateNicknameRequest
@@ -398,3 +399,14 @@ def revoke_api_key(
 
     creator = db.query(User).filter(User.id == key.created_by).first()
     return _api_key_to_response(key, creator.name if creator else None)
+
+
+@router.get("/storage-usage")
+def get_storage_usage(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Total bytes stored across all assets on the platform. Platform admin only."""
+    _require_superadmin(current_user)
+    total = db.query(func.coalesce(func.sum(Asset.file_size_bytes), 0)).scalar()
+    return {"total_bytes": int(total)}
