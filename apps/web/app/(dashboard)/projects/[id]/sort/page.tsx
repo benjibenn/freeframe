@@ -13,6 +13,41 @@ import { enqueueWrite } from '@/lib/sorter/write-queue'
 import { TagInput } from '@/components/sorter/tag-input'
 import { SlotBar } from '@/components/sorter/slot-bar'
 import { useToast } from '@/components/shared/toast'
+import { ShortcutsHint } from '@/components/ui/shortcuts-hint'
+
+const SORTER_SHORTCUTS = [
+  {
+    title: 'Navigation',
+    items: [
+      { keys: ['↑'], label: 'Previous asset' },
+      { keys: ['↓'], label: 'Next asset' },
+      { keys: ['Esc'], label: 'Exit sorter' },
+    ],
+  },
+  {
+    title: 'Playback',
+    items: [
+      { keys: ['Space'], label: 'Play / pause' },
+      { keys: ['←'], label: 'Seek back 5 s' },
+      { keys: ['→'], label: 'Seek forward 5 s' },
+    ],
+  },
+  {
+    title: 'Tagging',
+    items: [
+      { keys: ['1–9'], label: 'Toggle tag slot 1–9' },
+      { keys: ['T'], label: 'Open tag input' },
+      { keys: ['A'], label: 'Apply all tags' },
+    ],
+  },
+  {
+    title: 'Actions',
+    items: [
+      { keys: ['D'], label: 'Archive current asset' },
+      { keys: ['Z'], label: 'Undo last action' },
+    ],
+  },
+]
 
 type Op =
   | { type: 'tag-add'; assetId: string; tag: string }
@@ -167,7 +202,7 @@ export default function SorterPage() {
     <div className="relative flex h-screen flex-col bg-black">
       <div className="flex items-center justify-between px-4 py-2 text-xs text-text-tertiary">
         <span>{queue.index + 1} / {queue.assets.length} — {current.name}</span>
-        <span>↑↓ nav · ←→ seek · 1–9 slots · t tag · d archive · z undo · esc exit</span>
+        <ShortcutsHint groups={SORTER_SHORTCUTS} />
       </div>
 
       <div className="flex flex-1 items-center justify-center">

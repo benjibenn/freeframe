@@ -38,6 +38,42 @@ import { cn } from '@/lib/utils'
 import { useIsDesktop } from '@/hooks/use-media-query'
 import { usePageTitle } from '@/hooks/use-page-title'
 import type { Project, AssetResponse, ProjectMember, FolderTreeNode } from '@/types'
+import { ShortcutsHint } from '@/components/ui/shortcuts-hint'
+
+const ASSET_SHORTCUTS = [
+  {
+    title: 'Navigation',
+    items: [
+      { keys: ['←'], label: 'Previous asset' },
+      { keys: ['→'], label: 'Next asset' },
+    ],
+  },
+  {
+    title: 'Playback',
+    items: [
+      { keys: ['Space'], label: 'Play / pause' },
+      { keys: ['J'], label: 'Jump back 10 s' },
+      { keys: ['K'], label: 'Play / pause' },
+      { keys: ['L'], label: 'Jump forward 10 s' },
+    ],
+  },
+  {
+    title: 'Panels',
+    items: [
+      { keys: ['C'], label: 'Focus comments' },
+      { keys: ['F'], label: 'Focus fields' },
+    ],
+  },
+  {
+    title: 'Fields (Fields tab open)',
+    items: [
+      { keys: ['S'], label: 'Status' },
+      { keys: ['T'], label: 'Tags' },
+      { keys: ['A'], label: 'Assignee' },
+      { keys: ['D'], label: 'Due date' },
+    ],
+  },
+]
 
 const acceptByType: Record<string, string> = {
   video: 'video/*',
@@ -434,6 +470,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
             New Version
           </button>
           <ShareDialog assetId={asset.id} assetName={asset.name} projectId={projectId} asset={asset} />
+          <ShortcutsHint groups={ASSET_SHORTCUTS} />
           <button
             onClick={() => setSidebarOpen((p) => !p)}
             className={cn(

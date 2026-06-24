@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import useSWR, { mutate } from 'swr'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Library, Film, Search, X, Plus, Trash2, ChevronDown, FolderOpen, Users, Play, Check } from 'lucide-react'
+import { ShortcutsHint } from '@/components/ui/shortcuts-hint'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -331,6 +332,25 @@ function ManageAccessDialog() {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+const LIBRARY_SHORTCUTS = [
+  {
+    title: 'Grid navigation',
+    items: [
+      { keys: ['↑'], label: 'Select previous item' },
+      { keys: ['↓'], label: 'Select next item' },
+      { keys: ['Enter'], label: 'Open selected asset' },
+      { keys: ['Esc'], label: 'Deselect' },
+    ],
+  },
+  {
+    title: 'Playback (item selected)',
+    items: [
+      { keys: ['←'], label: 'Seek back 3 s' },
+      { keys: ['→'], label: 'Seek forward 3 s' },
+    ],
+  },
+]
+
 const PER_PAGE = 24
 
 export default function LibraryPage() {
@@ -453,7 +473,10 @@ export default function LibraryPage() {
             {isPlatformAdmin ? 'All assets across all projects.' : 'Assets you have access to.'}
           </p>
         </div>
-        {isPlatformAdmin && <ManageAccessDialog />}
+        <div className="flex items-center gap-2">
+          {isPlatformAdmin && <ManageAccessDialog />}
+          <ShortcutsHint groups={LIBRARY_SHORTCUTS} />
+        </div>
       </div>
 
       {/* Filters */}
