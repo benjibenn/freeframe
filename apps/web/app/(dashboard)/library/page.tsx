@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import useSWR, { mutate } from 'swr'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Library, Film, Search, X, Plus, Trash2, ChevronDown, FolderOpen, Users, Play, Check } from 'lucide-react'
@@ -25,6 +26,7 @@ interface LibraryAssetItem {
   keywords: string[] | null
   frame_labels: string[] | null
   thumbnail_url: string | null
+  video_url: string | null
   created_by: string
   created_at: string
 }
@@ -333,6 +335,7 @@ const PER_PAGE = 24
 
 export default function LibraryPage() {
   usePageTitle('Library')
+  const router = useRouter()
   const { user } = useAuthStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
 
@@ -342,6 +345,8 @@ export default function LibraryPage() {
   const [projectFilter, setProjectFilter] = React.useState('')
   const [tagFilter, setTagFilter] = React.useState<string[]>([])
   const [frameLabelFilter, setFrameLabelFilter] = React.useState<string[]>([])
+  const [selectedIndex, setSelectedIndex] = React.useState<number | null>(null)
+  const videoRef = React.useRef<HTMLVideoElement>(null)
   const searchTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   React.useEffect(() => {
@@ -389,8 +394,54 @@ export default function LibraryPage() {
 
   const hasActiveFilters = tagFilter.length > 0 || frameLabelFilter.length > 0 || projectFilter || debouncedSearch
 
+  const items = data?.items ?? []
+
+  // Reset selection when results change
+  React.useEffect(() => { setSelectedIndex(null) }, [debouncedSearch, projectFilter, tagFilter, frameLabelFilter, page])
+
+  // Scroll selected card into view
+  React.useEffect(() => {
+    if (selectedIndex === null) return
+    document.querySelector(`[data-lib-index="${selectedIndex}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [selectedIndex])
+
+  // Keyboard navigation
+  React.useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSelectedIndex((prev) => (prev === null ? 0 : Math.min(prev + 1, items.length - 1)))
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSelectedIndex((prev) => (prev === null ? 0 : Math.max(prev - 1, 0)))
+      } else if (e.key === 'ArrowLeft') {
+        if (selectedIndex !== null && videoRef.current) {
+          e.preventDefault()
+          videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 3)
+        }
+      } else if (e.key === 'ArrowRight') {
+        if (selectedIndex !== null && videoRef.current) {
+          e.preventDefault()
+          videoRef.current.currentTime = Math.min(videoRef.current.duration || 0, videoRef.current.currentTime + 3)
+        }
+      } else if (e.key === 'Enter' && selectedIndex !== null) {
+        const item = items[selectedIndex]
+        if (item) router.push(`/projects/${item.project_id}/assets/${item.id}`)
+      } else if (e.key === 'Escape') {
+        setSelectedIndex(null)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [items, selectedIndex, router])
+
   const tagOptions = (allTags ?? []).map((t) => ({ value: t.tag, count: t.count }))
   const labelOptions = (allLabels ?? []).map((l) => ({ value: l.label, count: l.count }))
+
+  const selectedItem = selectedIndex !== null ? items[selectedIndex] ?? null : null
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-7xl">
@@ -504,7 +555,7 @@ export default function LibraryPage() {
             <div key={i} className="aspect-video animate-pulse rounded-lg bg-bg-secondary" />
           ))}
         </div>
-      ) : (data?.items ?? []).length === 0 ? (
+      ) : items.length === 0 ? (
         <EmptyState
           icon={Library}
           title="No assets found"
@@ -517,8 +568,16 @@ export default function LibraryPage() {
       ) : (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-            {(data?.items ?? []).map((item) => (
-              <AssetCard key={item.id} item={item} onTagClick={toggleTag} onFrameLabelClick={toggleFrameLabel} />
+            {items.map((item, idx) => (
+              <AssetCard
+                key={item.id}
+                item={item}
+                index={idx}
+                selected={selectedIndex === idx}
+                onTagClick={toggleTag}
+                onFrameLabelClick={toggleFrameLabel}
+                onSelect={() => setSelectedIndex(idx)}
+              />
             ))}
           </div>
 
@@ -535,6 +594,58 @@ export default function LibraryPage() {
           </div>
         </>
       )}
+      {/* Keyboard shortcut hint — shown until first selection */}
+      {items.length > 0 && selectedIndex === null && (
+        <p className="text-xs text-text-tertiary text-center py-1">
+          Press <kbd className="rounded border border-border px-1 py-0.5 font-mono text-[10px]">↑</kbd>{' '}
+          <kbd className="rounded border border-border px-1 py-0.5 font-mono text-[10px]">↓</kbd> to navigate assets
+        </p>
+      )}
+
+      {/* PIP preview panel */}
+      {selectedItem && (
+        <div className="fixed bottom-4 right-4 z-50 w-72 rounded-xl border border-border bg-bg-secondary shadow-2xl overflow-hidden">
+          <button
+            onClick={() => setSelectedIndex(null)}
+            className="absolute right-2 top-2 z-10 rounded-full bg-black/60 p-1 text-white hover:bg-black/80 transition-colors"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+
+          {selectedItem.video_url ? (
+            // eslint-disable-next-line jsx-a11y/media-has-caption
+            <video
+              ref={videoRef}
+              key={selectedItem.id}
+              src={selectedItem.video_url}
+              className="w-full aspect-video bg-black"
+              autoPlay
+              playsInline
+              controls
+            />
+          ) : selectedItem.thumbnail_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={selectedItem.thumbnail_url} alt="" className="w-full aspect-video object-cover" />
+          ) : (
+            <div className="w-full aspect-video bg-bg-tertiary flex items-center justify-center">
+              <Film className="h-8 w-8 text-text-tertiary" />
+            </div>
+          )}
+
+          <div className="p-3">
+            <p className="text-sm font-medium text-text-primary truncate">{selectedItem.name}</p>
+            <p className="text-[11px] text-text-tertiary truncate mt-0.5">
+              {selectedItem.project_name}{selectedItem.folder_name ? ` / ${selectedItem.folder_name}` : ''}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-text-tertiary">
+              <span><kbd className="font-mono">↑↓</kbd> navigate</span>
+              <span><kbd className="font-mono">←→</kbd> ±3s</span>
+              <span><kbd className="font-mono">↵</kbd> open</span>
+              <span><kbd className="font-mono">Esc</kbd> close</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -543,12 +654,18 @@ export default function LibraryPage() {
 
 function AssetCard({
   item,
+  index,
+  selected,
   onTagClick,
   onFrameLabelClick,
+  onSelect,
 }: {
   item: LibraryAssetItem
+  index: number
+  selected: boolean
   onTagClick: (tag: string) => void
   onFrameLabelClick: (label: string) => void
+  onSelect: () => void
 }) {
   const keywords = item.keywords ?? []
   const frameLabels = item.frame_labels ?? []
@@ -557,7 +674,14 @@ function AssetCard({
   return (
     <Link
       href={`/projects/${item.project_id}/assets/${item.id}`}
-      className="group flex flex-col rounded-lg border border-border bg-bg-secondary overflow-hidden hover:border-border-focus transition-colors"
+      data-lib-index={index}
+      onClick={onSelect}
+      className={cn(
+        'group flex flex-col rounded-lg border bg-bg-secondary overflow-hidden transition-colors',
+        selected
+          ? 'border-accent ring-1 ring-accent/40'
+          : 'border-border hover:border-border-focus',
+      )}
     >
       {/* Thumbnail */}
       <div className="relative aspect-video bg-bg-tertiary overflow-hidden">

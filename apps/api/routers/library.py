@@ -45,6 +45,7 @@ class LibraryAssetItem(BaseModel):
     keywords: Optional[list] = None
     frame_labels: Optional[list[str]] = None
     thumbnail_url: Optional[str] = None
+    video_url: Optional[str] = None
     created_by: uuid.UUID
     created_at: datetime
 
@@ -214,15 +215,20 @@ def list_library_assets(
     version_by_asset = {v.asset_id: v for v in latest_versions}
     version_ids = [v.id for v in latest_versions]
     thumb_by_version: dict = {}
+    video_by_version: dict = {}
     if version_ids:
         for f in db.query(MediaFile).filter(MediaFile.version_id.in_(version_ids)).all():
             if f.s3_key_thumbnail and f.version_id not in thumb_by_version:
                 thumb_by_version[f.version_id] = f.s3_key_thumbnail
+            video_key = f.s3_key_processed or f.s3_key_raw
+            if video_key and f.version_id not in video_by_version:
+                video_by_version[f.version_id] = video_key
 
     items = []
     for a in assets:
         version = version_by_asset.get(a.id)
         thumb_key = thumb_by_version.get(version.id) if version else None
+        video_key = video_by_version.get(version.id) if version else None
         project = projects.get(a.project_id)
         folder = folders.get(a.folder_id) if a.folder_id else None
         items.append(LibraryAssetItem(
@@ -236,6 +242,7 @@ def list_library_assets(
             keywords=a.keywords,
             frame_labels=sorted(set(frame_labels_by_asset.get(a.id, []))),
             thumbnail_url=generate_presigned_get_url(thumb_key) if thumb_key else None,
+            video_url=generate_presigned_get_url(video_key) if video_key else None,
             created_by=a.created_by,
             created_at=a.created_at,
         ))
