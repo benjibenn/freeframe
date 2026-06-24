@@ -91,13 +91,13 @@ export function AssetTagsEditor({
   const removeTag = (t: string) => persist(tags.filter((x) => x !== t))
 
   const q = input.trim().toLowerCase()
-  const allSuggestions = [
-    ...(projectTags ?? []).map((t) => t.tag),
-    ...palette.map((p) => p.label),
-  ]
-  const suggestions = Array.from(new Set(allSuggestions))
-    .filter((t) => !tags.includes(t) && (q === '' || t.includes(q)))
-    .slice(0, 8)
+  const sortedProjectTags = [...(projectTags ?? [])].sort((a, b) => b.count - a.count)
+  const paletteLabels = palette.map((p) => p.label)
+  const pool = Array.from(new Set([
+    ...sortedProjectTags.map((t) => t.tag),
+    ...paletteLabels,
+  ])).filter((t) => !tags.includes(t))
+  const suggestions = (q === '' ? pool : pool.filter((t) => t.includes(q))).slice(0, 10)
 
   return (
     <div className="flex flex-col gap-1.5">

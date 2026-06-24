@@ -1,8 +1,11 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
+import ReactDOM from 'react-dom'
+import useSWR from 'swr'
 import { Trash2, Check, X, Plus, Square } from 'lucide-react'
 import { cn, formatTimecode } from '@/lib/utils'
+import { api } from '@/lib/api'
 import { useTagPalette, type PaletteTag } from '@/hooks/use-tag-palette'
 import { useFrameTags } from '@/hooks/use-frame-tags'
 import { useToast } from '@/components/shared/toast'
@@ -183,25 +186,51 @@ const DEFAULT_COLORS = [
 
 interface AddLabelFormProps {
   open: boolean
+  projectId: string
   onAdd: (label: string, color: string) => Promise<void>
   onClose: () => void
 }
 
-function AddLabelForm({ open, onAdd, onClose }: AddLabelFormProps) {
+function AddLabelForm({ open, projectId, onAdd, onClose }: AddLabelFormProps) {
   const [label, setLabel] = useState('')
   const [color, setColor] = useState(DEFAULT_COLORS[0])
+  const [highlight, setHighlight] = useState(0)
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [dropdownRect, setDropdownRect] = useState<DOMRect | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  const { data: frameLabels } = useSWR<{ label: string; count: number }[]>(
+    open ? `/projects/${projectId}/frame-tag-labels` : null,
+    (k: string) => api.get<{ label: string; count: number }[]>(k),
+  )
 
   useEffect(() => {
     if (open) {
       setLabel('')
       setColor(DEFAULT_COLORS[0])
+      setHighlight(0)
       setTimeout(() => inputRef.current?.focus(), 0)
     }
   }, [open])
 
-  const commit = async () => {
-    const trimmed = label.trim().toLowerCase()
+  // Update dropdown portal position
+  useEffect(() => {
+    if (!dropdownOpen || !inputRef.current) { setDropdownRect(null); return }
+    const update = () => { if (inputRef.current) setDropdownRect(inputRef.current.getBoundingClientRect()) }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => { window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true) }
+  }, [dropdownOpen])
+
+  const q = label.trim().toLowerCase()
+  const suggestions = (frameLabels ?? [])
+    .map((l) => l.label)
+    .filter((l) => q === '' || l.includes(q))
+    .slice(0, 10)
+
+  const commit = async (value?: string) => {
+    const trimmed = (value ?? label).trim().toLowerCase()
     if (!trimmed) return
     await onAdd(trimmed, color)
     onClose()
@@ -214,14 +243,39 @@ function AddLabelForm({ open, onAdd, onClose }: AddLabelFormProps) {
       <input
         ref={inputRef}
         value={label}
-        onChange={(e) => setLabel(e.target.value)}
+        onChange={(e) => { setLabel(e.target.value); setHighlight(0); setDropdownOpen(true) }}
+        onFocus={() => setDropdownOpen(true)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); void commit() }
-          if (e.key === 'Escape') { e.preventDefault(); onClose() }
+          if (e.key === 'Enter') { e.preventDefault(); void commit(suggestions[highlight]) }
+          if (e.key === 'Escape') { e.preventDefault(); if (dropdownOpen) { setDropdownOpen(false) } else { onClose() } }
+          if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => Math.min(h + 1, suggestions.length - 1)); setDropdownOpen(true) }
+          if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)) }
         }}
         placeholder="New label…"
         className="w-24 text-[11px] bg-transparent outline-none text-text-primary placeholder:text-text-tertiary"
       />
+      {dropdownOpen && suggestions.length > 0 && dropdownRect && typeof document !== 'undefined' &&
+        ReactDOM.createPortal(
+          <ul
+            style={{ position: 'fixed', top: dropdownRect.bottom + 4, left: dropdownRect.left, minWidth: dropdownRect.width, zIndex: 9999 }}
+            className="rounded-md border border-border bg-bg-secondary shadow-lg overflow-hidden"
+          >
+            {suggestions.map((s, i) => (
+              <li key={s}>
+                <button
+                  type="button"
+                  onMouseEnter={() => setHighlight(i)}
+                  onMouseDown={(e) => { e.preventDefault(); void commit(s) }}
+                  className={`w-full text-left px-3 py-1.5 text-xs ${i === highlight ? 'bg-bg-hover text-text-primary' : 'text-text-secondary'}`}
+                >
+                  {s}
+                </button>
+              </li>
+            ))}
+          </ul>,
+          document.body,
+        )
+      }
       <div className="flex gap-0.5">
         {DEFAULT_COLORS.map((c) => (
           <button
@@ -432,6 +486,7 @@ export function TagStampBar({
           addFormOpen ? (
             <AddLabelForm
               open={addFormOpen}
+              projectId={projectId}
               onAdd={handleAddLabel}
               onClose={() => setAddFormOpen(false)}
             />
