@@ -249,7 +249,7 @@ function AddLabelForm({ open, projectId, onAdd, onClose }: AddLabelFormProps) {
           if (e.key === 'Enter') { e.preventDefault(); void commit(suggestions[highlight]) }
           if (e.key === 'Escape') { e.preventDefault(); if (dropdownOpen) { setDropdownOpen(false) } else { onClose() } }
           if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => Math.min(h + 1, suggestions.length - 1)); setDropdownOpen(true) }
-          if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)) }
+          if (e.key === 'ArrowUp') { e.preventDefault(); setDropdownOpen(true); setHighlight((h) => Math.max(h - 1, 0)) }
         }}
         placeholder="New label…"
         className="w-24 text-[11px] bg-transparent outline-none text-text-primary placeholder:text-text-tertiary"

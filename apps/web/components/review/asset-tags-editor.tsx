@@ -141,8 +141,8 @@ export function AssetTagsEditor({
             onFocus={() => setDropdownOpen(true)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') { e.preventDefault(); addTag(suggestions[highlight] ?? undefined) }
-              else if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => Math.min(h + 1, suggestions.length - 1)) }
-              else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)) }
+              else if (e.key === 'ArrowDown') { e.preventDefault(); setDropdownOpen(true); setHighlight((h) => Math.min(h + 1, suggestions.length - 1)) }
+              else if (e.key === 'ArrowUp') { e.preventDefault(); setDropdownOpen(true); setHighlight((h) => Math.max(h - 1, 0)) }
               else if (e.key === 'Escape') { setDropdownOpen(false) }
             }}
             data-field-shortcut="tags"
