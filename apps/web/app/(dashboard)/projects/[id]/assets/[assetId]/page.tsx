@@ -213,6 +213,14 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     }
 
     function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        const focused = document.activeElement as HTMLElement | null
+        if (focused && (focused.tagName === 'INPUT' || focused.tagName === 'TEXTAREA' || focused.tagName === 'SELECT' || focused.isContentEditable)) {
+          focused.blur()
+          return
+        }
+      }
+
       const target = e.target as Element
       const inInput = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target as HTMLElement).isContentEditable
       if (inInput) return
