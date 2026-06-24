@@ -94,7 +94,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const setLabel = useBreadcrumbStore((s) => s.setLabel)
   usePageTitle(asset?.name ?? null)
   const [annotationData, setAnnotationData] = useState<Record<string, unknown> | null>(null)
-  const [activeTab, setActiveTab] = useState<'comments' | 'fields'>('comments')
+  const [activeTab, setActiveTab] = useState<'comments' | 'fields'>('fields')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const isDesktop = useIsDesktop()
   const deepLinkApplied = useRef(false)
