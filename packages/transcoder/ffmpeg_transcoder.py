@@ -107,7 +107,9 @@ class FFmpegTranscoder(BaseTranscoder):
             )
 
             ffmpeg_cmd = [
-                "ffmpeg", "-y", "-i", input_url,
+                "ffmpeg", "-y",
+                "-threads", "2",  # limit per-process threads so 3 concurrent workers share 4 cores
+                "-i", input_url,
                 "-filter_complex", filter_complex,
             ]
 
@@ -115,7 +117,7 @@ class FFmpegTranscoder(BaseTranscoder):
                 scale, crf = QUALITY_MAP[quality]
                 ffmpeg_cmd += [
                     "-map", f"[{quality}]", "-map", "a:0",
-                    f"-c:v:{i}", "libx264", f"-crf", str(crf), "-preset", "fast",
+                    f"-c:v:{i}", "libx264", f"-crf", str(crf), "-preset", "veryfast",
                     "-force_key_frames", "expr:gte(t,n_forced*2)",
                 ]
 
