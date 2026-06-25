@@ -407,10 +407,24 @@ export default function AdminPage() {
   const { user, isSuperAdmin } = useAuthStore();
   const router = useRouter();
 
+  const prevQueueStats = React.useRef<QueueStats | null>(null);
+  const [queueDelta, setQueueDelta] = React.useState<QueueStats | null>(null);
   const { data: queueStats, isLoading: loadingQueue, mutate: refreshQueue } = useSWR<QueueStats>(
     isSuperAdmin ? "/admin/queue" : null,
     () => api.get<QueueStats>("/admin/queue"),
-    { refreshInterval: 10000 },
+    {
+      refreshInterval: 10000,
+      onSuccess: (data) => {
+        if (prevQueueStats.current) {
+          setQueueDelta({
+            queued: data.queued - prevQueueStats.current.queued,
+            processing: data.processing - prevQueueStats.current.processing,
+            failed: data.failed - prevQueueStats.current.failed,
+          });
+        }
+        prevQueueStats.current = data;
+      },
+    },
   );
 
   const { data: usersResp, isLoading: loadingUsers } = useSWR<User[]>(
@@ -524,22 +538,33 @@ export default function AdminPage() {
         </div>
         <div className="grid grid-cols-3 gap-3">
           {[
-            { label: "Queued", value: loadingQueue ? "—" : (queueStats?.queued ?? 0), color: "text-text-primary", href: null },
-            { label: "Processing", value: loadingQueue ? "—" : (queueStats?.processing ?? 0), color: "text-status-warning", href: "/settings/admin/queue?status=processing" },
-            { label: "Failed", value: loadingQueue ? "—" : (queueStats?.failed ?? 0), color: "text-status-error", href: "/settings/admin/queue?status=failed" },
-          ].map((stat) => (
-            stat.href ? (
-              <a key={stat.label} href={stat.href} className="rounded-lg border border-border bg-bg-secondary px-4 py-3 hover:bg-bg-tertiary transition-colors block">
+            { label: "Queued", value: loadingQueue ? "—" : (queueStats?.queued ?? 0), delta: queueDelta?.queued, color: "text-text-primary", href: null },
+            { label: "Processing", value: loadingQueue ? "—" : (queueStats?.processing ?? 0), delta: queueDelta?.processing, color: "text-status-warning", href: "/settings/admin/queue?status=processing" },
+            { label: "Failed", value: loadingQueue ? "—" : (queueStats?.failed ?? 0), delta: queueDelta?.failed, color: "text-status-error", href: "/settings/admin/queue?status=failed" },
+          ].map((stat) => {
+            const deltaEl = stat.delta != null && stat.delta !== 0 ? (
+              <span className={cn("text-xs ml-2 tabular-nums", stat.delta < 0 ? "text-status-success" : "text-status-error")}>
+                {stat.delta < 0 ? "↓" : "↑"}{Math.abs(stat.delta)}
+              </span>
+            ) : null;
+            const inner = (
+              <>
                 <p className="text-xs text-text-tertiary">{stat.label}</p>
-                <p className={cn("text-2xl font-semibold mt-1 tabular-nums", stat.color)}>{stat.value}</p>
+                <p className={cn("text-2xl font-semibold mt-1 tabular-nums", stat.color)}>
+                  {stat.value}{deltaEl}
+                </p>
+              </>
+            );
+            return stat.href ? (
+              <a key={stat.label} href={stat.href} className="rounded-lg border border-border bg-bg-secondary px-4 py-3 hover:bg-bg-tertiary transition-colors block">
+                {inner}
               </a>
             ) : (
               <div key={stat.label} className="rounded-lg border border-border bg-bg-secondary px-4 py-3">
-                <p className="text-xs text-text-tertiary">{stat.label}</p>
-                <p className={cn("text-2xl font-semibold mt-1 tabular-nums", stat.color)}>{stat.value}</p>
+                {inner}
               </div>
-            )
-          ))}
+            );
+          })}
         </div>
       </section>
 
