@@ -32,6 +32,7 @@ import {
   Loader2,
   Columns2,
   Upload,
+  RefreshCw,
 } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
@@ -96,6 +97,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const [annotationData, setAnnotationData] = useState<Record<string, unknown> | null>(null)
   const [activeTab, setActiveTab] = useState<'comments' | 'fields'>('fields')
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [reprocessing, setReprocessing] = useState(false)
   const isDesktop = useIsDesktop()
   const deepLinkApplied = useRef(false)
 
@@ -299,6 +301,22 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     refetchComments()
   }
 
+  const handleReprocess = async () => {
+    if (!asset || !currentVersion) return
+    setReprocessing(true)
+    try {
+      await api.post(`/assets/${asset.id}/versions/${currentVersion.id}/reprocess`)
+      await refetchVersions()
+    } finally {
+      setReprocessing(false)
+    }
+  }
+
+  const isStalled =
+    currentVersion?.processing_status === 'processing' &&
+    !!currentVersion?.created_at &&
+    Date.now() - new Date(currentVersion.created_at).getTime() > 10 * 60 * 1000
+
   const versionReady = currentVersion?.processing_status === 'ready'
   const versionProcessing =
     currentVersion?.processing_status === 'processing' ||
@@ -320,6 +338,16 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                     This may take a few minutes depending on file size.
                   </p>
                 </div>
+                {isStalled && (
+                  <button
+                    onClick={handleReprocess}
+                    disabled={reprocessing}
+                    className="mt-2 flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-primary border border-border rounded-md px-3 py-1.5 transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={cn("h-3 w-3", reprocessing && "animate-spin")} />
+                    {reprocessing ? "Requeuing…" : "Reprocess"}
+                  </button>
+                )}
               </>
             ) : currentVersion?.processing_status === 'failed' ? (
               <>
@@ -332,6 +360,14 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                     Try uploading a new version of this asset.
                   </p>
                 </div>
+                <button
+                  onClick={handleReprocess}
+                  disabled={reprocessing}
+                  className="mt-2 flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-primary border border-border rounded-md px-3 py-1.5 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={cn("h-3 w-3", reprocessing && "animate-spin")} />
+                  {reprocessing ? "Requeuing…" : "Reprocess"}
+                </button>
               </>
             ) : (
               <>

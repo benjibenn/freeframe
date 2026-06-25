@@ -3,7 +3,7 @@
 import * as React from "react";
 import useSWR, { mutate } from "swr";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Users, Plus, X, Shield, Link2, Check } from "lucide-react";
+import { Users, Plus, X, Shield, Link2, Check, RefreshCw, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -401,9 +401,17 @@ function NicknameCell({ u }: { u: User }) {
   );
 }
 
+type QueueStats = { queued: number; processing: number; failed: number };
+
 export default function AdminPage() {
   const { user, isSuperAdmin } = useAuthStore();
   const router = useRouter();
+
+  const { data: queueStats, isLoading: loadingQueue, mutate: refreshQueue } = useSWR<QueueStats>(
+    isSuperAdmin ? "/admin/queue" : null,
+    () => api.get<QueueStats>("/admin/queue"),
+    { refreshInterval: 10000 },
+  );
 
   const { data: usersResp, isLoading: loadingUsers } = useSWR<User[]>(
     isSuperAdmin ? "/admin/users" : null,
@@ -498,6 +506,35 @@ export default function AdminPage() {
           <p className="text-sm text-text-secondary">Manage platform users</p>
         </div>
       </div>
+
+      {/* Processing queue */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-text-primary flex items-center gap-2">
+            <Layers className="h-4 w-4 text-text-tertiary" />
+            Processing Queue
+          </h2>
+          <button
+            onClick={() => refreshQueue()}
+            className="flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-primary transition-colors"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Refresh
+          </button>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { label: "Queued", value: loadingQueue ? "—" : (queueStats?.queued ?? 0), color: "text-text-primary" },
+            { label: "Processing", value: loadingQueue ? "—" : (queueStats?.processing ?? 0), color: "text-status-warning" },
+            { label: "Failed", value: loadingQueue ? "—" : (queueStats?.failed ?? 0), color: "text-status-error" },
+          ].map((stat) => (
+            <div key={stat.label} className="rounded-lg border border-border bg-bg-secondary px-4 py-3">
+              <p className="text-xs text-text-tertiary">{stat.label}</p>
+              <p className={cn("text-2xl font-semibold mt-1 tabular-nums", stat.color)}>{stat.value}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {/* User management */}
       <section className="space-y-4">

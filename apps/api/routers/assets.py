@@ -531,6 +531,36 @@ def update_assignment(
     return _build_asset_response(asset, db)
 
 
+@router.post("/assets/{asset_id}/versions/{version_id}/reprocess")
+def reprocess_asset_version(
+    asset_id: uuid.UUID,
+    version_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    require_asset_access(db, asset, current_user)
+
+    version = db.query(AssetVersion).filter(
+        AssetVersion.id == version_id,
+        AssetVersion.asset_id == asset_id,
+        AssetVersion.deleted_at.is_(None),
+    ).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    version.processing_status = ProcessingStatus.processing
+    db.commit()
+
+    from ..tasks.transcode_tasks import process_asset
+    from ..tasks.celery_app import send_task_safe
+    send_task_safe(process_asset, str(asset_id), str(version_id))
+
+    return {"status": "requeued"}
+
+
 @router.get("/assets/{asset_id}/assignment")
 def get_assignment(
     asset_id: uuid.UUID,
