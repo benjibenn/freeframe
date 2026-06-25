@@ -68,6 +68,10 @@ celery_app.conf.beat_schedule = {
         "task": "apps.api.tasks.drive_sync_tasks.sync_drive_connections",
         "schedule": crontab(minute="0"),  # hourly
     },
+    "recover-stalled-assets": {
+        "task": "apps.api.tasks.transcode_tasks.recover_stalled_assets",
+        "schedule": crontab(minute="*/5"),  # every 5 minutes
+    },
 }
 
 

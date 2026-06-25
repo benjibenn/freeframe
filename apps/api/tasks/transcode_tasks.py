@@ -3,6 +3,7 @@ import sys
 import os
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 
 # Ensure the workspace root is on the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
@@ -23,7 +24,7 @@ def _run_async(coro):
         loop.close()
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60, acks_late=True, reject_on_worker_lost=True)
 def process_asset(self, asset_id: str, version_id: str):
     """Main processing task dispatched after upload completes."""
     db = SessionLocal()
@@ -119,6 +120,32 @@ def _process_image(db, asset, version, media_file, s3, output_prefix):
     media_file.s3_key_processed = result.get("webp_key")
     media_file.s3_key_thumbnail = result.get("thumbnail_key")
     db.flush()
+
+
+@celery_app.task
+def recover_stalled_assets():
+    """Re-queue any AssetVersion stuck in processing for more than 30 minutes.
+
+    Catches two failure modes:
+    - send_task_safe silent dispatch failure (task never reached the broker)
+    - pre-acks_late worker crashes where the task was lost without retry
+    """
+    stall_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    db = SessionLocal()
+    try:
+        stalled = (
+            db.query(AssetVersion)
+            .join(Asset, Asset.id == AssetVersion.asset_id)
+            .filter(
+                AssetVersion.processing_status == ProcessingStatus.processing,
+                AssetVersion.created_at < stall_cutoff,
+            )
+            .all()
+        )
+        for version in stalled:
+            process_asset.delay(str(version.asset_id), str(version.id))
+    finally:
+        db.close()
 
 
 def _publish_event(project_id: str, event_type: str, payload: dict):
