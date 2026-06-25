@@ -16,7 +16,7 @@ import {
   X,
   Trash2,
   Undo2,
-  FolderPlus,
+  UserPlus,
 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -270,8 +270,8 @@ export default function RequestDetailPage() {
               {copied ? 'Copied' : 'Copy submission link'}
             </Button>
             <Button variant="secondary" size="sm" onClick={() => setPreAssignOpen(true)}>
-              <FolderPlus className="h-4 w-4" />
-              Pre-assign folder
+              <UserPlus className="h-4 w-4" />
+              Pre-assign slot
             </Button>
             <Button
               variant="ghost"
@@ -436,7 +436,12 @@ export default function RequestDetailPage() {
         </div>
       )}
 
-      <PreAssignFolderDialog open={preAssignOpen} onOpenChange={setPreAssignOpen} />
+      <PreAssignFolderDialog
+        open={preAssignOpen}
+        onOpenChange={setPreAssignOpen}
+        linkId={id}
+        onCreated={mutateSubs}
+      />
     </div>
   )
 }

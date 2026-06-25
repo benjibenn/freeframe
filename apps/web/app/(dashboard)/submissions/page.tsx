@@ -412,7 +412,16 @@ function LinkCard({
         </div>
       )}
 
-      <PreAssignFolderDialog open={preAssignOpen} onOpenChange={setPreAssignOpen} />
+      <PreAssignFolderDialog
+        open={preAssignOpen}
+        onOpenChange={setPreAssignOpen}
+        linkId={link.id}
+        onCreated={async () => {
+          if (expanded) {
+            setSubs(await api.get<SubmissionItem[]>(`/submission-links/${link.id}/submissions`))
+          }
+        }}
+      />
     </div>
   )
 }

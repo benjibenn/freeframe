@@ -17,13 +17,15 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..middleware.auth import get_current_user, get_optional_user
-from ..models.user import User
+from ..models.user import User, UserStatus
+from ..services.auth_service import get_user_by_email
 from ..models.project import Project, ProjectMember, ProjectRole, ProjectType
 from ..models.asset import Asset
 from ..models.submission import SubmissionLink, Submission
@@ -632,6 +634,143 @@ def list_request_projects(
             asset_count=asset_counts.get(ref_project.id, 0), is_reference=True,
         ))
     return out
+
+
+# ── Admin: pre-create a submission slot for an email ─────────────────────────
+
+class PreCreateSubmissionRequest(BaseModel):
+    email: str
+    display_name: str | None = None
+
+
+@router.post(
+    "/submission-links/{link_id}/pre-create",
+    response_model=SubmissionItem,
+    status_code=status.HTTP_201_CREATED,
+)
+def pre_create_submission(
+    link_id: uuid.UUID,
+    body: PreCreateSubmissionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Admin: pre-provision a per-submitter project for an email address.
+
+    Mirrors POST /submit/{token}/accept but runs on behalf of an email the
+    person hasn't signed in with yet. Idempotent — returns the existing slot
+    if that email already has one. When they sign in later the submission is
+    already there and they land straight into their project.
+    """
+    require_platform_admin(current_user)
+    link = _get_owned_link(db, link_id, current_user)
+
+    email = body.email.lower().strip()
+    user = get_user_by_email(db, email)
+    if user is None:
+        user = User(
+            email=email,
+            name=body.display_name or email.split("@")[0],
+            status=UserStatus.pending_invite,
+            email_verified=False,
+        )
+        db.add(user)
+        db.flush()
+
+    # Idempotent: already provisioned → return the existing slot.
+    existing = db.query(Submission).filter(
+        Submission.submission_link_id == link.id,
+        Submission.user_id == user.id,
+    ).first()
+    if existing:
+        asset_count = db.query(func.count(Asset.id)).filter(
+            Asset.project_id == existing.project_id,
+            Asset.deleted_at.is_(None),
+        ).scalar() or 0
+        return SubmissionItem(
+            id=existing.id,
+            user_id=existing.user_id,
+            user_name=user.name or "",
+            user_email=user.email,
+            display_name=existing.display_name,
+            project_id=existing.project_id,
+            asset_count=int(asset_count),
+            created_at=existing.created_at,
+        )
+
+    submitter_label = (body.display_name or user.name or email.split("@")[0]).strip()
+    project = Project(
+        name=_unique_project_name(db, link, f"{link.title} — {submitter_label}"),
+        description=f"Submission for \"{link.title}\".",
+        project_type=ProjectType.team,
+        created_by=link.created_by,
+        submission_link_id=link.id,
+    )
+    db.add(project)
+    db.flush()
+
+    db.add(ProjectMember(
+        project_id=project.id,
+        user_id=link.created_by,
+        role=ProjectRole.owner,
+        invited_by=link.created_by,
+    ))
+    if user.id != link.created_by:
+        db.add(ProjectMember(
+            project_id=project.id,
+            user_id=user.id,
+            role=link.grant_role,
+            invited_by=link.created_by,
+        ))
+
+    submission = Submission(
+        submission_link_id=link.id,
+        user_id=user.id,
+        project_id=project.id,
+        display_name=body.display_name,
+    )
+    db.add(submission)
+
+    if link.reference_project_id and user.id != link.created_by:
+        db.add(ProjectMember(
+            project_id=link.reference_project_id,
+            user_id=user.id,
+            role=ProjectRole.viewer,
+            invited_by=link.created_by,
+        ))
+
+    db.add(build_default_project_share_link(project.id, link.created_by, project.name))
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(Submission).filter(
+            Submission.submission_link_id == link.id,
+            Submission.user_id == user.id,
+        ).first()
+        if existing:
+            return SubmissionItem(
+                id=existing.id,
+                user_id=existing.user_id,
+                user_name=user.name or "",
+                user_email=user.email,
+                display_name=existing.display_name,
+                project_id=existing.project_id,
+                asset_count=0,
+                created_at=existing.created_at,
+            )
+        raise
+
+    return SubmissionItem(
+        id=submission.id,
+        user_id=user.id,
+        user_name=user.name or "",
+        user_email=user.email,
+        display_name=submission.display_name,
+        project_id=project.id,
+        asset_count=0,
+        created_at=submission.created_at,
+    )
 
 
 # ── Visitor-facing ───────────────────────────────────────────────────────────
