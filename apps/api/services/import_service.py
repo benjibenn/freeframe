@@ -82,10 +82,12 @@ def register_s3_object_as_asset(
     db.add(asset)
     db.flush()
 
+    needs_transcode = asset_type == AssetType.video
+
     version = AssetVersion(
         asset_id=asset.id,
         version_number=1,
-        processing_status=ProcessingStatus.processing,
+        processing_status=ProcessingStatus.processing if needs_transcode else ProcessingStatus.ready,
         created_by=created_by,
     )
     db.add(version)
@@ -98,11 +100,13 @@ def register_s3_object_as_asset(
         mime_type=mime_type,
         file_size_bytes=size,
         s3_key_raw=s3_key,
+        s3_key_processed=None if needs_transcode else s3_key,
     )
     db.add(media_file)
     db.commit()
 
-    send_task_safe(process_asset, str(asset.id), str(version.id))
+    if needs_transcode:
+        send_task_safe(process_asset, str(asset.id), str(version.id))
 
     return asset
 

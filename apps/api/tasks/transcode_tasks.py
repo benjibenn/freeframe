@@ -124,17 +124,14 @@ def _process_image(db, asset, version, media_file, s3, output_prefix):
 
 @celery_app.task
 def recover_stalled_assets():
-    """Re-queue any AssetVersion stuck in processing for more than 30 minutes.
-
-    Catches two failure modes:
-    - send_task_safe silent dispatch failure (task never reached the broker)
-    - pre-acks_late worker crashes where the task was lost without retry
+    """Re-queue video assets stuck in processing for more than 30 minutes.
+    Mark image/audio assets as ready immediately — they don't need transcoding.
     """
     stall_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
     db = SessionLocal()
     try:
         stalled = (
-            db.query(AssetVersion)
+            db.query(AssetVersion, Asset)
             .join(Asset, Asset.id == AssetVersion.asset_id)
             .filter(
                 AssetVersion.processing_status == ProcessingStatus.processing,
@@ -142,8 +139,16 @@ def recover_stalled_assets():
             )
             .all()
         )
-        for version in stalled:
-            process_asset.delay(str(version.asset_id), str(version.id))
+        for version, asset in stalled:
+            if asset.asset_type == AssetType.video:
+                process_asset.delay(str(version.asset_id), str(version.id))
+            else:
+                # Images and audio: mark ready using the raw file
+                media_file = db.query(MediaFile).filter(MediaFile.version_id == version.id).first()
+                if media_file and media_file.s3_key_raw:
+                    media_file.s3_key_processed = media_file.s3_key_raw
+                version.processing_status = ProcessingStatus.ready
+        db.commit()
     finally:
         db.close()
 

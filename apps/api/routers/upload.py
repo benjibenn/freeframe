@@ -159,13 +159,21 @@ def complete_upload(
     # Then complete S3 multipart
     complete_multipart_upload(body.s3_key, body.upload_id, [p.model_dump() for p in body.parts])
 
-    version.processing_status = ProcessingStatus.processing
-
-    # Record activity so the upload (a new asset or a new revision) surfaces in the
-    # platform-wide activity feed admins and sub-admins watch.
     asset = db.query(Asset).filter(Asset.id == version.asset_id).first()
+    media_file = db.query(MediaFile).filter(MediaFile.version_id == version.id).first() if asset else None
+
+    # Images and audio don't need transcoding — serve the raw file directly.
+    # Videos still need HLS transcoding for adaptive streaming and private bucket access.
+    needs_transcode = asset and asset.asset_type == AssetType.video
+    if needs_transcode:
+        version.processing_status = ProcessingStatus.processing
+    else:
+        version.processing_status = ProcessingStatus.ready
+        if media_file:
+            media_file.s3_key_processed = media_file.s3_key_raw
+
+    # Record activity so the upload surfaces in the activity feed.
     if asset:
-        media_file = db.query(MediaFile).filter(MediaFile.version_id == version.id).first()
         db.add(ActivityLog(
             user_id=current_user.id,
             asset_id=asset.id,
@@ -180,10 +188,10 @@ def complete_upload(
 
     db.commit()
 
-    # Trigger transcoding in background (task dispatched in Step 7)
-    background_tasks.add_task(_trigger_processing, body.asset_id, body.version_id)
+    if needs_transcode:
+        background_tasks.add_task(_trigger_processing, body.asset_id, body.version_id)
 
-    return CompleteUploadResponse(status="processing", asset_id=body.asset_id, version_id=body.version_id)
+    return CompleteUploadResponse(status="processing" if needs_transcode else "ready", asset_id=body.asset_id, version_id=body.version_id)
 
 
 def _trigger_processing(asset_id: uuid.UUID, version_id: uuid.UUID):
