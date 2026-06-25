@@ -129,7 +129,7 @@ def oidc_callback(
             return _fail("account_deactivated")
         # SSO proves email ownership; activate pending users.
         user.email_verified = True
-        if user.status == UserStatus.pending_verification:
+        if user.status in (UserStatus.pending_verification, UserStatus.pending_invite):
             user.status = UserStatus.active
         db.commit()
 

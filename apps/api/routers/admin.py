@@ -2,18 +2,24 @@
 
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import uuid
 
+from ..config import settings
 from ..database import get_db
 from ..middleware.auth import get_current_user
-from ..models.asset import Asset
+from ..models.asset import Asset, AssetVersion, ProcessingStatus
+from ..models.folder import Folder
+from ..models.library_access import LibraryAccess
+from ..models.project import Project
 from ..models.user import User, UserStatus
 from ..models.api_key import APIKey, generate_api_key, hash_api_key, API_KEY_PREFIX
 from ..schemas.auth import UserResponse, UpdateUserRoleRequest, UpdateSubadminRequest, UpdateUidRequest, UpdateNicknameRequest
 from ..schemas.api_key import APIKeyResponse, APIKeyCreate, APIKeyCreated
+from ..services.auth_service import get_user_by_email
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -410,3 +416,139 @@ def get_storage_usage(
     _require_superadmin(current_user)
     total = db.query(func.coalesce(func.sum(Asset.file_size_bytes), 0)).scalar()
     return {"total_bytes": int(total)}
+
+
+# ── Pre-assign folder to email ────────────────────────────────────────────────
+
+class PreAssignFolderRequest(BaseModel):
+    email: str
+    folder_name: str
+    project_id: uuid.UUID
+
+
+class PreAssignFolderResponse(BaseModel):
+    user_id: uuid.UUID
+    user_email: str
+    user_created: bool
+    folder_id: uuid.UUID
+    folder_name: str
+    project_id: uuid.UUID
+    grant_id: uuid.UUID
+
+
+@router.post(
+    "/pre-assign-folder",
+    response_model=PreAssignFolderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def pre_assign_folder(
+    body: PreAssignFolderRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a folder in a project and grant access to an email address.
+
+    If the email has no account yet, a pending placeholder user is created.
+    When that person signs in (OIDC or invite), they will immediately see the
+    folder in their library — the grant is already attached to their user_id.
+    """
+    _require_superadmin(current_user)
+
+    project = db.query(Project).filter(
+        Project.id == body.project_id,
+        Project.deleted_at.is_(None),
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    email = body.email.lower().strip()
+
+    user = get_user_by_email(db, email)
+    user_created = False
+    if user is None:
+        user = User(
+            email=email,
+            name=email.split("@")[0],
+            status=UserStatus.pending_invite,
+            email_verified=False,
+        )
+        db.add(user)
+        db.flush()  # populate user.id before using it below
+        user_created = True
+
+    folder = Folder(
+        project_id=body.project_id,
+        name=body.folder_name,
+        created_by=current_user.id,
+    )
+    db.add(folder)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A folder named '{body.folder_name}' already exists in this project",
+        )
+
+    existing_grant = db.query(LibraryAccess).filter(
+        LibraryAccess.user_id == user.id,
+        LibraryAccess.project_id == body.project_id,
+        LibraryAccess.folder_id == folder.id,
+    ).first()
+
+    if existing_grant:
+        grant = existing_grant
+    else:
+        grant = LibraryAccess(
+            user_id=user.id,
+            project_id=body.project_id,
+            folder_id=folder.id,
+            granted_by=current_user.id,
+        )
+        db.add(grant)
+
+    db.commit()
+    db.refresh(folder)
+    db.refresh(grant)
+
+    return PreAssignFolderResponse(
+        user_id=user.id,
+        user_email=user.email,
+        user_created=user_created,
+        folder_id=folder.id,
+        folder_name=folder.name,
+        project_id=body.project_id,
+        grant_id=grant.id,
+    )
+
+
+# ── Processing queue ──────────────────────────────────────────────────────────
+
+@router.get("/queue")
+def get_queue_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _require_superadmin(current_user)
+
+    import redis as sync_redis
+    try:
+        r = sync_redis.from_url(settings.redis_url, decode_responses=True)
+        queued = r.llen("transcoding")
+        r.close()
+    except Exception:
+        queued = -1
+
+    processing = db.query(func.count(AssetVersion.id)).filter(
+        AssetVersion.processing_status == ProcessingStatus.processing,
+        AssetVersion.deleted_at.is_(None),
+    ).scalar() or 0
+
+    failed = db.query(func.count(AssetVersion.id)).filter(
+        AssetVersion.processing_status == ProcessingStatus.failed,
+        AssetVersion.deleted_at.is_(None),
+    ).scalar() or 0
+
+    return {"queued": queued, "processing": processing, "failed": failed}
+
