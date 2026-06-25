@@ -524,14 +524,21 @@ export default function AdminPage() {
         </div>
         <div className="grid grid-cols-3 gap-3">
           {[
-            { label: "Queued", value: loadingQueue ? "—" : (queueStats?.queued ?? 0), color: "text-text-primary" },
-            { label: "Processing", value: loadingQueue ? "—" : (queueStats?.processing ?? 0), color: "text-status-warning" },
-            { label: "Failed", value: loadingQueue ? "—" : (queueStats?.failed ?? 0), color: "text-status-error" },
+            { label: "Queued", value: loadingQueue ? "—" : (queueStats?.queued ?? 0), color: "text-text-primary", href: null },
+            { label: "Processing", value: loadingQueue ? "—" : (queueStats?.processing ?? 0), color: "text-status-warning", href: "/settings/admin/queue?status=processing" },
+            { label: "Failed", value: loadingQueue ? "—" : (queueStats?.failed ?? 0), color: "text-status-error", href: "/settings/admin/queue?status=failed" },
           ].map((stat) => (
-            <div key={stat.label} className="rounded-lg border border-border bg-bg-secondary px-4 py-3">
-              <p className="text-xs text-text-tertiary">{stat.label}</p>
-              <p className={cn("text-2xl font-semibold mt-1 tabular-nums", stat.color)}>{stat.value}</p>
-            </div>
+            stat.href ? (
+              <a key={stat.label} href={stat.href} className="rounded-lg border border-border bg-bg-secondary px-4 py-3 hover:bg-bg-tertiary transition-colors block">
+                <p className="text-xs text-text-tertiary">{stat.label}</p>
+                <p className={cn("text-2xl font-semibold mt-1 tabular-nums", stat.color)}>{stat.value}</p>
+              </a>
+            ) : (
+              <div key={stat.label} className="rounded-lg border border-border bg-bg-secondary px-4 py-3">
+                <p className="text-xs text-text-tertiary">{stat.label}</p>
+                <p className={cn("text-2xl font-semibold mt-1 tabular-nums", stat.color)}>{stat.value}</p>
+              </div>
+            )
           ))}
         </div>
       </section>

@@ -525,6 +525,47 @@ def pre_assign_folder(
 
 # ── Processing queue ──────────────────────────────────────────────────────────
 
+@router.get("/queue/assets")
+def list_queue_assets(
+    processing_status: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _require_superadmin(current_user)
+
+    try:
+        status_filter = ProcessingStatus(processing_status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid status")
+
+    rows = (
+        db.query(AssetVersion, Asset, Project)
+        .join(Asset, Asset.id == AssetVersion.asset_id)
+        .join(Project, Project.id == Asset.project_id)
+        .filter(
+            AssetVersion.processing_status == status_filter,
+            AssetVersion.deleted_at.is_(None),
+            Asset.deleted_at.is_(None),
+        )
+        .order_by(AssetVersion.created_at.asc())
+        .all()
+    )
+
+    return [
+        {
+            "version_id": str(v.id),
+            "asset_id": str(a.id),
+            "asset_name": a.name,
+            "project_id": str(p.id),
+            "project_name": p.name,
+            "version_number": v.version_number,
+            "processing_status": v.processing_status,
+            "created_at": v.created_at.isoformat(),
+        }
+        for v, a, p in rows
+    ]
+
+
 @router.get("/queue")
 def get_queue_stats(
     db: Session = Depends(get_db),
