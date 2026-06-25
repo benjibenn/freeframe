@@ -5,8 +5,9 @@ import Link from 'next/link'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus, Pencil, X, Film, FolderOpen } from 'lucide-react'
+import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus, Pencil, X, Film, FolderOpen, FolderPlus } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
+import { PreAssignFolderDialog } from '@/components/shared/pre-assign-folder-dialog'
 
 interface SubmissionLink {
   id: string
@@ -256,6 +257,7 @@ function LinkCard({
   const [editTitle, setEditTitle] = useState(link.title)
   const [editInstructions, setEditInstructions] = useState(link.instructions ?? '')
   const [saving, setSaving] = useState(false)
+  const [preAssignOpen, setPreAssignOpen] = useState(false)
 
   const url = submitUrl(link.token)
 
@@ -400,8 +402,17 @@ function LinkCard({
               ))}
             </ul>
           )}
+          <button
+            onClick={() => setPreAssignOpen(true)}
+            className="mt-1 flex items-center gap-1.5 rounded-md px-2 py-2 text-xs text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors w-full"
+          >
+            <FolderPlus className="h-3.5 w-3.5" />
+            Pre-assign folder to email…
+          </button>
         </div>
       )}
+
+      <PreAssignFolderDialog open={preAssignOpen} onOpenChange={setPreAssignOpen} />
     </div>
   )
 }

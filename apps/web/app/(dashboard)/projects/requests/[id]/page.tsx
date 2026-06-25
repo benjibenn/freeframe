@@ -16,12 +16,14 @@ import {
   X,
   Trash2,
   Undo2,
+  FolderPlus,
 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/shared/empty-state'
 import { useToast } from '@/components/shared/toast'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { PreAssignFolderDialog } from '@/components/shared/pre-assign-folder-dialog'
 import type { VideoRequest } from '@/components/projects/request-card'
 
 interface SubmissionItem {
@@ -126,6 +128,7 @@ export default function RequestDetailPage() {
   usePageTitle(request?.title ?? 'Request')
 
   const [copied, setCopied] = React.useState(false)
+  const [preAssignOpen, setPreAssignOpen] = React.useState(false)
   const [togglingRef, setTogglingRef] = React.useState(false)
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editValue, setEditValue] = React.useState('')
@@ -265,6 +268,10 @@ export default function RequestDetailPage() {
             <Button variant="secondary" size="sm" onClick={copy} disabled={!request}>
               {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               {copied ? 'Copied' : 'Copy submission link'}
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setPreAssignOpen(true)}>
+              <FolderPlus className="h-4 w-4" />
+              Pre-assign folder
             </Button>
             <Button
               variant="ghost"
@@ -428,6 +435,8 @@ export default function RequestDetailPage() {
           })}
         </div>
       )}
+
+      <PreAssignFolderDialog open={preAssignOpen} onOpenChange={setPreAssignOpen} />
     </div>
   )
 }
