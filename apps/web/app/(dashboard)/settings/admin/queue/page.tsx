@@ -44,10 +44,10 @@ export default function QueueDetailPage() {
     if (user && !isSuperAdmin) router.replace("/");
   }, [user, isSuperAdmin, router]);
 
-  const handleReprocess = async (item: QueueAsset) => {
+  const handleReprocess = async (item: QueueAsset, priority = false) => {
     setReprocessing((prev) => ({ ...prev, [item.version_id]: true }));
     try {
-      await api.post(`/assets/${item.asset_id}/versions/${item.version_id}/reprocess`);
+      await api.post(`/assets/${item.asset_id}/versions/${item.version_id}/reprocess?priority=${priority}`);
       await refresh();
       mutate(`/admin/queue`);
     } finally {
@@ -175,17 +175,25 @@ export default function QueueDetailPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => handleReprocess(item)}
-                          disabled={isReprocessing}
-                          className="inline-flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-primary border border-border rounded-md px-2.5 py-1 transition-colors disabled:opacity-50"
-                        >
-                          {isReprocessing
-                            ? <Loader2 className="h-3 w-3 animate-spin" />
-                            : <RefreshCw className="h-3 w-3" />
-                          }
-                          {isReprocessing ? "Queuing…" : "Reprocess"}
-                        </button>
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleReprocess(item, true)}
+                            disabled={isReprocessing}
+                            title="Jump to front of queue"
+                            className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent/80 border border-accent/30 rounded-md px-2.5 py-1 transition-colors disabled:opacity-50"
+                          >
+                            {isReprocessing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                            Priority
+                          </button>
+                          <button
+                            onClick={() => handleReprocess(item, false)}
+                            disabled={isReprocessing}
+                            className="inline-flex items-center gap-1 text-xs text-text-tertiary hover:text-text-primary border border-border rounded-md px-2.5 py-1 transition-colors disabled:opacity-50"
+                          >
+                            <RefreshCw className="h-3 w-3" />
+                            Normal
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

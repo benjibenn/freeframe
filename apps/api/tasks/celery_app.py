@@ -34,6 +34,7 @@ celery_app.conf.update(
     # Define queues
     task_queues=(
         Queue("default"),
+        Queue("transcoding_priority"),
         Queue("transcoding"),
         Queue("drive_sync"),
         Queue("email_high"),  # Magic codes, invites - immediate
@@ -81,29 +82,30 @@ import logging
 _task_logger = logging.getLogger("celery.dispatch")
 
 
-def _dispatch_task(task, args, kwargs):
+def _dispatch_task(task, args, kwargs, queue=None):
     """Actually send the task to Celery broker (runs in background thread)."""
     try:
-        task.delay(*args, **kwargs)
+        task.apply_async(args=args, kwargs=kwargs, queue=queue)
     except (OperationalError, ConnectionError, OSError):
         try:
             with celery_app.producer_or_acquire() as producer:
-                task.apply_async(args=args, kwargs=kwargs, producer=producer)
+                task.apply_async(args=args, kwargs=kwargs, queue=queue, producer=producer)
         except Exception:
             _task_logger.warning("Failed to dispatch task %s after retry", task.name)
     except Exception:
         _task_logger.warning("Failed to dispatch task %s", task.name)
 
 
-def send_task_safe(task, *args, **kwargs):
+def send_task_safe(task, *args, queue=None, **kwargs):
     """Send a Celery task in a background thread so it never blocks the API response.
 
     Broker connections can take seconds (especially with pool_limit=0).
     This ensures the API returns immediately while the task is dispatched async.
+    Pass queue= to route to a specific queue (e.g. "transcoding_priority").
     """
     thread = threading.Thread(
         target=_dispatch_task,
-        args=(task, args, kwargs),
+        args=(task, args, kwargs, queue),
         daemon=True,
     )
     thread.start()

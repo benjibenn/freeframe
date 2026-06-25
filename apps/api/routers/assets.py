@@ -535,6 +535,7 @@ def update_assignment(
 def reprocess_asset_version(
     asset_id: uuid.UUID,
     version_id: uuid.UUID,
+    priority: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -556,9 +557,10 @@ def reprocess_asset_version(
 
     from ..tasks.transcode_tasks import process_asset
     from ..tasks.celery_app import send_task_safe
-    send_task_safe(process_asset, str(asset_id), str(version_id))
+    queue = "transcoding_priority" if priority else None
+    send_task_safe(process_asset, str(asset_id), str(version_id), queue=queue)
 
-    return {"status": "requeued"}
+    return {"status": "requeued", "queue": queue or "transcoding"}
 
 
 @router.get("/assets/{asset_id}/assignment")
