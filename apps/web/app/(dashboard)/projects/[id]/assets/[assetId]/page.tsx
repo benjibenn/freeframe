@@ -86,6 +86,13 @@ const acceptByType: Record<string, string> = {
 function ReviewScreenInner({ projectId }: { projectId: string }) {
   const router = useRouter()
   const searchParams = useSearchParams()
+  // Where the "back" arrow returns to: the page we arrived from (?from=<path>),
+  // else the project folder. Guarded to internal paths to avoid off-site redirects.
+  const fromParam = searchParams.get('from')
+  const safeFrom =
+    fromParam && fromParam.startsWith('/') && !fromParam.startsWith('//')
+      ? fromParam
+      : null
   const { asset, versions, isLoading, refetchComments, refetchVersions } = useReview()
   const { currentVersion, isDrawingMode, focusedCommentId, seekTo, setFocusedCommentId, setActiveAnnotation } = useReviewStore()
   const { user } = useAuthStore()
@@ -204,7 +211,9 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const nextAsset = currentIndex < totalAssets - 1 ? allAssets?.[currentIndex + 1] : null
 
   const navigateAsset = (assetId: string) => {
-    router.push(`/projects/${projectId}/assets/${assetId}`)
+    // Preserve the origin so the back arrow still works after prev/next browsing.
+    const qs = safeFrom ? `?from=${encodeURIComponent(safeFrom)}` : ''
+    router.push(`/projects/${projectId}/assets/${assetId}${qs}`)
   }
 
   // Keyboard navigation for prev/next asset + panel shortcuts
@@ -447,7 +456,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
         {/* Left: back + breadcrumb */}
         <div className="flex items-center gap-1 min-w-0 flex-1">
           <Link
-            href={`/projects/${asset.project_id}`}
+            href={safeFrom ?? `/projects/${asset.project_id}`}
             className="flex items-center justify-center h-7 w-7 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors shrink-0"
           >
             <ArrowLeft className="h-4 w-4" />

@@ -475,7 +475,7 @@ export default function TasksPage() {
                 >
                   <td className="px-4 py-3">
                     <Link
-                      href={`/projects/${t.project_id}/assets/${t.asset_id}`}
+                      href={`/projects/${t.project_id}/assets/${t.asset_id}?from=/tasks`}
                       className="flex items-center gap-3 group"
                     >
                       <div className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-bg-tertiary">

@@ -449,7 +449,7 @@ export default function LibraryPage() {
         }
       } else if (e.key === 'Enter' && selectedIndex !== null) {
         const item = items[selectedIndex]
-        if (item) router.push(`/projects/${item.project_id}/assets/${item.id}`)
+        if (item) router.push(`/projects/${item.project_id}/assets/${item.id}?from=/library`)
       } else if (e.key === 'Escape') {
         setSelectedIndex(null)
       }
@@ -696,7 +696,7 @@ function AssetCard({
 
   return (
     <Link
-      href={`/projects/${item.project_id}/assets/${item.id}`}
+      href={`/projects/${item.project_id}/assets/${item.id}?from=/library`}
       data-lib-index={index}
       onClick={onSelect}
       className={cn(

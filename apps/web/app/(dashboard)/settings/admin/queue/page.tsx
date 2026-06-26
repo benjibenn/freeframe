@@ -154,7 +154,7 @@ export default function QueueDetailPage() {
                     <tr key={item.version_id} className="hover:bg-bg-tertiary/50 transition-colors">
                       <td className="px-4 py-3">
                         <Link
-                          href={`/projects/${item.project_id}/assets/${item.asset_id}`}
+                          href={`/projects/${item.project_id}/assets/${item.asset_id}?from=/settings/admin/queue`}
                           className="text-xs font-medium text-text-primary hover:text-accent transition-colors truncate max-w-[200px] block"
                         >
                           {item.asset_name}
