@@ -459,10 +459,10 @@ export default function TasksPage() {
         <div className="space-y-3">
         <div className="rounded-lg border border-border bg-bg-secondary overflow-hidden">
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] table-fixed text-sm">
+          <table className="w-full min-w-[680px] table-fixed text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-tertiary">
-                <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Video</th>
+                <th className="w-56 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Video</th>
                 <th className="w-40 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Submitter</th>
                 <th className="w-28 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Submitted</th>
                 <th className="w-40 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Status</th>
