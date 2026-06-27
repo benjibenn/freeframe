@@ -458,7 +458,8 @@ export default function TasksPage() {
       ) : (
         <div className="space-y-3">
         <div className="rounded-lg border border-border bg-bg-secondary overflow-hidden">
-          <table className="w-full table-fixed text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] table-fixed text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-tertiary">
                 <th className="px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Video</th>
@@ -515,6 +516,7 @@ export default function TasksPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
 
         {/* Pagination */}
