@@ -1,15 +1,15 @@
 """add run_as_ad flag to assets
 
-Revision ID: f1a2b3c4d5e6
-Revises: c8d9e2f1a3b4
+Revision ID: f7a1b2c3d4e5
+Revises: d9e0f1a2b3c4
 Create Date: 2026-06-29
 """
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = 'f1a2b3c4d5e6'
-down_revision: Union[str, Sequence[str], None] = 'c8d9e2f1a3b4'
+revision: str = 'f7a1b2c3d4e5'
+down_revision: Union[str, Sequence[str], None] = 'd9e0f1a2b3c4'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
