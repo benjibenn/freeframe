@@ -11,8 +11,9 @@ except ImportError:
     from database import Base
 
 class CommentVisibility(str, PyEnum):
-    public = "public"
-    internal = "internal"
+    public = "public"      # everyone with asset access, incl. share-link guests
+    internal = "internal"  # authenticated team members only (no guests)
+    admin = "admin"        # platform admins (superadmin / subadmin) only
 
 class Comment(Base):
     __tablename__ = "comments"

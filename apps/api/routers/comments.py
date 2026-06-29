@@ -13,7 +13,7 @@ from ..middleware.auth import get_current_user, get_optional_user
 from ..middleware.share_auth import get_share_link
 from ..models.asset import Asset
 from ..models.project import ProjectMember, ProjectRole
-from ..models.comment import Annotation, Comment, CommentAttachment, CommentReaction
+from ..models.comment import Annotation, Comment, CommentAttachment, CommentReaction, CommentVisibility
 from ..models.activity import Mention, Notification, NotificationType, ActivityLog, ActivityAction
 from ..models.user import User, GuestUser
 from ..models.share import ShareLink, ShareLinkActivity, ShareActivityAction, SharePermission
@@ -32,7 +32,7 @@ from ..schemas.comment import (
     ReactionResponse,
 )
 from ..services import s3_service
-from ..services.permissions import require_asset_access, validate_share_link
+from ..services.permissions import require_asset_access, validate_share_link, visible_visibilities
 from ..tasks.email_tasks import send_mention_email, send_comment_email
 from ..tasks.celery_app import send_task_safe
 
@@ -87,14 +87,25 @@ def _build_comment_response(
     db: Session,
     current_user_id: uuid.UUID | None = None,
     depth: int = 5,
+    allowed: Optional[list[str]] = None,
 ) -> CommentResponse:
+    """Build a comment response, recursing into replies.
+
+    `allowed` is the set of visibility tiers the viewer may see (see
+    permissions.visible_visibilities). When provided, replies outside that set
+    are dropped so an admin/internal reply can't leak through a lower-tier
+    parent. Pass None only for single-item responses returned to their author.
+    """
     annotation = db.query(Annotation).filter(Annotation.comment_id == comment.id).first()
     replies_raw = []
     if depth > 0:
-        replies_raw = db.query(Comment).filter(
+        reply_query = db.query(Comment).filter(
             Comment.parent_id == comment.id,
             Comment.deleted_at.is_(None),
-        ).order_by(Comment.created_at).all()
+        )
+        if allowed is not None:
+            reply_query = reply_query.filter(Comment.visibility.in_(allowed))
+        replies_raw = reply_query.order_by(Comment.created_at).all()
 
     # Load attachments
     attachments_raw = db.query(CommentAttachment).filter(
@@ -126,7 +137,7 @@ def _build_comment_response(
     resp.guest_author = guest_author_info
     resp.annotation = AnnotationResponse.model_validate(annotation) if annotation else None
     resp.replies = [
-        _build_comment_response(r, db, current_user_id=current_user_id, depth=depth - 1)
+        _build_comment_response(r, db, current_user_id=current_user_id, depth=depth - 1, allowed=allowed)
         for r in replies_raw
     ]
     resp.attachments = attachments
@@ -202,18 +213,23 @@ def list_comments(
 ):
     asset = _get_asset(db, asset_id)
     require_asset_access(db, asset, current_user)
+    # The viewer only ever sees tiers they're allowed to (admin tier is hidden
+    # from non-admins here, not just in the UI).
+    allowed = visible_visibilities(current_user)
     # Top-level comments only (parent_id is None)
     query = db.query(Comment).filter(
         Comment.asset_id == asset_id,
         Comment.parent_id.is_(None),
         Comment.deleted_at.is_(None),
+        Comment.visibility.in_(allowed),
     )
     if version_id:
         query = query.filter(Comment.version_id == version_id)
-    if visibility and visibility in ("public", "internal"):
+    # An explicit ?visibility= filter can only narrow within the allowed set.
+    if visibility and visibility in allowed:
         query = query.filter(Comment.visibility == visibility)
     top_level = query.order_by(Comment.created_at).all()
-    return [_build_comment_response(c, db, current_user_id=current_user.id) for c in top_level]
+    return [_build_comment_response(c, db, current_user_id=current_user.id, allowed=allowed) for c in top_level]
 
 
 @router.post("/assets/{asset_id}/comments", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
@@ -226,6 +242,15 @@ def create_comment(
     asset = _get_asset(db, asset_id)
     require_asset_access(db, asset, current_user)
 
+    # You cannot author a comment at a tier you couldn't read back (e.g. a
+    # non-admin must not be able to create an admin-only comment).
+    requested_visibility = body.visibility or "public"
+    if requested_visibility not in visible_visibilities(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"You don't have permission to create a '{requested_visibility}' comment",
+        )
+
     comment = Comment(
         asset_id=asset_id,
         version_id=body.version_id,
@@ -234,7 +259,7 @@ def create_comment(
         timecode_start=body.timecode_start,
         timecode_end=body.timecode_end,
         body=body.body,
-        visibility=body.visibility or "public",
+        visibility=requested_visibility,
     )
     db.add(comment)
     db.flush()
@@ -293,13 +318,15 @@ def reply_to_comment(
     if not parent:
         raise HTTPException(status_code=404, detail="Parent comment not found")
 
-    # Force body's version_id to match parent
+    # Force body's version_id to match parent, and inherit its visibility so a
+    # reply can never sit at a different (more permissive) tier than its thread.
     reply = Comment(
         asset_id=asset_id,
         version_id=parent.version_id,
         parent_id=comment_id,
         author_id=current_user.id,
         body=body.body,
+        visibility=parent.visibility,
     )
     db.add(reply)
     db.flush()
@@ -570,17 +597,21 @@ def list_share_comments(
         return []
     asset_id = target_asset_id
 
+    # Guests (no authenticated user) only ever see public comments — internal
+    # and admin tiers must never leave the server for a share-link viewer.
+    allowed = visible_visibilities(None)  # ["public"]
     # Get top-level comments — reuse same format as authenticated endpoint
     query = db.query(Comment).filter(
         Comment.asset_id == asset_id,
         Comment.parent_id.is_(None),
         Comment.deleted_at.is_(None),
+        Comment.visibility.in_(allowed),
     )
     if version_id:
         query = query.filter(Comment.version_id == version_id)
     top_level = query.order_by(Comment.created_at).all()
 
-    return [_build_comment_response(c, db) for c in top_level]
+    return [_build_comment_response(c, db, allowed=allowed) for c in top_level]
 
 
 @router.post("/share/{token}/comment", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)

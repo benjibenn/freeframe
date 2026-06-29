@@ -18,13 +18,44 @@ import {
   Trash2,
   Globe,
   Lock,
+  Shield,
 } from "lucide-react";
 import { cn, formatTime, formatTimecode, formatFrames } from "@/lib/utils";
 import { useReviewStore } from "@/stores/review-store";
 import { useReview } from "./review-provider";
 import { useDrawing } from "@/hooks/use-drawing";
+import { useAuth } from "@/hooks/use-auth";
 import { api } from "@/lib/api";
 import type { User } from "@/types";
+
+// Comment visibility tiers and their UI treatment. `admin` is only offered to
+// platform admins; the server enforces the boundary regardless of the UI.
+type CommentVisibility = "public" | "internal" | "admin";
+
+const VISIBILITY_META: Record<
+  CommentVisibility,
+  { Icon: typeof Globe; label: string; trigger: string; activeText: string }
+> = {
+  public: {
+    Icon: Globe,
+    label: "Public",
+    trigger:
+      "text-text-tertiary hover:bg-bg-tertiary hover:text-text-secondary border-border",
+    activeText: "text-text-primary",
+  },
+  internal: {
+    Icon: Lock,
+    label: "Internal",
+    trigger: "text-amber-400 border-amber-400/30 bg-amber-400/10",
+    activeText: "text-amber-400",
+  },
+  admin: {
+    Icon: Shield,
+    label: "Admin",
+    trigger: "text-rose-400 border-rose-400/30 bg-rose-400/10",
+    activeText: "text-rose-400",
+  },
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -208,9 +239,10 @@ export function CommentInput({
   const [mentionUserIds, setMentionUserIds] = React.useState<string[]>([]);
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [commentVisibility, setCommentVisibility] = React.useState<
-    "public" | "internal"
-  >("public");
+  const { user } = useAuth();
+  const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin);
+  const [commentVisibility, setCommentVisibility] =
+    React.useState<CommentVisibility>("public");
   const [visDropdownOpen, setVisDropdownOpen] = React.useState(false);
   const [timecodeAttached, setTimecodeAttached] = React.useState(true);
   const visRef = React.useRef<HTMLDivElement>(null);
@@ -585,55 +617,52 @@ export function CommentInput({
             <div className="flex items-center gap-2">
               {/* Visibility dropdown */}
               <div className="relative" ref={visRef}>
-                <button
-                  onClick={() => setVisDropdownOpen((p) => !p)}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[12px] transition-colors border",
-                    commentVisibility === "internal"
-                      ? "text-amber-400 border-amber-400/30 bg-amber-400/10"
-                      : "text-text-tertiary hover:bg-bg-tertiary hover:text-text-secondary border-border",
-                  )}
-                >
-                  {commentVisibility === "internal" ? (
-                    <Lock className="h-3 w-3" />
-                  ) : (
-                    <Globe className="h-3 w-3" />
-                  )}
-                  {commentVisibility === "internal" ? "Internal" : "Public"}
-                  <ChevronDown className="h-3 w-3" />
-                </button>
+                {(() => {
+                  const SelectedIcon = VISIBILITY_META[commentVisibility].Icon;
+                  return (
+                    <button
+                      onClick={() => setVisDropdownOpen((p) => !p)}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[12px] transition-colors border",
+                        VISIBILITY_META[commentVisibility].trigger,
+                      )}
+                    >
+                      <SelectedIcon className="h-3 w-3" />
+                      {VISIBILITY_META[commentVisibility].label}
+                      <ChevronDown className="h-3 w-3" />
+                    </button>
+                  );
+                })()}
                 {visDropdownOpen && (
                   <div className="absolute bottom-full right-0 mb-1 z-50 w-44 rounded-xl border border-border bg-bg-elevated shadow-2xl py-1.5 animate-in fade-in zoom-in-95 duration-100">
-                    <button
-                      className={cn(
-                        "flex w-full items-center gap-2.5 px-3 py-2 text-[13px] transition-colors",
-                        commentVisibility === "public"
-                          ? "text-text-primary bg-bg-tertiary"
-                          : "text-text-secondary hover:bg-bg-tertiary",
-                      )}
-                      onClick={() => {
-                        setCommentVisibility("public");
-                        setVisDropdownOpen(false);
-                      }}
-                    >
-                      <Globe className="h-3.5 w-3.5" />
-                      Public
-                    </button>
-                    <button
-                      className={cn(
-                        "flex w-full items-center gap-2.5 px-3 py-2 text-[13px] transition-colors",
-                        commentVisibility === "internal"
-                          ? "text-amber-400 bg-bg-tertiary"
-                          : "text-text-secondary hover:bg-bg-tertiary",
-                      )}
-                      onClick={() => {
-                        setCommentVisibility("internal");
-                        setVisDropdownOpen(false);
-                      }}
-                    >
-                      <Lock className="h-3.5 w-3.5" />
-                      Internal
-                    </button>
+                    {(
+                      ["public", "internal", "admin"] as CommentVisibility[]
+                    )
+                      // The admin tier is only selectable by platform admins; the
+                      // server rejects it for anyone else regardless.
+                      .filter((v) => v !== "admin" || isPlatformAdmin)
+                      .map((v) => {
+                        const { Icon, label, activeText } = VISIBILITY_META[v];
+                        const active = commentVisibility === v;
+                        return (
+                          <button
+                            key={v}
+                            className={cn(
+                              "flex w-full items-center gap-2.5 px-3 py-2 text-[13px] transition-colors",
+                              active
+                                ? cn(activeText, "bg-bg-tertiary")
+                                : "text-text-secondary hover:bg-bg-tertiary",
+                            )}
+                            onClick={() => {
+                              setCommentVisibility(v);
+                              setVisDropdownOpen(false);
+                            }}
+                          >
+                            <Icon className="h-3.5 w-3.5" />
+                            {label}
+                          </button>
+                        );
+                      })}
                   </div>
                 )}
               </div>

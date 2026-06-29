@@ -26,9 +26,11 @@ import {
   Check,
   Send,
   Lock,
+  Shield,
 } from "lucide-react";
 import { cn, formatTime, formatRelativeTime } from "@/lib/utils";
 import { useReviewStore } from "@/stores/review-store";
+import { useAuth } from "@/hooks/use-auth";
 import type { CommentWithReplies } from "@/hooks/use-comments";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -486,7 +488,9 @@ function CommentItem({
                   #{commentNumber}
                 </span>
               )}
-              {comment.visibility === "internal" ? (
+              {comment.visibility === "admin" ? (
+                <Shield className="h-3.5 w-3.5 text-rose-400" />
+              ) : comment.visibility === "internal" ? (
                 <Lock className="h-3.5 w-3.5 text-amber-400" />
               ) : (
                 <Globe className="h-3.5 w-3.5 text-text-tertiary" />
@@ -723,7 +727,11 @@ function CommentItem({
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type CommentVisibility = "all" | "public" | "internal";
+type CommentVisibility = "all" | "public" | "internal" | "admin";
+
+// "public" is anything that isn't a restricted tier, so unknown/legacy values
+// fall through to public rather than disappearing.
+const isPublicTier = (v: string) => v !== "internal" && v !== "admin";
 type SortMode = "oldest" | "newest" | "commenter" | "completed";
 
 interface FilterState {
@@ -762,6 +770,9 @@ export function CommentPanel({
   const setFocusedCommentId = useReviewStore((s) => s.setFocusedCommentId);
   const setActiveAnnotation = useReviewStore((s) => s.setActiveAnnotation);
 
+  const { user } = useAuth();
+  const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin);
+
   // Toolbar state
   const [visibility, setVisibility] = React.useState<CommentVisibility>("all");
   const [visOpen, setVisOpen] = React.useState(false);
@@ -789,22 +800,29 @@ export function CommentPanel({
   );
 
   const publicCount = React.useMemo(
-    () => topLevel.filter((c) => c.visibility !== "internal").length,
+    () => topLevel.filter((c) => isPublicTier(c.visibility)).length,
     [topLevel],
   );
   const internalCount = React.useMemo(
     () => topLevel.filter((c) => c.visibility === "internal").length,
     [topLevel],
   );
+  const adminCount = React.useMemo(
+    () => topLevel.filter((c) => c.visibility === "admin").length,
+    [topLevel],
+  );
 
   const filtered = React.useMemo(() => {
     let list = [...topLevel];
 
-    // Filter by visibility
+    // Filter by visibility (client-side UX only; the server already restricts
+    // which tiers were sent to this viewer).
     if (visibility === "public")
-      list = list.filter((c) => c.visibility !== "internal");
+      list = list.filter((c) => isPublicTier(c.visibility));
     else if (visibility === "internal")
       list = list.filter((c) => c.visibility === "internal");
+    else if (visibility === "admin")
+      list = list.filter((c) => c.visibility === "admin");
 
     // Filter by completion
     if (filters.completed && !filters.incomplete)
@@ -860,7 +878,9 @@ export function CommentPanel({
       ? "All comments"
       : visibility === "public"
         ? "Public comments"
-        : "Internal comments";
+        : visibility === "internal"
+          ? "Internal comments"
+          : "Admin comments";
 
   function toggleFilter(key: keyof FilterState) {
     setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -898,23 +918,36 @@ export function CommentPanel({
             onClose={() => setVisOpen(false)}
             className="w-52"
           >
-            {[
-              {
-                id: "all" as const,
-                label: "All comments",
-                count: topLevel.length,
-              },
-              {
-                id: "public" as const,
-                label: "Public comments",
-                count: publicCount,
-              },
-              {
-                id: "internal" as const,
-                label: "Internal comments",
-                count: internalCount,
-              },
-            ].map((item) => (
+            {(
+              [
+                {
+                  id: "all" as const,
+                  label: "All comments",
+                  count: topLevel.length,
+                },
+                {
+                  id: "public" as const,
+                  label: "Public comments",
+                  count: publicCount,
+                },
+                {
+                  id: "internal" as const,
+                  label: "Internal comments",
+                  count: internalCount,
+                },
+                // Admin tier is only meaningful to platform admins; others never
+                // receive admin comments and don't get the filter.
+                ...(isPlatformAdmin
+                  ? [
+                      {
+                        id: "admin" as const,
+                        label: "Admin comments",
+                        count: adminCount,
+                      },
+                    ]
+                  : []),
+              ]
+            ).map((item) => (
               <button
                 key={item.id}
                 className={cn(

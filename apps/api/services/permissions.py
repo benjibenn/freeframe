@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 import uuid
@@ -26,6 +28,24 @@ def require_platform_admin(user: User) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin or sub-admin access required",
         )
+
+
+def visible_visibilities(user: Optional[User]) -> list[str]:
+    """Comment visibility tiers a viewer is allowed to see.
+
+    This is the single source of truth for comment visibility. Every read path
+    (authenticated list, share-link list, reply assembly) filters against it so
+    the tiers cannot drift apart and leak:
+
+    - Guests (no account, via share link): public only.
+    - Authenticated team members: public + internal.
+    - Platform admins (superadmin / subadmin): public + internal + admin.
+    """
+    if user is None:
+        return ["public"]
+    if is_platform_admin(user):
+        return ["public", "internal", "admin"]
+    return ["public", "internal"]
 
 
 # ── Project-level ──────────────────────────────────────────────────────────────

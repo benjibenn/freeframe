@@ -14,7 +14,7 @@ class CommentCreate(BaseModel):
     timecode_start: Optional[float] = None
     timecode_end: Optional[float] = None
     body: str
-    visibility: Optional[str] = "public"  # "public" or "internal"
+    visibility: Optional[str] = "public"  # "public", "internal", or "admin" (server-enforced)
     annotation: Optional[AnnotationData] = None
     mention_user_ids: list[uuid.UUID] = []  # Explicit mention IDs from frontend
 

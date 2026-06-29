@@ -28,7 +28,9 @@ def test_share_comments_returns_array_for_asset_share(
 
     assert response.status_code == 200
     assert response.json() == [expected]
-    mock_build_comment_response.assert_called_once_with(comment, mock_db)
+    # Guests are restricted to public-tier comments — internal/admin must never
+    # be assembled for a share-link viewer.
+    mock_build_comment_response.assert_called_once_with(comment, mock_db, allowed=["public"])
 
 
 @patch("apps.api.routers.comments._build_comment_response")
@@ -57,7 +59,7 @@ def test_share_comments_returns_array_for_folder_or_project_share_asset(
 
     assert response.status_code == 200
     assert response.json() == [expected]
-    mock_build_comment_response.assert_called_once_with(comment, mock_db)
+    mock_build_comment_response.assert_called_once_with(comment, mock_db, allowed=["public"])
 
 
 @patch("apps.api.routers.comments.validate_share_link")
