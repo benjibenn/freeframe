@@ -26,6 +26,7 @@ from ..schemas.task_stage import (
     TaskStageUpdate,
     TaskStageReorder,
     TaskStageAssign,
+    RunAsAdAssign,
     TaskItem,
 )
 from ..services.permissions import require_platform_admin
@@ -231,6 +232,7 @@ def list_tasks(
             request_id=req_id,
             request_title=req.title if req else None,
             task_stage_id=a.task_stage_id,
+            run_as_ad=a.run_as_ad,
             submitter_name=(submitter.name if submitter else None),
             submitter_email=(submitter.email if submitter else None),
             thumbnail_url=generate_presigned_get_url(thumb_key) if thumb_key else None,
@@ -274,6 +276,50 @@ def set_asset_task_stage(
         request_id=(project.submission_link_id if project else None),
         request_title=(req.title if req else None),
         task_stage_id=asset.task_stage_id,
+        run_as_ad=asset.run_as_ad,
+        submitter_name=(submitter.name if submitter else None),
+        submitter_email=(submitter.email if submitter else None),
+        thumbnail_url=None,
+        latest_version_number=None,
+        created_at=asset.created_at,
+    )
+
+
+@router.patch("/assets/{asset_id}/run-as-ad", response_model=TaskItem)
+def set_asset_run_as_ad(
+    asset_id: uuid.UUID,
+    body: RunAsAdAssign,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Mark a video as cleared to run as an ad (or clear the flag).
+
+    External platforms can then pull only the ad-ready set via the public API."""
+    require_platform_admin(current_user)
+    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    asset.run_as_ad = body.run_as_ad
+    db.commit()
+    db.refresh(asset)
+
+    submitter = db.query(User).filter(User.id == asset.created_by).first()
+    project = db.query(Project).filter(Project.id == asset.project_id).first()
+    from ..models.submission import SubmissionLink
+    req = (
+        db.query(SubmissionLink).filter(SubmissionLink.id == project.submission_link_id).first()
+        if project and project.submission_link_id else None
+    )
+    return TaskItem(
+        asset_id=asset.id,
+        name=asset.name,
+        project_id=asset.project_id,
+        project_name=project.name if project else None,
+        request_id=(project.submission_link_id if project else None),
+        request_title=(req.title if req else None),
+        task_stage_id=asset.task_stage_id,
+        run_as_ad=asset.run_as_ad,
         submitter_name=(submitter.name if submitter else None),
         submitter_email=(submitter.email if submitter else None),
         thumbnail_url=None,

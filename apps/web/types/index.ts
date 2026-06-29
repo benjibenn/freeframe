@@ -59,6 +59,7 @@ export interface TaskItem {
   request_id: string | null;
   request_title: string | null;
   task_stage_id: string | null;
+  run_as_ad: boolean;
   submitter_name: string | null;
   submitter_email: string | null;
   thumbnail_url: string | null;

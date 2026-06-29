@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Optional
-from sqlalchemy import String, Enum, DateTime, ForeignKey, Integer, Float, func, UniqueConstraint, Index
+from sqlalchemy import String, Enum, DateTime, ForeignKey, Integer, Float, Boolean, func, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 try:
@@ -42,6 +42,10 @@ class Asset(Base):
     # Current stage in the admin-configurable task pipeline (see TaskStage). Null = not yet triaged.
     task_stage_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("task_stages.id"), nullable=True, index=True)
     folder_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("folders.id"), nullable=True, index=True)
+    # Marks a submitted video as cleared to run as an ad. Surfaced to external
+    # platforms (UploadUnicorn) so they can pull only the ad-ready set. Indexed
+    # so that filter is cheap.
+    run_as_ad: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false", default=False, index=True)
     due_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     keywords: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
     # External (CF) lineage stamped at asset-creation time from the request's

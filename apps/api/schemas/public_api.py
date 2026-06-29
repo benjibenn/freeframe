@@ -12,6 +12,8 @@ class PublicVideoItem(BaseModel):
     description: Optional[str] = None
     status: AssetStatus
     asset_type: AssetType
+    # Whether this video has been cleared (by an admin) to run as an ad.
+    run_as_ad: bool = False
     project_id: uuid.UUID
     project_name: Optional[str] = None
     # The user who created/submitted the asset.

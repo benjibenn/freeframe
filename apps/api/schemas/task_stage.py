@@ -34,6 +34,11 @@ class TaskStageAssign(BaseModel):
     task_stage_id: Optional[uuid.UUID] = None
 
 
+class RunAsAdAssign(BaseModel):
+    # Whether this video is cleared to run as an ad (exposed to external platforms).
+    run_as_ad: bool
+
+
 class TaskItem(BaseModel):
     asset_id: uuid.UUID
     name: str
@@ -43,6 +48,7 @@ class TaskItem(BaseModel):
     request_id: Optional[uuid.UUID] = None
     request_title: Optional[str] = None
     task_stage_id: Optional[uuid.UUID] = None
+    run_as_ad: bool = False
     submitter_name: Optional[str] = None
     submitter_email: Optional[str] = None
     thumbnail_url: Optional[str] = None

@@ -14,6 +14,7 @@ import {
   ArrowDown,
   Film,
   Star,
+  Megaphone,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn, formatRelativeTime } from '@/lib/utils'
@@ -88,6 +89,55 @@ function StageSelect({
         </option>
       ))}
     </select>
+  )
+}
+
+/** Per-row "Run as ad" toggle. Optimistically flips the cached flag, then
+ *  persists; rolls back on failure. The flag is what the external integration
+ *  API filters ad-ready videos by. */
+function RunAsAdToggle({ task }: { task: TaskItem }) {
+  const [saving, setSaving] = React.useState(false)
+  const active = task.run_as_ad
+
+  const handleToggle = async () => {
+    const next = !active
+    setSaving(true)
+    // Optimistic update
+    mutate(
+      TASKS_KEY,
+      (current: TaskItem[] | undefined) =>
+        current?.map((t) =>
+          t.asset_id === task.asset_id ? { ...t, run_as_ad: next } : t,
+        ),
+      false,
+    )
+    try {
+      await api.patch(`/assets/${task.asset_id}/run-as-ad`, { run_as_ad: next })
+    } catch (err) {
+      // Roll back on failure
+      mutate(TASKS_KEY)
+      alert(err instanceof Error ? err.message : 'Failed to update "run as ad"')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleToggle}
+      disabled={saving}
+      aria-pressed={active}
+      title={active ? 'Cleared to run as ad — click to clear' : 'Mark as run as ad'}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[13px] font-medium transition-colors disabled:opacity-60',
+        active
+          ? 'border-accent/40 bg-accent/10 text-accent'
+          : 'border-border bg-bg-secondary text-text-secondary hover:text-text-primary hover:border-border-focus',
+      )}
+    >
+      <Megaphone className="h-3.5 w-3.5" />
+      {active ? 'Running as ad' : 'Run as ad'}
+    </button>
   )
 }
 
@@ -459,13 +509,14 @@ export default function TasksPage() {
         <div className="space-y-3">
         <div className="rounded-lg border border-border bg-bg-secondary overflow-hidden">
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[680px] table-fixed text-sm">
+          <table className="w-full min-w-[820px] table-fixed text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-tertiary">
                 <th className="w-56 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Video</th>
                 <th className="w-40 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Submitter</th>
                 <th className="w-28 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Submitted</th>
                 <th className="w-40 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Status</th>
+                <th className="w-40 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Run as ad</th>
               </tr>
             </thead>
             <tbody>
@@ -511,6 +562,9 @@ export default function TasksPage() {
                   </td>
                   <td className="px-4 py-3">
                     <StageSelect task={t} stages={stageList} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <RunAsAdToggle task={t} />
                   </td>
                 </tr>
               ))}

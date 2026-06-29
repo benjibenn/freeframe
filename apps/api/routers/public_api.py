@@ -49,6 +49,7 @@ def list_videos(
     asset_status: Optional[AssetStatus] = Query(None, alias="status", description="Filter by review status"),
     asset_type: str = Query("video", description="'video' (default) or 'all' to include every media type"),
     project_id: Optional[uuid.UUID] = Query(None, description="Restrict to a single project"),
+    run_as_ad: Optional[bool] = Query(None, description="Filter by the 'run as ad' clearance flag (true = only ad-ready videos)"),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -94,6 +95,8 @@ def list_videos(
         query = query.filter(or_(User.name.ilike(like), User.email.ilike(like)))
     if project_id is not None:
         query = query.filter(Asset.project_id == project_id)
+    if run_as_ad is not None:
+        query = query.filter(Asset.run_as_ad == run_as_ad)
 
     # Only assets that have at least one ready version (i.e. downloadable).
     ready_exists = (
@@ -184,6 +187,7 @@ def list_videos(
                 description=a.description,
                 status=a.status,
                 asset_type=a.asset_type,
+                run_as_ad=a.run_as_ad,
                 project_id=a.project_id,
                 project_name=project.name if project else None,
                 author_name=author_user.name if author_user else None,
