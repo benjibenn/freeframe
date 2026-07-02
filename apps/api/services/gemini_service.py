@@ -1,6 +1,14 @@
+import asyncio
 import json
 import re
 from dataclasses import dataclass
+
+import httpx
+
+try:
+    from ..config import settings
+except ImportError:
+    from config import settings
 
 
 @dataclass
@@ -88,3 +96,101 @@ def parse_tags(text: str, palette: list[str]) -> list[str]:
         if key in canonical and canonical[key] not in out:
             out.append(canonical[key])
     return out
+
+
+def _extract_text(resp: dict) -> str:
+    try:
+        return resp["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+class GeminiClient:
+    def __init__(self, api_key: str, model: str, base_url: str, client: httpx.AsyncClient | None = None):
+        self.api_key = api_key
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self._client = client or httpx.AsyncClient(timeout=120.0)
+
+    @classmethod
+    def from_settings(cls, client: httpx.AsyncClient | None = None) -> "GeminiClient":
+        return cls(settings.gemini_api_key, settings.gemini_model, settings.gemini_base_url, client)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def upload_file(self, data: bytes, mime_type: str, display_name: str) -> dict:
+        start = await self._client.post(
+            f"{self.base_url}/files",
+            params={"key": self.api_key},
+            headers={
+                "X-Goog-Upload-Protocol": "resumable",
+                "X-Goog-Upload-Command": "start",
+                "X-Goog-Upload-Header-Content-Length": str(len(data)),
+                "X-Goog-Upload-Header-Content-Type": mime_type,
+                "Content-Type": "application/json",
+            },
+            json={"file": {"display_name": display_name}},
+        )
+        start.raise_for_status()
+        upload_url = start.headers["X-Goog-Upload-URL"]
+        finalize = await self._client.post(
+            upload_url,
+            headers={
+                "X-Goog-Upload-Command": "upload, finalize",
+                "X-Goog-Upload-Offset": "0",
+                "Content-Type": mime_type,
+            },
+            content=data,
+        )
+        finalize.raise_for_status()
+        return finalize.json()["file"]
+
+    async def wait_until_active(self, file_uri: str, timeout_s: int = 120) -> None:
+        for _ in range(max(1, timeout_s // 2)):
+            r = await self._client.get(file_uri, params={"key": self.api_key})
+            r.raise_for_status()
+            state = r.json().get("state")
+            if state == "ACTIVE":
+                return
+            if state == "FAILED":
+                raise RuntimeError("Gemini file processing failed")
+            await asyncio.sleep(2)
+        raise TimeoutError("Gemini file did not become ACTIVE in time")
+
+    async def analyze_media(self, file_uri: str, mime_type: str) -> Analysis:
+        r = await self._client.post(
+            f"{self.base_url}/models/{self.model}:generateContent",
+            headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+            json={
+                "contents": [{"parts": [
+                    {"text": PROMPT_ANALYZE},
+                    {"file_data": {"mime_type": mime_type, "file_uri": file_uri}},
+                ]}],
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                    "responseSchema": ANALYZE_SCHEMA,
+                    "temperature": 0.2,
+                },
+            },
+        )
+        r.raise_for_status()
+        return parse_analysis(_extract_text(r.json()))
+
+    async def match_tags(self, summary: str, transcript: str, palette: list[str]) -> list[str]:
+        if not palette:
+            return []
+        r = await self._client.post(
+            f"{self.base_url}/models/{self.model}:generateContent",
+            headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+            json={
+                "contents": [{"parts": [{"text": build_match_prompt(summary, transcript, palette)}]}],
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                    "responseSchema": MATCH_SCHEMA,
+                    "temperature": 0.2,
+                },
+            },
+        )
+        r.raise_for_status()
+        return parse_tags(_extract_text(r.json()), palette)
