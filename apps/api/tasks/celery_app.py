@@ -21,6 +21,14 @@ celery_app = Celery(
     ],
 )
 
+# Register this as Celery's process-global default app. A @shared_task resolves its app
+# from a THREAD-LOCAL "current app"; a freshly spawned thread (e.g. the daemon thread in
+# send_task_safe below) has none, so without this it falls back to Celery's built-in
+# amqp:// placeholder broker and every publish fails with Connection refused — silently,
+# because _dispatch_task swallows it. set_default() makes threads with no thread-local
+# binding resolve to this Redis-backed app instead.
+celery_app.set_default()
+
 celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
