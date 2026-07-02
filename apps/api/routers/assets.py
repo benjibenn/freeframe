@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import os
@@ -21,6 +22,8 @@ from .hls_proxy import create_hls_token
 from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, mime_to_asset_type
 from ..services.s3_service import create_multipart_upload
 from ..services.tags import normalize_tags
+from ..config import settings
+from ..tasks.celery_app import send_task_safe
 
 router = APIRouter(tags=["assets"])
 
@@ -297,6 +300,45 @@ def remove_asset_tag(
         db.commit()
         db.refresh(asset)
     return _build_asset_response(asset, db)
+
+
+class AutotagBatchRequest(BaseModel):
+    asset_ids: list[uuid.UUID]
+    skip_if_tagged: bool = True
+
+
+@router.post("/assets/autotag-batch")
+def autotag_batch_endpoint(
+    body: AutotagBatchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not settings.gemini_api_key:
+        raise HTTPException(status_code=503, detail="AI tagging is not configured")
+    from ..tasks.autotag_tasks import autotag_batch
+    send_task_safe(autotag_batch, [str(a) for a in body.asset_ids], body.skip_if_tagged)
+    return {"status": "queued", "count": len(body.asset_ids)}
+
+
+@router.post("/assets/{asset_id}/autotag")
+def autotag_single(
+    asset_id: uuid.UUID,
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not settings.gemini_api_key:
+        raise HTTPException(status_code=503, detail="AI tagging is not configured")
+    _load_editable_asset(asset_id, db, current_user)  # enforces editor role
+    version = db.query(AssetVersion).filter(
+        AssetVersion.asset_id == asset_id,
+        AssetVersion.deleted_at.is_(None),
+    ).order_by(AssetVersion.version_number.desc()).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="No version to tag")
+    from ..tasks.autotag_tasks import autotag_asset
+    send_task_safe(autotag_asset, str(asset_id), str(version.id), force)
+    return {"status": "queued"}
 
 
 @router.get("/projects/{project_id}/tags", response_model=list[TagCount])
