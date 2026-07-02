@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from .celery_app import celery_app
+from .celery_app import celery_app, send_task_safe
 from ._events import publish_event
 from ..database import SessionLocal
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType
@@ -114,5 +114,25 @@ def autotag_asset(self, asset_id: str, version_id: str, force: bool = False):
         asset.keywords = current
         db.commit()
         publish_event(str(asset.project_id), "autotag_complete", {"asset_id": asset_id, "applied": applied})
+    finally:
+        db.close()
+
+
+@celery_app.task
+def autotag_batch(asset_ids: list[str], skip_if_tagged: bool = True):
+    db = SessionLocal()
+    try:
+        for aid in asset_ids:
+            asset = db.query(Asset).filter(Asset.id == uuid.UUID(aid), Asset.deleted_at.is_(None)).first()
+            if not asset:
+                continue
+            if skip_if_tagged and asset.keywords:
+                continue
+            version = db.query(AssetVersion).filter(
+                AssetVersion.asset_id == asset.id,
+                AssetVersion.deleted_at.is_(None),
+            ).order_by(AssetVersion.version_number.desc()).first()
+            if version:
+                send_task_safe(autotag_asset, aid, str(version.id), False)
     finally:
         db.close()
