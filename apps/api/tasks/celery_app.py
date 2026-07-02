@@ -31,6 +31,11 @@ celery_app.conf.update(
     broker_connection_retry=True,
     broker_connection_max_retries=5,
     broker_pool_limit=0,  # Disable connection pooling in web process to avoid stale connections
+    # Redis re-delivers an unacked (acks_late) task after this many seconds, assuming the
+    # worker died. Transcodes can run up to 4h (ffmpeg subprocess timeout 14400s); the
+    # default visibility_timeout of 1h would re-deliver long transcodes mid-flight, cloning
+    # them onto the queue and pinning every worker slot. Keep it safely above the max run time.
+    broker_transport_options={"visibility_timeout": 21600},  # 6h
     # Define queues
     task_queues=(
         Queue("default"),
@@ -72,6 +77,10 @@ celery_app.conf.beat_schedule = {
     "recover-stalled-assets": {
         "task": "apps.api.tasks.transcode_tasks.recover_stalled_assets",
         "schedule": crontab(minute="*/5"),  # every 5 minutes
+        # Run the lightweight maintenance sweep on `default`, NOT `transcoding`. On the
+        # heavy queue it queues up behind slow transcodes and, when slots stall, beat keeps
+        # appending it every 5 min — the backlog that buried real jobs ~5000-deep.
+        "options": {"queue": "default"},
     },
 }
 

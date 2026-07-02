@@ -33,6 +33,9 @@ def process_asset(self, asset_id: str, version_id: str):
         if not version:
             return  # version already cleaned up
 
+        if version.processing_status == ProcessingStatus.ready:
+            return  # already processed — this is a stale/duplicate message, don't re-transcode
+
         asset = db.query(Asset).filter(Asset.id == uuid.UUID(asset_id)).first()
         if not asset:
             if version:
@@ -122,14 +125,36 @@ def _process_image(db, asset, version, media_file, s3, output_prefix):
     db.flush()
 
 
+# A video stuck this long is never going to succeed (ffmpeg itself times out at 4h) —
+# stop re-queuing it and mark it failed, so it can't loop forever.
+_RECOVER_GIVE_UP_HOURS = 6
+# Only re-queue a given stuck video once per this window, so a slow/looping transcode
+# can't be enqueued every 5 minutes and pile the queue thousands deep.
+_RECOVER_REQUEUE_TTL_SECONDS = 30 * 60
+
+
 @celery_app.task
 def recover_stalled_assets():
-    """Re-queue video assets stuck in processing for more than 30 minutes.
-    Mark image/audio assets as ready immediately — they don't need transcoding.
+    """Recover video versions stuck in `processing`, without runaway re-queuing.
+
+    - Stuck > 30 min: re-queue transcode, but at most once per ~30 min per version
+      (Redis NX lock) — prevents the every-5-min beat sweep from flooding the queue.
+    - Stuck > _RECOVER_GIVE_UP_HOURS: mark failed instead of re-queuing forever.
+    - Images/audio: mark ready from the raw file (no transcode needed).
     """
-    stall_cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    now = datetime.now(timezone.utc)
+    stall_cutoff = now - timedelta(minutes=30)
+    give_up_cutoff = now - timedelta(hours=_RECOVER_GIVE_UP_HOURS)
+
     db = SessionLocal()
+    redis_client = None
     try:
+        import redis as sync_redis
+        try:
+            redis_client = sync_redis.from_url(settings.redis_url, decode_responses=True)
+        except Exception:
+            redis_client = None
+
         stalled = (
             db.query(AssetVersion, Asset)
             .join(Asset, Asset.id == AssetVersion.asset_id)
@@ -140,16 +165,44 @@ def recover_stalled_assets():
             .all()
         )
         for version, asset in stalled:
-            if asset.asset_type == AssetType.video:
-                process_asset.delay(str(version.asset_id), str(version.id))
-            else:
+            if asset.asset_type != AssetType.video:
                 # Images and audio: mark ready using the raw file
                 media_file = db.query(MediaFile).filter(MediaFile.version_id == version.id).first()
                 if media_file and media_file.s3_key_raw:
                     media_file.s3_key_processed = media_file.s3_key_raw
                 version.processing_status = ProcessingStatus.ready
+                continue
+
+            # Give up on videos stuck far longer than any real transcode could run
+            if version.created_at < give_up_cutoff:
+                version.processing_status = ProcessingStatus.failed
+                _publish_event(str(asset.project_id), "transcode_failed", {
+                    "asset_id": str(version.asset_id),
+                    "error": f"Transcode gave up after {_RECOVER_GIVE_UP_HOURS}h stuck in processing",
+                })
+                continue
+
+            # Re-queue at most once per window per version (dedup)
+            should_requeue = True
+            if redis_client is not None:
+                try:
+                    should_requeue = bool(
+                        redis_client.set(
+                            f"transcode:recover:{version.id}", "1",
+                            nx=True, ex=_RECOVER_REQUEUE_TTL_SECONDS,
+                        )
+                    )
+                except Exception:
+                    should_requeue = True
+            if should_requeue:
+                process_asset.delay(str(version.asset_id), str(version.id))
         db.commit()
     finally:
+        if redis_client is not None:
+            try:
+                redis_client.close()
+            except Exception:
+                pass
         db.close()
 
 

@@ -175,6 +175,15 @@ class FFmpegTranscoder(BaseTranscoder):
                 thumbnail_keys=[thumbnail_key],
             )
 
+        except subprocess.CalledProcessError as e:
+            # str(e) is just "returned non-zero exit status N" — the actual reason is in
+            # ffmpeg's stderr (captured but otherwise discarded). Surface its tail so
+            # failures are diagnosable instead of an opaque exit code.
+            stderr = e.stderr
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", "replace")
+            tail = " | ".join((stderr or "").strip().splitlines()[-15:])
+            return TranscodeResult(success=False, error=f"{e}: {tail}" if tail else str(e))
         except Exception as e:
             return TranscodeResult(success=False, error=str(e))
         finally:
