@@ -315,6 +315,12 @@ def autotag_batch_endpoint(
 ):
     if not settings.gemini_api_key:
         raise HTTPException(status_code=503, detail="AI tagging is not configured")
+    if not body.asset_ids:
+        raise HTTPException(status_code=422, detail="asset_ids is empty")
+    if len(body.asset_ids) > 200:
+        raise HTTPException(status_code=413, detail="Too many asset_ids (max 200)")
+    for aid in body.asset_ids:
+        _load_editable_asset(aid, db, current_user)
     from ..tasks.autotag_tasks import autotag_batch
     send_task_safe(autotag_batch, [str(a) for a in body.asset_ids], body.skip_if_tagged)
     return {"status": "queued", "count": len(body.asset_ids)}

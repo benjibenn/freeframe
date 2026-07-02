@@ -26,14 +26,39 @@ def test_autotag_returns_503_when_disabled(cfg, client, auth_headers):
 
 @patch("apps.api.routers.assets.settings")
 @patch("apps.api.routers.assets.send_task_safe")
-def test_autotag_batch_enqueues_task(send, cfg, client, auth_headers):
+@patch("apps.api.routers.assets._load_editable_asset")
+def test_autotag_batch_enqueues_task(load, send, cfg, client, auth_headers):
     cfg.gemini_api_key = "k"
+    load.return_value = MagicMock()
     ids = [str(uuid.uuid4()), str(uuid.uuid4())]
     resp = client.post("/assets/autotag-batch", json={"asset_ids": ids}, headers=auth_headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "queued"
     assert resp.json()["count"] == 2
     assert send.called
+
+
+@patch("apps.api.routers.assets.settings")
+@patch("apps.api.routers.assets.send_task_safe")
+@patch("apps.api.routers.assets._load_editable_asset")
+def test_batch_authorizes_every_asset(load, send, cfg, client, auth_headers):
+    from fastapi import HTTPException as FastAPIHTTPException
+    cfg.gemini_api_key = "k"
+    ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    # First call succeeds, second raises 403
+    load.side_effect = [MagicMock(), FastAPIHTTPException(status_code=403, detail="Forbidden")]
+    resp = client.post("/assets/autotag-batch", json={"asset_ids": ids}, headers=auth_headers)
+    assert resp.status_code == 403
+    assert not send.called
+
+
+@patch("apps.api.routers.assets.settings")
+@patch("apps.api.routers.assets.send_task_safe")
+def test_batch_rejects_empty_list(send, cfg, client, auth_headers):
+    cfg.gemini_api_key = "k"
+    resp = client.post("/assets/autotag-batch", json={"asset_ids": []}, headers=auth_headers)
+    assert resp.status_code == 422
+    assert not send.called
 
 
 @patch("apps.api.routers.assets.settings")
