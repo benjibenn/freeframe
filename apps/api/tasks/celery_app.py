@@ -18,6 +18,7 @@ celery_app = Celery(
         "apps.api.tasks.reminder_tasks",
         "apps.api.tasks.email_tasks",
         "apps.api.tasks.drive_sync_tasks",
+        "apps.api.tasks.autotag_tasks",
     ],
 )
 
