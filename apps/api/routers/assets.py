@@ -20,6 +20,7 @@ from ..services.s3_service import generate_presigned_get_url, build_download_fil
 from .hls_proxy import create_hls_token
 from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, mime_to_asset_type
 from ..services.s3_service import create_multipart_upload
+from ..services.tags import normalize_tags
 
 router = APIRouter(tags=["assets"])
 
@@ -28,25 +29,6 @@ router = APIRouter(tags=["assets"])
 # search and grouping-by-tag consistent.
 MAX_TAGS = 50
 MAX_TAG_LEN = 50
-
-
-def normalize_tags(raw) -> list[str]:
-    """Trim, collapse internal whitespace, lowercase, dedupe (order-preserving)."""
-    if not raw:
-        return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in raw:
-        if not isinstance(item, str):
-            continue
-        tag = " ".join(item.strip().lower().split())[:MAX_TAG_LEN]
-        if not tag or tag in seen:
-            continue
-        seen.add(tag)
-        out.append(tag)
-        if len(out) >= MAX_TAGS:
-            break
-    return out
 
 
 def _build_asset_response(asset: Asset, db: Session) -> AssetResponse:
