@@ -168,7 +168,6 @@ def list_library_assets(
             )
 
     if frame_label:
-        from ..models.frame_tag import FrameTag
         for label in frame_label:
             subq = (
                 db.query(FrameTag.asset_id)
