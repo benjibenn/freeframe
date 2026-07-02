@@ -31,6 +31,11 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             git clean -fd
-            docker compose -f docker-compose.prod.yml -f docker-compose.override.prod.yml build api web
+            # Build ALL services, not just api+web. The celery workers
+            # (worker/sync_worker/email_worker/beat) each build their own image from
+            # apps/api/Dockerfile.prod, so `build api web` left them frozen on old code
+            # across deploys. `build` (no args) rebuilds every service with a build
+            # section; `up -d` then recreates any whose image changed.
+            docker compose -f docker-compose.prod.yml -f docker-compose.override.prod.yml build
             docker compose -f docker-compose.prod.yml -f docker-compose.override.prod.yml up -d
             docker image prune -f
