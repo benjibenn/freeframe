@@ -64,11 +64,15 @@ def test_fresh_asset_runs_analysis_and_caches(analyze, match, pub, cfg):
     q = MagicMock(); db.query.return_value = q
     q.filter.return_value = q; q.order_by.return_value = q
     q.first.side_effect = [asset, version, MagicMock(s3_key_raw="raw/1", mime_type="video/mp4", original_filename="c.mp4")]
-    q.all.return_value = [MagicMock(label="Demo")]
+    # Track call order: stage-1 cache committed BEFORE stage-2 palette query
+    calls = []
+    db.commit.side_effect = lambda: calls.append("commit")
+    q.all.side_effect = lambda: (calls.append("palette_query"), [MagicMock(label="Demo")])[1]
     with patch("apps.api.tasks.autotag_tasks.SessionLocal", return_value=db):
         at.autotag_asset(str(asset.id), str(version.id))
     analyze.assert_called_once()
     assert version.ai_summary == "fresh summary"      # WHY: analysis cached for future re-tags
+    assert calls.index("commit") < calls.index("palette_query")  # stage-1 cache committed before stage-2 palette query
 
 
 @patch("apps.api.tasks.autotag_tasks.settings")
@@ -80,6 +84,7 @@ def test_unsupported_type_skips(pub, cfg):
     with patch("apps.api.tasks.autotag_tasks.SessionLocal", return_value=db):
         at.autotag_asset(str(asset.id), str(version.id))
     assert pub.call_args[0][1] == "autotag_skipped"
+    assert pub.call_args[0][2]["reason"] == "unsupported_type"
 
 
 @patch("apps.api.tasks.autotag_tasks.settings")
@@ -93,3 +98,4 @@ def test_empty_palette_skips_match(match, pub, cfg):
         at.autotag_asset(str(asset.id), str(version.id))
     match.assert_not_called()
     assert pub.call_args[0][1] == "autotag_skipped"
+    assert pub.call_args[0][2]["reason"] == "empty_palette"
