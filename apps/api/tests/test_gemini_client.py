@@ -10,6 +10,9 @@ def _mock_client(handler):
 def test_upload_file_returns_file_resource():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.headers.get("X-Goog-Upload-Command") == "start":
+            # Live API only issues X-Goog-Upload-URL on the /upload/v1beta path;
+            # posting to /v1beta/files 200s without it (found in live verification).
+            assert request.url.path == "/upload/v1beta/files", request.url.path
             return httpx.Response(200, headers={"X-Goog-Upload-URL": "https://up/2"}, json={})
         return httpx.Response(200, json={"file": {"name": "files/2", "uri": "https://g/v1beta/files/2", "state": "ACTIVE"}})
     gc = GeminiClient("k", "m", "https://g/v1beta", client=_mock_client(handler))

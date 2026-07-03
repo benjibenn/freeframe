@@ -110,6 +110,9 @@ class GeminiClient:
         self.api_key = api_key
         self.model = model
         self.base_url = base_url.rstrip("/")
+        # Resumable uploads live under /upload/v1beta, NOT /v1beta — posting to
+        # {base}/files returns 200 without the X-Goog-Upload-URL header.
+        self.upload_url = self.base_url.replace("/v1beta", "/upload/v1beta", 1) + "/files"
         self._client = client or httpx.AsyncClient(timeout=120.0)
 
     @classmethod
@@ -121,7 +124,7 @@ class GeminiClient:
 
     async def upload_file(self, data: bytes, mime_type: str, display_name: str) -> dict:
         start = await self._client.post(
-            f"{self.base_url}/files",
+            self.upload_url,
             params={"key": self.api_key},
             headers={
                 "X-Goog-Upload-Protocol": "resumable",
