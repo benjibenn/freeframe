@@ -91,6 +91,7 @@ export function AssetCard({
     <div
       draggable
       onDragStart={onDragStart}
+      data-testid="asset-card"
       className={cn(
         'group flex flex-col rounded-lg overflow-hidden transition-all duration-150 cursor-pointer',
         'border-2',

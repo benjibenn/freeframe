@@ -77,7 +77,7 @@ export function ProjectCard({
 
   return (
     <>
-      <div className={cn('group relative', className)}>
+      <div className={cn('group relative', className)} data-testid="project-card">
         <Link
           href={`/projects/${project.id}`}
           className="block rounded-xl overflow-hidden bg-bg-secondary border border-border hover:border-accent/40 transition-all duration-200 hover:shadow-lg hover:shadow-black/10"
