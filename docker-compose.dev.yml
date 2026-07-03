@@ -118,7 +118,7 @@ services:
     volumes:
       - ./apps/api:/workspace/apps/api
       - ./packages/transcoder:/workspace/packages/transcoder
-    command: celery -A apps.api.tasks.celery_app worker -Q transcoding -c ${TRANSCODING_CONCURRENCY:-2} --loglevel=info
+    command: celery -A apps.api.tasks.celery_app worker -Q transcoding,default -c ${TRANSCODING_CONCURRENCY:-2} --loglevel=info
 
   email_worker:
     build:
