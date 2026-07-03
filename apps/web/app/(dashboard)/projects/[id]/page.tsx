@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
+import useSWRInfinite from "swr/infinite";
 import Link from "next/link";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -55,6 +56,7 @@ import { BucketImportDialog } from "@/components/projects/bucket-import-dialog";
 import { ProjectMembersDialog } from "@/components/projects/project-members-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { useInfiniteScroll } from "@/hooks/use-infinite-scroll";
 import type {
   Project,
   AssetResponse,
@@ -63,6 +65,9 @@ import type {
   Folder,
   ShareLink,
 } from "@/types";
+
+// How many assets to fetch per infinite-scroll page (matches the Library grid).
+const ASSETS_PAGE_SIZE = 24;
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -217,14 +222,42 @@ export default function ProjectDetailPage() {
         ...selectedMomentLabels.map((l) => `frame_label=${encodeURIComponent(l)}`),
       ].join("&")
     : folderParam;
-  const {
-    data: assets,
-    isLoading: loadingAssets,
-    mutate: mutateAssets,
-  } = useSWR<AssetResponse[]>(
-    showTrash ? null : `/projects/${projectId}/assets?${assetsQuery}`,
-    (key: string) => api.get<AssetResponse[]>(key),
+  // Infinite scroll: each SWR "page" is one paginated /assets request (newest-first).
+  // The key carries the active folder/tag/label filter, so changing the filter swaps
+  // the key set and we reset to one page below. A short page means we've hit the end.
+  const getAssetsKey = React.useCallback(
+    (index: number, previous: AssetResponse[] | null) => {
+      if (showTrash) return null;
+      if (previous && previous.length < ASSETS_PAGE_SIZE) return null;
+      return `/projects/${projectId}/assets?${assetsQuery}&skip=${index * ASSETS_PAGE_SIZE}&limit=${ASSETS_PAGE_SIZE}`;
+    },
+    [showTrash, projectId, assetsQuery],
   );
+
+  const {
+    data: assetPages,
+    isLoading: loadingAssets,
+    isValidating: validatingAssets,
+    mutate: mutateAssets,
+    setSize: setAssetsSize,
+  } = useSWRInfinite<AssetResponse[]>(
+    getAssetsKey,
+    (key: string) => api.get<AssetResponse[]>(key),
+    { revalidateFirstPage: false },
+  );
+
+  const assets = React.useMemo(() => assetPages?.flat() ?? [], [assetPages]);
+  const lastAssetPage = assetPages?.[assetPages.length - 1];
+  const assetsReachedEnd = lastAssetPage ? lastAssetPage.length < ASSETS_PAGE_SIZE : false;
+  const loadingMoreAssets = validatingAssets && (assetPages?.length ?? 0) > 0;
+
+  // Reset to the first page whenever the filter (folder/tag/label) changes.
+  React.useEffect(() => { setAssetsSize(1); }, [assetsQuery, setAssetsSize]);
+
+  const assetsSentinelRef = useInfiniteScroll({
+    onLoadMore: () => setAssetsSize((s) => s + 1),
+    enabled: !assetsReachedEnd && !loadingMoreAssets && assets.length > 0 && !showTrash,
+  });
 
   // All tags used in this project, for the filter chip-bar.
   const { data: projectTags } = useSWR<{ tag: string; count: number }[]>(
@@ -877,6 +910,7 @@ export default function ProjectDetailPage() {
               )}
             </div>
           ) : (
+            <>
             <AssetGrid
               assets={assets ?? []}
               folders={filteringByTag_orLabel ? [] : (subfolders ?? [])}
@@ -1066,6 +1100,15 @@ export default function ProjectDetailPage() {
                 </>
               }
             />
+            {/* Infinite scroll: auto-loads the next page of assets as it nears view. */}
+            {!assetsReachedEnd && (
+              <div ref={assetsSentinelRef} className="h-10 flex items-center justify-center">
+                {loadingMoreAssets && (
+                  <span className="text-xs text-text-tertiary">Loading more…</span>
+                )}
+              </div>
+            )}
+            </>
           )}
 
           {/* Upload dialog */}

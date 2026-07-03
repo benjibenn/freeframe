@@ -4,6 +4,7 @@ import * as React from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import useSWR, { mutate } from 'swr'
+import useSWRInfinite from 'swr/infinite'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Library, Film, Search, X, Plus, Trash2, ChevronDown, FolderOpen, Users, Play, Check } from 'lucide-react'
 import { ShortcutsHint } from '@/components/ui/shortcuts-hint'
@@ -12,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/shared/empty-state'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useAuthStore } from '@/stores/auth-store'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -359,7 +361,6 @@ export default function LibraryPage() {
   const { user } = useAuthStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
 
-  const [page, setPage] = React.useState(1)
   const [search, setSearch] = React.useState('')
   const [debouncedSearch, setDebouncedSearch] = React.useState('')
   const [projectFilter, setProjectFilter] = React.useState('')
@@ -375,21 +376,32 @@ export default function LibraryPage() {
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current) }
   }, [search])
 
-  React.useEffect(() => { setPage(1) }, [debouncedSearch, projectFilter, tagFilter, frameLabelFilter])
-
-  const queryParams = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) })
-  if (debouncedSearch) queryParams.set('q', debouncedSearch)
-  if (projectFilter) queryParams.set('project_id', projectFilter)
-  tagFilter.forEach((t) => queryParams.append('tag', t))
-  frameLabelFilter.forEach((l) => queryParams.append('frame_label', l))
-
   const tagParams = projectFilter ? `?project_id=${projectFilter}` : ''
 
-  const { data, isLoading } = useSWR<LibraryPage>(
-    `/library?${queryParams}`,
-    (k: string) => api.get<LibraryPage>(k),
-    { keepPreviousData: true },
+  // Infinite scroll: each SWR "page" is one /library request. The key encodes the
+  // active filters, so changing a filter swaps the whole key set; we reset back to
+  // a single page below. A short last page (< PER_PAGE) means we've hit the end.
+  const getKey = React.useCallback(
+    (index: number, previous: LibraryPage | null) => {
+      if (previous && previous.items.length < PER_PAGE) return null
+      const qp = new URLSearchParams({ page: String(index + 1), per_page: String(PER_PAGE) })
+      if (debouncedSearch) qp.set('q', debouncedSearch)
+      if (projectFilter) qp.set('project_id', projectFilter)
+      tagFilter.forEach((t) => qp.append('tag', t))
+      frameLabelFilter.forEach((l) => qp.append('frame_label', l))
+      return `/library?${qp}`
+    },
+    [debouncedSearch, projectFilter, tagFilter, frameLabelFilter],
   )
+
+  const { data: pages, isLoading, isValidating, setSize } = useSWRInfinite<LibraryPage>(
+    getKey,
+    (k: string) => api.get<LibraryPage>(k),
+    { revalidateFirstPage: false, keepPreviousData: true },
+  )
+
+  // Collapse back to page 1 whenever the filters change.
+  React.useEffect(() => { setSize(1) }, [debouncedSearch, projectFilter, tagFilter, frameLabelFilter, setSize])
   const { data: projects } = useSWR<ProjectOption[]>(
     '/library/projects',
     (k: string) => api.get<ProjectOption[]>(k),
@@ -403,8 +415,15 @@ export default function LibraryPage() {
     (k: string) => api.get<LabelOption[]>(k),
   )
 
-  const total = data?.total ?? 0
-  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE))
+  const items = React.useMemo(() => (pages ?? []).flatMap((p) => p.items), [pages])
+  const total = pages?.[0]?.total ?? 0
+  const lastPage = pages?.[pages.length - 1]
+  const reachedEnd = lastPage ? lastPage.items.length < PER_PAGE : false
+  const loadingMore = isValidating && (pages?.length ?? 0) > 0
+  const sentinelRef = useInfiniteScroll({
+    onLoadMore: () => setSize((s) => s + 1),
+    enabled: !reachedEnd && !loadingMore && items.length > 0,
+  })
 
   const toggleTag = (tag: string) =>
     setTagFilter((prev) => prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag])
@@ -414,10 +433,8 @@ export default function LibraryPage() {
 
   const hasActiveFilters = tagFilter.length > 0 || frameLabelFilter.length > 0 || projectFilter || debouncedSearch
 
-  const items = data?.items ?? []
-
   // Reset selection when results change
-  React.useEffect(() => { setSelectedIndex(null) }, [debouncedSearch, projectFilter, tagFilter, frameLabelFilter, page])
+  React.useEffect(() => { setSelectedIndex(null) }, [debouncedSearch, projectFilter, tagFilter, frameLabelFilter])
 
   // Scroll selected card into view
   React.useEffect(() => {
@@ -572,7 +589,7 @@ export default function LibraryPage() {
       </div>
 
       {/* Asset grid */}
-      {isLoading && (data?.items ?? []).length === 0 ? (
+      {isLoading && items.length === 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {Array.from({ length: 12 }).map((_, i) => (
             <div key={i} className="aspect-video animate-pulse rounded-lg bg-bg-secondary" />
@@ -604,17 +621,17 @@ export default function LibraryPage() {
             ))}
           </div>
 
-          {/* Pagination */}
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pt-2 border-t border-border">
-            <p className="text-xs text-text-tertiary">
-              {total === 0 ? '0' : `${(page - 1) * PER_PAGE + 1}–${Math.min(page * PER_PAGE, total)}`} of {total} assets
-            </p>
-            <div className="flex items-center gap-2">
-              <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</Button>
-              <span className="text-xs text-text-tertiary whitespace-nowrap">Page {page} / {totalPages}</span>
-              <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</Button>
+          {/* Infinite scroll: sentinel auto-loads the next page as it nears view. */}
+          {!reachedEnd && (
+            <div ref={sentinelRef} className="h-10 flex items-center justify-center">
+              {loadingMore && (
+                <span className="text-xs text-text-tertiary">Loading more…</span>
+              )}
             </div>
-          </div>
+          )}
+          <p className="text-center text-xs text-text-tertiary pt-1">
+            Showing {items.length} of {total} asset{total !== 1 ? 's' : ''}
+          </p>
         </>
       )}
       {/* Keyboard shortcut hint — shown until first selection */}

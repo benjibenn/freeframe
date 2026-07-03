@@ -28,9 +28,14 @@ import { RequestCard, type VideoRequest } from "@/components/projects/request-ca
 import { EmptyState } from "@/components/shared/empty-state";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { useInfiniteScroll } from "@/hooks/use-infinite-scroll";
 import type { Project, ProjectType } from "@/types";
 
 type ViewMode = "grid" | "list";
+
+// Projects are fetched in one request (the sections are grouped client-side), so we
+// reveal cards progressively on scroll rather than mounting hundreds at once.
+const PROJECTS_REVEAL_STEP = 18;
 
 interface CreateProjectForm {
   name: string;
@@ -150,6 +155,7 @@ function ProjectSection({
   showRole,
   userId,
   onMutate,
+  renderLimit,
 }: {
   title: string;
   icon?: React.ReactNode;
@@ -161,10 +167,15 @@ function ProjectSection({
   showRole?: boolean;
   userId?: string;
   onMutate?: () => void;
+  /** Cap how many cards are mounted (header still shows the true total). */
+  renderLimit?: number;
 }) {
   if (projects.length === 0 && !showNewButton) {
     return null;
   }
+
+  const shown =
+    typeof renderLimit === "number" ? projects.slice(0, renderLimit) : projects;
 
   return (
     <div className="space-y-4">
@@ -195,7 +206,7 @@ function ProjectSection({
         </button>
       ) : viewMode === "grid" ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {projects.map((project) => (
+          {shown.map((project) => (
             <ProjectCard
               key={project.id}
               project={project}
@@ -220,7 +231,7 @@ function ProjectSection({
         </div>
       ) : (
         <div className="rounded-xl border border-border overflow-hidden bg-bg-secondary">
-          {projects.map((project) => (
+          {shown.map((project) => (
             <ProjectListRow
               key={project.id}
               project={project}
@@ -252,6 +263,7 @@ export default function ProjectsPage() {
   // Everyone else joins work through a submission link, so we hide all "New" affordances.
   const canCreate = !!(user?.is_superadmin || user?.is_subadmin);
   const [viewMode, setViewMode] = React.useState<ViewMode>("grid");
+  const [visibleCount, setVisibleCount] = React.useState(PROJECTS_REVEAL_STEP);
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [isCreating, setIsCreating] = React.useState(false);
   const [formError, setFormError] = React.useState("");
@@ -358,6 +370,22 @@ export default function ProjectsPage() {
       ),
     [projects, user?.id],
   );
+
+  // Progressive reveal budget flows through the sections in order (My → Shared →
+  // Public): each section renders up to whatever the running budget allows.
+  const totalProjectCount =
+    myProjects.length + sharedProjects.length + publicProjects.length;
+  const sharedBudget = Math.max(0, visibleCount - myProjects.length);
+  const publicBudget = Math.max(
+    0,
+    visibleCount - myProjects.length - sharedProjects.length,
+  );
+  const projectsAllShown = visibleCount >= totalProjectCount;
+
+  const projectsSentinelRef = useInfiniteScroll({
+    onLoadMore: () => setVisibleCount((c) => c + PROJECTS_REVEAL_STEP),
+    enabled: !projectsAllShown,
+  });
 
   const resetForm = () => {
     setForm({ name: "", description: "", project_type: "personal" });
@@ -687,6 +715,7 @@ export default function ProjectsPage() {
             showNewButton={canCreate}
             userId={user?.id}
             onMutate={() => mutate()}
+            renderLimit={visibleCount}
           />
           {sharedProjects.length > 0 && (
             <ProjectSection
@@ -698,6 +727,7 @@ export default function ProjectsPage() {
               showRole
               userId={user?.id}
               onMutate={() => mutate()}
+              renderLimit={sharedBudget}
             />
           )}
           {publicProjects.length > 0 && (
@@ -709,7 +739,12 @@ export default function ProjectsPage() {
               emptyMessage=""
               userId={user?.id}
               onMutate={() => mutate()}
+              renderLimit={publicBudget}
             />
+          )}
+          {/* Reveal-on-scroll: mounts the next batch of project cards as it nears view. */}
+          {!projectsAllShown && (
+            <div ref={projectsSentinelRef} className="h-10" aria-hidden />
           )}
         </div>
       )}

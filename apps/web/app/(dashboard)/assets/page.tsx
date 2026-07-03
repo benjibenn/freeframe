@@ -1,12 +1,15 @@
 'use client'
 
 import * as React from 'react'
-import useSWR from 'swr'
+import useSWRInfinite from 'swr/infinite'
 import { FolderOpen, Film, Image as ImageIcon, Music, Clock, Users, AtSign, UserCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { AssetGrid } from '@/components/projects/asset-grid'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import type { Asset } from '@/types'
+
+const PAGE_SIZE = 24
 
 type AssetFilter = 'all' | 'owned' | 'shared' | 'mentioned' | 'assigned' | 'due_soon'
 
@@ -34,13 +37,35 @@ function buildKey(filter: AssetFilter): string {
 export default function AssetsPage() {
   const [activeFilter, setActiveFilter] = React.useState<AssetFilter>('all')
 
-  const swrKey = buildKey(activeFilter)
-
-  const { data: assets, isLoading } = useSWR<Asset[]>(
-    swrKey,
-    () => api.get<Asset[]>(swrKey),
-    { keepPreviousData: true },
+  // Infinite scroll: each SWR "page" is one paginated /me/assets request. The key
+  // carries the active filter, so switching filters resets to a single page below.
+  const getKey = React.useCallback(
+    (index: number, previous: Asset[] | null) => {
+      if (previous && previous.length < PAGE_SIZE) return null
+      const base = buildKey(activeFilter)
+      const sep = base.includes('?') ? '&' : '?'
+      return `${base}${sep}skip=${index * PAGE_SIZE}&limit=${PAGE_SIZE}`
+    },
+    [activeFilter],
   )
+
+  const { data: pages, isLoading, isValidating, setSize } = useSWRInfinite<Asset[]>(
+    getKey,
+    (key: string) => api.get<Asset[]>(key),
+    { revalidateFirstPage: false, keepPreviousData: true },
+  )
+
+  const assets = React.useMemo(() => pages?.flat() ?? [], [pages])
+  const lastPage = pages?.[pages.length - 1]
+  const reachedEnd = lastPage ? lastPage.length < PAGE_SIZE : false
+  const loadingMore = isValidating && (pages?.length ?? 0) > 0
+
+  React.useEffect(() => { setSize(1) }, [activeFilter, setSize])
+
+  const sentinelRef = useInfiniteScroll({
+    onLoadMore: () => setSize((s) => s + 1),
+    enabled: !reachedEnd && !loadingMore && assets.length > 0,
+  })
 
   return (
     <div className="flex h-full">
@@ -111,6 +136,15 @@ export default function AssetsPage() {
                   : 'No assets match the current filter.'}
               </p>
             </div>
+          </div>
+        )}
+
+        {/* Infinite scroll: auto-loads the next page of assets as it nears view. */}
+        {!reachedEnd && assets.length > 0 && (
+          <div ref={sentinelRef} className="h-10 flex items-center justify-center">
+            {loadingMore && (
+              <span className="text-xs text-text-tertiary">Loading more…</span>
+            )}
           </div>
         )}
       </div>

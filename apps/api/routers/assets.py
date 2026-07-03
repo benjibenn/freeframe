@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 import os
 import uuid
 from datetime import datetime, timezone
@@ -138,6 +138,8 @@ def list_assets(
     tag: Optional[list[str]] = Query(None, description="Filter to assets carrying ALL of these tags. Searches the whole project (ignores folder)."),
     frame_label: Optional[list[str]] = Query(None, description="Filter to assets that have at least one frame tag with ANY of these labels."),
     exclude_archived: bool = Query(False, description="Exclude assets with status=archived. Defaults to False so the project grid is unchanged."),
+    skip: int = Query(0, ge=0, description="Pagination offset (newest-first)."),
+    limit: Optional[int] = Query(None, ge=1, le=200, description="Page size. Omit to return all (backward compatible)."),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -179,29 +181,37 @@ def list_assets(
         elif folder_id is not None:
             query = query.filter(Asset.folder_id == uuid.UUID(folder_id))
 
-    assets = query.all()
-
     if not include_failed:
-        # Exclude assets where the only version is failed or still uploading
-        asset_ids = [a.id for a in assets]
-        if asset_ids:
-            # Find assets that have at least one non-failed, non-uploading version
-            usable = set(
-                row[0] for row in db.query(AssetVersion.asset_id).filter(
-                    AssetVersion.asset_id.in_(asset_ids),
-                    AssetVersion.deleted_at.is_(None),
-                    AssetVersion.processing_status.notin_([ProcessingStatus.failed, ProcessingStatus.uploading]),
-                ).distinct().all()
+        # Exclude assets whose only version failed or is still uploading. Done in
+        # SQL (not Python) so that `offset/limit` below returns full pages — keep an
+        # asset if it has a usable version, OR has no versions yet (just created).
+        usable_version = (
+            db.query(AssetVersion.id)
+            .filter(
+                AssetVersion.asset_id == Asset.id,
+                AssetVersion.deleted_at.is_(None),
+                AssetVersion.processing_status.notin_([ProcessingStatus.failed, ProcessingStatus.uploading]),
             )
-            # Also include assets with no versions yet (just created)
-            has_any_version = set(
-                row[0] for row in db.query(AssetVersion.asset_id).filter(
-                    AssetVersion.asset_id.in_(asset_ids),
-                    AssetVersion.deleted_at.is_(None),
-                ).distinct().all()
+            .exists()
+        )
+        any_version = (
+            db.query(AssetVersion.id)
+            .filter(
+                AssetVersion.asset_id == Asset.id,
+                AssetVersion.deleted_at.is_(None),
             )
-            assets = [a for a in assets if a.id in usable or a.id not in has_any_version]
+            .exists()
+        )
+        query = query.filter(or_(usable_version, ~any_version))
 
+    # Newest-first so paginated loads stay in a stable order matching the grid's
+    # default sort. The frontend detects "end of list" when a page is short.
+    query = query.order_by(Asset.created_at.desc())
+
+    if limit is not None:
+        query = query.offset(skip).limit(limit)
+
+    assets = query.all()
     return _build_asset_responses_bulk(assets, db)
 
 
