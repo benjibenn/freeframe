@@ -67,3 +67,13 @@ def test_autotag_batch_503_when_disabled(cfg, client, auth_headers):
     ids = [str(uuid.uuid4())]
     resp = client.post("/assets/autotag-batch", json={"asset_ids": ids}, headers=auth_headers)
     assert resp.status_code == 503
+
+
+@patch("apps.api.routers.assets.settings")
+@patch("apps.api.routers.assets.send_task_safe")
+def test_batch_rejects_oversized_list(send, cfg, client, auth_headers):
+    cfg.gemini_api_key = "k"
+    ids = [str(uuid.uuid4()) for _ in range(201)]
+    resp = client.post("/assets/autotag-batch", json={"asset_ids": ids}, headers=auth_headers)
+    assert resp.status_code == 413
+    assert not send.called
