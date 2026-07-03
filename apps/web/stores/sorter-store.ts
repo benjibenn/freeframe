@@ -38,9 +38,14 @@ export const useSorterStore = create<SorterState>()(
   ),
 )
 
+// Stable fallback: a fresh `{}` per call changes snapshot identity every render,
+// which useSyncExternalStore treats as an update → infinite re-render loop on
+// any project with no bindings yet.
+const EMPTY_BINDINGS: Record<number, string> = {}
+
 export function getBindings(
   state: SorterState,
   projectId: string,
 ): Record<number, string> {
-  return state.bindings[projectId] ?? {}
+  return state.bindings[projectId] ?? EMPTY_BINDINGS
 }
