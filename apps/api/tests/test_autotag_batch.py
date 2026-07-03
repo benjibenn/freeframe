@@ -14,6 +14,7 @@ def test_batch_skips_already_tagged_when_flag_set():
     db = MagicMock(); q = MagicMock(); db.query.return_value = q
     q.filter.return_value = q; q.order_by.return_value = q
     # asset lookups then version lookup for the untagged one
+    # Note: the version query requires processing_status==ready (mock doesn't evaluate filters)
     q.first.side_effect = [tagged, untagged, ver]
     with patch("apps.api.tasks.autotag_tasks.SessionLocal", return_value=db), \
          patch("apps.api.tasks.autotag_tasks.send_task_safe") as send:

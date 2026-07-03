@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import apps.api.tasks.autotag_tasks as at
 from apps.api.models.asset import AssetType
 from apps.api.services.gemini_service import Analysis
+from apps.api.tasks.autotag_tasks import MAX_AUTOTAG_BYTES
 
 
 def _asset(keywords=None, atype=AssetType.video):
@@ -63,7 +64,7 @@ def test_fresh_asset_runs_analysis_and_caches(analyze, match, pub, cfg):
     db = MagicMock()
     q = MagicMock(); db.query.return_value = q
     q.filter.return_value = q; q.order_by.return_value = q
-    q.first.side_effect = [asset, version, MagicMock(s3_key_raw="raw/1", mime_type="video/mp4", original_filename="c.mp4")]
+    q.first.side_effect = [asset, version, MagicMock(s3_key_raw="raw/1", mime_type="video/mp4", original_filename="c.mp4", file_size_bytes=1024)]
     # Track call order: stage-1 cache committed BEFORE stage-2 palette query
     calls = []
     db.commit.side_effect = lambda: calls.append("commit")
@@ -99,3 +100,23 @@ def test_empty_palette_skips_match(match, pub, cfg):
     match.assert_not_called()
     assert pub.call_args[0][1] == "autotag_skipped"
     assert pub.call_args[0][2]["reason"] == "empty_palette"
+
+
+@patch("apps.api.tasks.autotag_tasks.settings")
+@patch("apps.api.tasks.autotag_tasks.publish_event")
+@patch("apps.api.tasks.autotag_tasks._analyze")
+def test_oversized_file_skips(analyze, pub, cfg):
+    cfg.gemini_api_key = "k"
+    asset, version = _asset(), _version(summary=None)
+    # fresh version (ai_summary=None) so stage-1 is entered; media_file exceeds 1 GB cap
+    media_file = MagicMock()
+    media_file.file_size_bytes = MAX_AUTOTAG_BYTES + 1
+    db = MagicMock()
+    q = MagicMock(); db.query.return_value = q
+    q.filter.return_value = q; q.order_by.return_value = q
+    q.first.side_effect = [asset, version, media_file]
+    with patch("apps.api.tasks.autotag_tasks.SessionLocal", return_value=db):
+        at.autotag_asset(str(asset.id), str(version.id))
+    analyze.assert_not_called()                        # WHY: OOM guard must block S3 read for large files
+    assert pub.call_args[0][1] == "autotag_skipped"
+    assert pub.call_args[0][2]["reason"] == "file_too_large"

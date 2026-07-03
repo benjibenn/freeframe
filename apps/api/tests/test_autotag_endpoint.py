@@ -9,6 +9,7 @@ def test_autotag_enqueues_task(load, send, cfg, client, mock_db, auth_headers):
     cfg.gemini_api_key = "k"
     asset_id = uuid.uuid4()
     asset = MagicMock(id=asset_id); load.return_value = asset
+    # Note: the version query requires processing_status==ready (mock_db doesn't evaluate filters)
     version = MagicMock(id=uuid.uuid4())
     mock_db.first.return_value = version
     resp = client.post(f"/assets/{asset_id}/autotag", headers=auth_headers)

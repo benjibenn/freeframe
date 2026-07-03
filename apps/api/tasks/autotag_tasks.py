@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 from .celery_app import celery_app, send_task_safe
 from ._events import publish_event
 from ..database import SessionLocal
-from ..models.asset import Asset, AssetVersion, MediaFile, AssetType
+from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, ProcessingStatus
 from ..models.tag_palette import TagPaletteLabel
 from ..services.s3_service import get_s3_client
 from ..services.gemini_service import GeminiClient, Analysis
@@ -17,6 +17,8 @@ from ..services.tags import normalize_tags
 from ..config import settings
 
 SUPPORTED = (AssetType.video, AssetType.image, AssetType.image_carousel)
+
+MAX_AUTOTAG_BYTES = 1_073_741_824  # 1 GB — files larger than this would OOM the worker
 
 
 def _run_async(coro):
@@ -78,6 +80,9 @@ def autotag_asset(self, asset_id: str, version_id: str, force: bool = False):
             if not media_file:
                 publish_event(str(asset.project_id), "autotag_skipped", {"asset_id": asset_id, "reason": "no_media_file"})
                 return
+            if media_file.file_size_bytes and media_file.file_size_bytes > MAX_AUTOTAG_BYTES:
+                publish_event(str(asset.project_id), "autotag_skipped", {"asset_id": asset_id, "reason": "file_too_large"})
+                return
             try:
                 analysis = _analyze(media_file)
             except Exception as exc:
@@ -104,6 +109,8 @@ def autotag_asset(self, asset_id: str, version_id: str, force: bool = False):
             raise self.retry(exc=exc)
 
         # Apply — normalized, idempotent
+        # refresh: don't clobber tags stamped during the Gemini call
+        db.refresh(asset)
         current = list(asset.keywords or [])
         applied: list[str] = []
         for label in matched:
@@ -128,9 +135,11 @@ def autotag_batch(asset_ids: list[str], skip_if_tagged: bool = True):
                 continue
             if skip_if_tagged and asset.keywords:
                 continue
+            # ready-only: skip versions that are still uploading/processing (incomplete S3 object → futile retries)
             version = db.query(AssetVersion).filter(
                 AssetVersion.asset_id == asset.id,
                 AssetVersion.deleted_at.is_(None),
+                AssetVersion.processing_status == ProcessingStatus.ready,
             ).order_by(AssetVersion.version_number.desc()).first()
             if version:
                 send_task_safe(autotag_asset, aid, str(version.id), False)

@@ -46,6 +46,7 @@ const SORTER_SHORTCUTS = [
     items: [
       { keys: ['D'], label: 'Archive current asset' },
       { keys: ['Z'], label: 'Undo last action' },
+      { keys: ['G'], label: 'AI auto-tag' },
     ],
   },
 ]
@@ -190,10 +191,12 @@ export default function SorterPage() {
         case 'exit': router.push(`/projects/${projectId}`); break
         case 'autoTag': {
           if (current) {
-            api.post(`/assets/${current.id}/autotag`, {}).catch((err: unknown) => {
-              const msg = err instanceof Error ? err.message : 'Auto-tag failed'
-              toast.error(msg)
-            })
+            api.post(`/assets/${current.id}/autotag`, {})
+              .then(() => toast.success('AI tagging queued'))
+              .catch((err: unknown) => {
+                const msg = err instanceof Error ? err.message : 'Auto-tag failed'
+                toast.error(msg)
+              })
           }
           break
         }

@@ -336,9 +336,11 @@ def autotag_single(
     if not settings.gemini_api_key:
         raise HTTPException(status_code=503, detail="AI tagging is not configured")
     _load_editable_asset(asset_id, db, current_user)  # enforces editor role
+    # ready-only: skip versions still uploading/processing (incomplete S3 object → futile retries)
     version = db.query(AssetVersion).filter(
         AssetVersion.asset_id == asset_id,
         AssetVersion.deleted_at.is_(None),
+        AssetVersion.processing_status == ProcessingStatus.ready,
     ).order_by(AssetVersion.version_number.desc()).first()
     if not version:
         raise HTTPException(status_code=404, detail="No version to tag")
