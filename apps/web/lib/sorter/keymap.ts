@@ -6,6 +6,7 @@ export type SorterAction =
   | { kind: 'applyAll' }
   | { kind: 'focusTag' } | { kind: 'filter' }
   | { kind: 'archive' } | { kind: 'undo' } | { kind: 'exit' }
+  | { kind: 'autoTag' }
 
 export function keyToAction(key: string, seekStep: number): SorterAction | null {
   switch (key) {
@@ -19,6 +20,7 @@ export function keyToAction(key: string, seekStep: number): SorterAction | null 
     case 'f': return { kind: 'filter' }
     case 'd': return { kind: 'archive' }
     case 'z': return { kind: 'undo' }
+    case 'g': return { kind: 'autoTag' }
     case 'Escape': return { kind: 'exit' }
     default:
       if (/^[1-9]$/.test(key)) return { kind: 'slot', slot: Number(key) }
