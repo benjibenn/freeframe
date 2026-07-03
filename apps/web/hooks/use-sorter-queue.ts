@@ -54,6 +54,16 @@ export function useSorterQueue(projectId: string, tag?: string) {
     [index],
   )
 
+  const patchById = useCallback(
+    (assetId: string, updater: (prevKeywords: string[]) => string[]) =>
+      setAssets((prevAssets) =>
+        prevAssets.map((a) =>
+          a.id === assetId ? { ...a, keywords: updater(a.keywords ?? []) } : a,
+        ),
+      ),
+    [],
+  )
+
   return {
     assets,
     index,
@@ -64,6 +74,7 @@ export function useSorterQueue(projectId: string, tag?: string) {
     removeCurrent,
     restoreAt,
     patchCurrent,
+    patchById,
     refresh: load,
   }
 }
