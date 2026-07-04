@@ -323,6 +323,8 @@ def autotag_batch_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if not is_platform_admin(current_user):
+        raise HTTPException(status_code=403, detail="AI tagging is limited to platform admins")
     if not settings.gemini_api_key:
         raise HTTPException(status_code=503, detail="AI tagging is not configured")
     if not body.asset_ids:
@@ -343,9 +345,11 @@ def autotag_single(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if not is_platform_admin(current_user):
+        raise HTTPException(status_code=403, detail="AI tagging is limited to platform admins")
     if not settings.gemini_api_key:
         raise HTTPException(status_code=503, detail="AI tagging is not configured")
-    _load_editable_asset(asset_id, db, current_user)  # enforces editor role
+    _load_editable_asset(asset_id, db, current_user)  # 404 + asset-level access
     # ready-only: skip versions still uploading/processing (incomplete S3 object → futile retries)
     version = db.query(AssetVersion).filter(
         AssetVersion.asset_id == asset_id,

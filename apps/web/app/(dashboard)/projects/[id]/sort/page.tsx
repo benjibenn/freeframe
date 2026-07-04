@@ -8,6 +8,7 @@ import { TagStampBar } from '@/components/review/tag-stamp-bar'
 import { useVideoPlayer } from '@/hooks/use-video-player'
 import { useSorterQueue } from '@/hooks/use-sorter-queue'
 import { useSorterStore, getBindings } from '@/stores/sorter-store'
+import { useAuthStore } from '@/stores/auth-store'
 import { keyToAction } from '@/lib/sorter/keymap'
 import { enqueueWrite } from '@/lib/sorter/write-queue'
 import { TagInput } from '@/components/sorter/tag-input'
@@ -61,6 +62,8 @@ export default function SorterPage() {
   const projectId = String(useParams().id)
   const queue = useSorterQueue(projectId)
   const seekStep = useSorterStore((s) => s.seekStep)
+  const user = useAuthStore((s) => s.user)
+  const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
   const bindings = useSorterStore((s) => getBindings(s, projectId))
   const toast = useToast()
 
@@ -190,6 +193,7 @@ export default function SorterPage() {
         case 'undo': undo(); break
         case 'exit': router.push(`/projects/${projectId}`); break
         case 'autoTag': {
+          if (!isPlatformAdmin) break
           if (current) {
             api.post(`/assets/${current.id}/autotag`, {})
               .then(() => toast.success('AI tagging queued'))
@@ -204,7 +208,7 @@ export default function SorterPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [tagInputOpen, seekStep, bindings, current, player])
+  }, [tagInputOpen, seekStep, bindings, current, player, isPlatformAdmin])
 
   if (queue.loading) return <div className="p-8 text-text-secondary">Loading…</div>
   if (!current) {
@@ -221,7 +225,10 @@ export default function SorterPage() {
     <div className="relative flex h-screen flex-col bg-black">
       <div className="flex items-center justify-between px-4 py-2 text-xs text-text-tertiary">
         <span>{queue.index + 1} / {queue.assets.length} — {current.name}</span>
-        <ShortcutsHint groups={SORTER_SHORTCUTS} />
+        <ShortcutsHint groups={isPlatformAdmin ? SORTER_SHORTCUTS : SORTER_SHORTCUTS.map((g) => ({
+            ...g,
+            items: g.items.filter((i) => i.label !== 'AI auto-tag'),
+          }))} />
       </div>
 
       <div className="flex flex-1 items-center justify-center">

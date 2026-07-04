@@ -78,3 +78,41 @@ def test_batch_rejects_oversized_list(send, cfg, client, auth_headers):
     resp = client.post("/assets/autotag-batch", json={"asset_ids": ids}, headers=auth_headers)
     assert resp.status_code == 413
     assert not send.called
+
+
+@patch("apps.api.routers.assets.settings")
+@patch("apps.api.routers.assets.send_task_safe")
+def test_autotag_403_for_non_admin(send, cfg, client, auth_headers, test_user):
+    """WHY: AI tagging spends Gemini quota — platform admins/subadmins only."""
+    cfg.gemini_api_key = "k"
+    test_user.is_superadmin = False
+    test_user.is_subadmin = False
+    resp = client.post(f"/assets/{uuid.uuid4()}/autotag", headers=auth_headers)
+    assert resp.status_code == 403
+    assert not send.called
+
+
+@patch("apps.api.routers.assets.settings")
+@patch("apps.api.routers.assets.send_task_safe")
+def test_batch_403_for_non_admin(send, cfg, client, auth_headers, test_user):
+    cfg.gemini_api_key = "k"
+    test_user.is_superadmin = False
+    test_user.is_subadmin = False
+    resp = client.post("/assets/autotag-batch", json={"asset_ids": [str(uuid.uuid4())]}, headers=auth_headers)
+    assert resp.status_code == 403
+    assert not send.called
+
+
+@patch("apps.api.routers.assets.settings")
+@patch("apps.api.routers.assets.send_task_safe")
+@patch("apps.api.routers.assets._load_editable_asset")
+def test_autotag_allows_subadmin(load, send, cfg, client, mock_db, auth_headers, test_user):
+    cfg.gemini_api_key = "k"
+    test_user.is_superadmin = False
+    test_user.is_subadmin = True
+    asset_id = uuid.uuid4()
+    load.return_value = MagicMock(id=asset_id)
+    mock_db.first.return_value = MagicMock(id=uuid.uuid4())
+    resp = client.post(f"/assets/{asset_id}/autotag", headers=auth_headers)
+    assert resp.status_code == 200
+    assert send.called
