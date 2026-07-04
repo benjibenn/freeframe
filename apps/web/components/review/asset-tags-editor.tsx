@@ -3,9 +3,12 @@
 import * as React from 'react'
 import ReactDOM from 'react-dom'
 import useSWR, { mutate as globalMutate } from 'swr'
-import { Tag, X } from 'lucide-react'
+import { Tag, X, Sparkles } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useTagPalette } from '@/hooks/use-tag-palette'
+import { useSSE } from '@/hooks/use-sse'
+import { useAuthStore } from '@/stores/auth-store'
+import { useToast } from '@/components/shared/toast'
 
 export function AssetTagsEditor({
   assetId,
@@ -27,12 +30,36 @@ export function AssetTagsEditor({
   const wrapperRef = React.useRef<HTMLDivElement>(null)
   const inputRef = React.useRef<HTMLInputElement>(null)
 
+  const user = useAuthStore((s) => s.user)
+  const isPlatformAdmin = !!(user?.is_superadmin || user?.is_subadmin)
+  const showAutotag = canEdit && isPlatformAdmin
+  const toast = useToast()
+
   React.useEffect(() => {
     setTags(initialTags)
     setInput('')
     setError('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assetId])
+
+  // AI tags land asynchronously via the worker; merge them into local state when
+  // the event arrives so they show without a refresh (local `tags` otherwise only
+  // re-syncs on assetId change and would go stale after auto-tagging).
+  useSSE(showAutotag ? projectId : null, {
+    onAutotagComplete: ({ asset_id, applied }) => {
+      if (asset_id !== assetId || applied.length === 0) return
+      setTags((prev) => Array.from(new Set([...prev, ...applied])))
+      globalMutate(`/assets/${assetId}`)
+      globalMutate(`/projects/${projectId}/tags`)
+      toast.success(`AI added ${applied.length} tag${applied.length > 1 ? 's' : ''}`)
+    },
+  })
+
+  const runAutotag = () => {
+    api.post(`/assets/${assetId}/autotag`, {})
+      .then(() => toast.success('AI tagging queued'))
+      .catch((e: unknown) => toast.error(e instanceof Error ? e.message : 'AI tagging failed'))
+  }
 
   const { data: projectTags } = useSWR<{ tag: string; count: number }[]>(
     canEdit ? `/projects/${projectId}/tags` : null,
@@ -101,10 +128,23 @@ export function AssetTagsEditor({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-xs font-medium text-text-tertiary uppercase tracking-wide flex items-center gap-1">
-        <Tag className="h-3 w-3" />
-        Tags
-      </label>
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-medium text-text-tertiary uppercase tracking-wide flex items-center gap-1">
+          <Tag className="h-3 w-3" />
+          Tags
+        </label>
+        {showAutotag && (
+          <button
+            type="button"
+            onClick={runAutotag}
+            title="AI auto-tag this asset from its analysis (palette labels only)"
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-bg-secondary px-2 h-6 text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+          >
+            <Sparkles className="h-3 w-3" />
+            AI tag
+          </button>
+        )}
+      </div>
 
       {tags.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
