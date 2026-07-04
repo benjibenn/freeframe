@@ -116,3 +116,43 @@ def test_autotag_allows_subadmin(load, send, cfg, client, mock_db, auth_headers,
     resp = client.post(f"/assets/{asset_id}/autotag", headers=auth_headers)
     assert resp.status_code == 200
     assert send.called
+
+
+@patch("apps.api.routers.assets.settings")
+@patch("apps.api.routers.assets.send_task_safe")
+def test_project_autotag_403_for_non_admin(send, cfg, client, auth_headers, test_user):
+    cfg.gemini_api_key = "k"
+    test_user.is_superadmin = False
+    test_user.is_subadmin = False
+    resp = client.post(f"/projects/{uuid.uuid4()}/autotag", headers=auth_headers)
+    assert resp.status_code == 403
+    assert not send.called
+
+
+@patch("apps.api.routers.assets.settings")
+@patch("apps.api.routers.assets.send_task_safe")
+def test_project_autotag_queues_all_project_assets(send, cfg, client, mock_db, auth_headers, test_user):
+    """WHY: the bulk button must cover the WHOLE project server-side, not just
+    the pages the browser happened to load; skip_if_tagged guards re-tag cost."""
+    cfg.gemini_api_key = "k"
+    test_user.is_superadmin = True
+    ids = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+    mock_db.first.return_value = MagicMock(id=uuid.uuid4(), deleted_at=None)  # project exists
+    mock_db.all.return_value = [(i,) for i in ids]
+    resp = client.post(f"/projects/{uuid.uuid4()}/autotag", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"status": "queued", "count": 3}
+    args = send.call_args[0]
+    assert args[1] == [str(i) for i in ids]   # all asset ids, stringified
+    assert args[2] is True                    # skip_if_tagged always on for bulk
+
+
+@patch("apps.api.routers.assets.settings")
+@patch("apps.api.routers.assets.send_task_safe")
+def test_project_autotag_404_when_project_missing(send, cfg, client, mock_db, auth_headers, test_user):
+    cfg.gemini_api_key = "k"
+    test_user.is_superadmin = True
+    mock_db.first.return_value = None
+    resp = client.post(f"/projects/{uuid.uuid4()}/autotag", headers=auth_headers)
+    assert resp.status_code == 404
+    assert not send.called

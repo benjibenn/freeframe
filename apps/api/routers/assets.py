@@ -363,6 +363,33 @@ def autotag_single(
     return {"status": "queued"}
 
 
+@router.post("/projects/{project_id}/autotag")
+def autotag_project(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Queue AI tagging for every asset in the project (already-tagged skipped).
+    Selection happens server-side so the bulk action covers the whole project,
+    not just the asset pages the browser has loaded."""
+    if not is_platform_admin(current_user):
+        raise HTTPException(status_code=403, detail="AI tagging is limited to platform admins")
+    if not settings.gemini_api_key:
+        raise HTTPException(status_code=503, detail="AI tagging is not configured")
+    project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ids = [str(row[0]) for row in db.query(Asset.id).filter(
+        Asset.project_id == project_id,
+        Asset.deleted_at.is_(None),
+    ).all()]
+    if not ids:
+        return {"status": "queued", "count": 0}
+    from ..tasks.autotag_tasks import autotag_batch
+    send_task_safe(autotag_batch, ids, True)
+    return {"status": "queued", "count": len(ids)}
+
+
 @router.get("/projects/{project_id}/tags", response_model=list[TagCount])
 def list_project_tags(
     project_id: uuid.UUID,

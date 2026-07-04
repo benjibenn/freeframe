@@ -213,7 +213,7 @@ export default function SorterPage() {
   if (queue.loading) return <div className="p-8 text-text-secondary">Loading…</div>
   if (!current) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-3">
+      <div className="flex h-full flex-col items-center justify-center gap-3">
         <p className="text-text-secondary">Queue empty.</p>
         <button onClick={() => router.push(`/projects/${projectId}`)}
           className="text-sm text-text-primary underline">Back to project</button>
@@ -222,7 +222,7 @@ export default function SorterPage() {
   }
 
   return (
-    <div className="relative flex h-screen flex-col bg-black">
+    <div className="relative flex h-full flex-col overflow-hidden bg-black">
       <div className="flex items-center justify-between px-4 py-2 text-xs text-text-tertiary">
         <span>{queue.index + 1} / {queue.assets.length} — {current.name}</span>
         <ShortcutsHint groups={isPlatformAdmin ? SORTER_SHORTCUTS : SORTER_SHORTCUTS.map((g) => ({
@@ -231,7 +231,7 @@ export default function SorterPage() {
           }))} />
       </div>
 
-      <div className="flex flex-1 items-center justify-center">
+      <div className="flex min-h-0 flex-1 items-center justify-center">
         <video
           ref={player.videoRef}
           className="max-h-full max-w-full"

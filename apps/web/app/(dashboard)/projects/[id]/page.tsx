@@ -10,6 +10,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Upload,
   X,
+  Sparkles,
   FolderOpen,
   Link as LinkIcon,
   Download,
@@ -32,6 +33,7 @@ import {
 import { cn, formatRelativeTime, formatBytes } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/shared/toast";
 import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/shared/avatar";
 import { AssetGrid } from "@/components/projects/asset-grid";
@@ -131,6 +133,13 @@ export default function ProjectDetailPage() {
 
   const { files: uploadFiles, startUpload } = useUploadStore();
   const { user, isSuperAdmin } = useAuthStore();
+  const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin);
+  const toast = useToast();
+  const handleAutotagProject = () => {
+    api.post<{ status: string; count: number }>(`/projects/${projectId}/autotag`)
+      .then(({ count }) => toast.success(count ? `AI tagging queued for ${count} assets` : "No assets to tag"))
+      .catch((err: unknown) => toast.error(err instanceof Error ? err.message : "AI tagging failed"));
+  };
 
   const {
     tree,
@@ -1067,6 +1076,17 @@ export default function ProjectDetailPage() {
                       onClick={() => setMembersDialogOpen(true)}
                     >
                       <Users className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {isPlatformAdmin && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleAutotagProject}
+                      title="AI-tag every asset in this project (already-tagged skipped)"
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      AI tag
                     </Button>
                   )}
                   {canShare && (
