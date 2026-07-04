@@ -17,11 +17,23 @@ class Analysis:
     transcript: str
 
 
+# The analysis is stored once per version and re-used for every future tag-matching
+# pass (including palette labels that don't exist yet), so the summary must be
+# exhaustive — details omitted here are permanently invisible to later re-tags
+# unless the video is re-analyzed with force=True.
 PROMPT_ANALYZE = (
-    'Watch this media asset carefully and return a JSON object with two fields: '
-    '"summary" (3-5 sentences describing what happens, who/what is shown, the setting, '
-    'mood, and any on-screen text) and "transcript" (a verbatim transcript of all spoken '
-    'audio; empty string if there is no speech).'
+    'Watch this media asset carefully and return a JSON object with two fields.\n'
+    '"summary": an exhaustive, detailed description that will later be used to match '
+    'topic tags WITHOUT re-watching the video, so capture everything: what happens '
+    'scene by scene with approximate timestamps; every visible person (appearance, age '
+    'range, clothing), object, animal, product, brand or logo; actions being performed; '
+    'the setting and location; visual style (live action, animation, screen recording, '
+    'test pattern, UGC, ad, etc.); colors, lighting and camera work (close-up, handheld, '
+    'static, drone); ALL on-screen text, captions, watermarks and graphics verbatim; '
+    'non-speech audio (music genre, tones, sound effects); and the overall mood and '
+    'apparent purpose of the video. Prefer specific, concrete detail over brevity.\n'
+    '"transcript": a verbatim transcript of all spoken audio, including who is speaking '
+    'when distinguishable; empty string if there is no speech.'
 )
 
 ANALYZE_SCHEMA = {
