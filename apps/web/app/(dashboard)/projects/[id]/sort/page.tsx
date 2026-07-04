@@ -14,6 +14,7 @@ import { TagInput } from '@/components/sorter/tag-input'
 import { SlotBar } from '@/components/sorter/slot-bar'
 import { useToast } from '@/components/shared/toast'
 import { ShortcutsHint } from '@/components/ui/shortcuts-hint'
+import { useSSE } from '@/hooks/use-sse'
 
 const SORTER_SHORTCUTS = [
   {
@@ -45,6 +46,7 @@ const SORTER_SHORTCUTS = [
     items: [
       { keys: ['D'], label: 'Archive current asset' },
       { keys: ['Z'], label: 'Undo last action' },
+      { keys: ['G'], label: 'AI auto-tag' },
     ],
   },
 ]
@@ -68,6 +70,12 @@ export default function SorterPage() {
   const undoStack = React.useRef<Op[]>([])
   const player = useVideoPlayer(streamUrl)
   const current = queue.current
+
+  useSSE(projectId, {
+    onAutotagComplete: ({ asset_id, applied }) => {
+      queue.patchById(asset_id, (prev) => Array.from(new Set([...prev, ...applied])))
+    },
+  })
 
   // Load the HLS stream URL whenever the current asset changes.
   React.useEffect(() => {
@@ -181,6 +189,17 @@ export default function SorterPage() {
         case 'archive': archiveCurrent(); break
         case 'undo': undo(); break
         case 'exit': router.push(`/projects/${projectId}`); break
+        case 'autoTag': {
+          if (current) {
+            api.post(`/assets/${current.id}/autotag`, {})
+              .then(() => toast.success('AI tagging queued'))
+              .catch((err: unknown) => {
+                const msg = err instanceof Error ? err.message : 'Auto-tag failed'
+                toast.error(msg)
+              })
+          }
+          break
+        }
       }
     }
     window.addEventListener('keydown', onKey)

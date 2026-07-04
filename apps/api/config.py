@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     transcoder_engine: str = "ffmpeg"
 
+    # ── Gemini (AI auto-tag) ──
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+
     # ---- OIDC / SSO (Authentik) ----
     # When all four are set, the /auth/oidc/* endpoints are enabled and the
     # frontend can offer "Log in with SSO". Unset = OIDC disabled, local login only.

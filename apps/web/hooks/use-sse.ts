@@ -36,6 +36,11 @@ export interface ApprovalUpdatedEvent {
   status: string
 }
 
+export interface AutotagCompleteEvent {
+  asset_id: string
+  applied: string[]
+}
+
 export type SSEEventType =
   | 'transcode_progress'
   | 'transcode_complete'
@@ -43,6 +48,7 @@ export type SSEEventType =
   | 'new_comment'
   | 'comment_resolved'
   | 'approval_updated'
+  | 'autotag_complete'
 
 export interface SSEEvent {
   type: SSEEventType
@@ -53,6 +59,7 @@ export interface SSEEvent {
     | NewCommentEvent
     | CommentResolvedEvent
     | ApprovalUpdatedEvent
+    | AutotagCompleteEvent
 }
 
 // ─── Hook options ─────────────────────────────────────────────────────────────
@@ -64,6 +71,7 @@ export interface UseSSEOptions {
   onNewComment?: (data: NewCommentEvent) => void
   onCommentResolved?: (data: CommentResolvedEvent) => void
   onApprovalUpdated?: (data: ApprovalUpdatedEvent) => void
+  onAutotagComplete?: (data: AutotagCompleteEvent) => void
   enabled?: boolean
 }
 
@@ -87,6 +95,7 @@ export function useSSE(projectId: string | null | undefined, options: UseSSEOpti
     onNewComment,
     onCommentResolved,
     onApprovalUpdated,
+    onAutotagComplete,
     enabled = true,
   } = options
 
@@ -101,6 +110,7 @@ export function useSSE(projectId: string | null | undefined, options: UseSSEOpti
     onNewComment,
     onCommentResolved,
     onApprovalUpdated,
+    onAutotagComplete,
   })
 
   React.useEffect(() => {
@@ -111,6 +121,7 @@ export function useSSE(projectId: string | null | undefined, options: UseSSEOpti
       onNewComment,
       onCommentResolved,
       onApprovalUpdated,
+      onAutotagComplete,
     }
   })
 
@@ -228,6 +239,18 @@ export function useSSE(projectId: string | null | undefined, options: UseSSEOpti
           const event: SSEEvent = { type: 'approval_updated', data }
           setLastEvent(event)
           callbackRefs.current.onApprovalUpdated?.(data)
+        } catch {
+          // ignore malformed events
+        }
+      })
+
+      // ── autotag_complete ──
+      es.addEventListener('autotag_complete', (e: MessageEvent) => {
+        if (destroyed) return
+        try {
+          const data = JSON.parse(e.data) as AutotagCompleteEvent
+          setLastEvent({ type: 'autotag_complete', data })
+          callbackRefs.current.onAutotagComplete?.(data)
         } catch {
           // ignore malformed events
         }

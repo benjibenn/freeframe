@@ -25,6 +25,10 @@ describe('keyToAction', () => {
     expect(keyToAction('Escape', 3)).toEqual({ kind: 'exit' })
   })
 
+  it("maps 'g' to autoTag", () => {
+    expect(keyToAction('g', 5)).toEqual({ kind: 'autoTag' })
+  })
+
   it('returns null for unmapped keys', () => {
     expect(keyToAction('q', 3)).toBeNull()
   })

@@ -28,3 +28,12 @@ describe('sorter-store', () => {
     expect(useSorterStore.getState().seekStep).toBe(5)
   })
 })
+
+it('getBindings returns a stable reference for projects with no bindings', () => {
+  const state = useSorterStore.getState()
+  // Same identity across calls — a fresh {} per call makes useSyncExternalStore
+  // see a new snapshot every render and loop forever on binding-less projects.
+  expect(getBindings(state, 'no-bindings-project')).toBe(
+    getBindings(state, 'no-bindings-project'),
+  )
+})

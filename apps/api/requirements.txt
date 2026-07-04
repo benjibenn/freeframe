@@ -6,6 +6,9 @@ psycopg2-binary==2.9.11
 pydantic==2.9.2
 pydantic-settings==2.5.2
 python-jose[cryptography]==3.5.0
+# Transitive via python-jose; left unpinned it resolves to 49.x whose arm64 wheel
+# SIGILLs at import (kills api + all celery workers at boot). Pin to last known good.
+cryptography==45.0.7
 bcrypt==4.2.0
 python-multipart==0.0.12
 boto3==1.35.30
