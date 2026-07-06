@@ -244,19 +244,19 @@ export function AssetGrid({
 
       {/* ─── Navigator Bar (Frame.io style) ─────────────────────────────── */}
       {!shareMode && (
-        <div className="flex items-center gap-1 border-b border-border pb-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-2 border-b border-border pb-2.5">
           {/* Left group: Appearance + Fields + Sort */}
-          <AppearancePopover />
+          <div className="flex items-center gap-1 shrink-0">
+            <AppearancePopover />
 
-          <div className="h-4 w-px bg-border mx-0.5" />
+            <div className="h-4 w-px bg-border mx-0.5" />
 
-          <SortPopover />
-
-          <div className="flex-1" />
+            <SortPopover />
+          </div>
 
           {/* Right group: action buttons passed from parent */}
           {actions && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {actions}
             </div>
           )}
