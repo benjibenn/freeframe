@@ -7,6 +7,7 @@ interface AuthState {
   user: User | null
   isAuthenticated: boolean
   isSuperAdmin: boolean
+  isSubAdmin: boolean
   isLoading: boolean
   setUser: (user: User) => void
   logout: () => void
@@ -17,6 +18,7 @@ export const useAuthStore = create<AuthState>()((set) => ({
   user: null,
   isAuthenticated: false,
   isSuperAdmin: false,
+  isSubAdmin: false,
   isLoading: false,
 
   setUser: (user: User) => {
@@ -24,6 +26,7 @@ export const useAuthStore = create<AuthState>()((set) => ({
       user,
       isAuthenticated: true,
       isSuperAdmin: user.is_superadmin,
+      isSubAdmin: user.is_subadmin,
     })
   },
 
@@ -33,6 +36,7 @@ export const useAuthStore = create<AuthState>()((set) => ({
       user: null,
       isAuthenticated: false,
       isSuperAdmin: false,
+      isSubAdmin: false,
     })
   },
 
@@ -44,12 +48,14 @@ export const useAuthStore = create<AuthState>()((set) => ({
         user,
         isAuthenticated: true,
         isSuperAdmin: user.is_superadmin,
+        isSubAdmin: user.is_subadmin,
       })
     } catch {
       set({
         user: null,
         isAuthenticated: false,
         isSuperAdmin: false,
+        isSubAdmin: false,
       })
     } finally {
       set({ isLoading: false })

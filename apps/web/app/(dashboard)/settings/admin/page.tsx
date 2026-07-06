@@ -13,7 +13,6 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { useAuthStore } from "@/stores/auth-store";
 import { useRouter } from "next/navigation";
 import type { User, UserStatus } from "@/types";
-import { DriveSyncPanel } from "@/components/settings/drive-sync-panel";
 
 // Centralized so a backend rename (FastAPI rejecting the literal `:`) is a
 // one-line change here. Currently: POST /admin/users/{id}/uid:grant
@@ -745,8 +744,6 @@ export default function AdminPage() {
           </div>
         )}
       </section>
-
-      <DriveSyncPanel />
     </div>
   );
 }

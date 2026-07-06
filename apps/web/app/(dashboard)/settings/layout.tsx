@@ -3,7 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { User, Bell, Shield, Palette, Brush, KeyRound } from 'lucide-react'
+import { User, Bell, Shield, Palette, Brush, KeyRound, HardDrive } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -12,12 +12,15 @@ interface SettingsNavItem {
   label: string
   icon: React.ElementType
   adminOnly?: boolean
+  /** Visible to super-admins and sub-admins */
+  adminOrSubadmin?: boolean
 }
 
 const settingsNavItems: SettingsNavItem[] = [
   { href: '/settings/profile', label: 'Profile', icon: User },
   { href: '/settings/appearance', label: 'Appearance', icon: Palette },
   { href: '/settings/notifications', label: 'Notifications', icon: Bell },
+  { href: '/settings/sync', label: 'Sync', icon: HardDrive, adminOrSubadmin: true },
   { href: '/settings/branding', label: 'Branding', icon: Brush, adminOnly: true },
   { href: '/settings/admin', label: 'Admin', icon: Shield, adminOnly: true },
   { href: '/settings/api-keys', label: 'API Keys', icon: KeyRound, adminOnly: true },
@@ -29,7 +32,7 @@ export default function SettingsLayout({
   children: React.ReactNode
 }) {
   const pathname = usePathname()
-  const { user, isSuperAdmin } = useAuthStore()
+  const { user, isSuperAdmin, isSubAdmin } = useAuthStore()
 
   return (
     <div className="flex h-full flex-col md:flex-row">
@@ -46,6 +49,8 @@ export default function SettingsLayout({
           {settingsNavItems.map((item) => {
             // Hide admin-only items from non-admins
             if (item.adminOnly && !isSuperAdmin) return null
+            // Sync tab is visible to super-admins and sub-admins
+            if (item.adminOrSubadmin && !isSuperAdmin && !isSubAdmin) return null
 
             const isActive = pathname === item.href || pathname?.startsWith(item.href + '/')
             const Icon = item.icon
