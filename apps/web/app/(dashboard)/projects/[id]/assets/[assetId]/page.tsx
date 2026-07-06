@@ -32,10 +32,11 @@ import {
   Loader2,
   Columns2,
   Upload,
+  Download,
   RefreshCw,
 } from 'lucide-react'
 import Link from 'next/link'
-import { cn } from '@/lib/utils'
+import { cn, downloadAsset } from '@/lib/utils'
 import { useIsDesktop } from '@/hooks/use-media-query'
 import { usePageTitle } from '@/hooks/use-page-title'
 import type { Project, AssetResponse, ProjectMember, FolderTreeNode } from '@/types'
@@ -521,6 +522,15 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           >
             <Upload className="h-3.5 w-3.5" />
             New Version
+          </button>
+          <button
+            onClick={() => void downloadAsset(asset.id, currentVersion?.id)}
+            disabled={!versionReady}
+            className="hidden sm:inline-flex items-center gap-1.5 rounded-md px-2.5 h-8 text-xs font-medium border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Download asset"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download
           </button>
           <ShareDialog assetId={asset.id} assetName={asset.name} projectId={projectId} asset={asset} />
           <ShortcutsHint groups={ASSET_SHORTCUTS} />

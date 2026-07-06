@@ -1,8 +1,27 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { api } from './api'
 
 export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs))
+}
+
+/**
+ * Trigger a browser download of an asset via a short-lived presigned URL.
+ * Uses a hidden iframe rather than location.href so it doesn't navigate away.
+ */
+export async function downloadAsset(assetId: string, versionId?: string): Promise<void> {
+  try {
+    const qs = versionId ? `?version_id=${versionId}&download=true` : '?download=true'
+    const data = await api.get<{ url: string }>(`/assets/${assetId}/stream${qs}`)
+    if (data?.url) {
+      const iframe = document.createElement('iframe')
+      iframe.style.display = 'none'
+      iframe.src = data.url
+      document.body.appendChild(iframe)
+      setTimeout(() => iframe.remove(), 30000)
+    }
+  } catch {}
 }
 
 /**

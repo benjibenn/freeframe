@@ -6,10 +6,10 @@ import { useRouter } from 'next/navigation'
 import useSWR, { mutate } from 'swr'
 import useSWRInfinite from 'swr/infinite'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Library, Film, Search, X, Plus, Trash2, ChevronDown, FolderOpen, Users, Play, Check } from 'lucide-react'
+import { Library, Film, Search, X, Plus, Trash2, ChevronDown, FolderOpen, Users, Play, Check, Download } from 'lucide-react'
 import { ShortcutsHint } from '@/components/ui/shortcuts-hint'
 import { api } from '@/lib/api'
-import { cn } from '@/lib/utils'
+import { cn, downloadAsset } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/shared/empty-state'
 import { usePageTitle } from '@/hooks/use-page-title'
@@ -738,6 +738,15 @@ function AssetCard({
             <Film className="h-6 w-6 text-text-tertiary" />
           </div>
         )}
+
+        {/* Download — top-right, appears on hover */}
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); void downloadAsset(item.id) }}
+          className="absolute top-1.5 right-1.5 z-10 hidden h-6 w-6 items-center justify-center rounded-md bg-black/70 text-white backdrop-blur-sm transition-colors hover:bg-black/90 group-hover:flex"
+          title="Download"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </button>
 
         {/* Video label count badge — bottom-left of thumbnail */}
         {frameLabels.length > 0 && (
