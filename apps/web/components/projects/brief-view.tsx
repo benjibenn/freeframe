@@ -1,42 +1,75 @@
 'use client'
 
 /**
- * Renders a structured JSON brief (title / overview / script+storyboard / guidelines /
- * final deliverable). Deliberately defensive: every section is optional and only shown
- * when present and well-shaped, so briefs can vary without breaking the page.
+ * Renders a structured JSON brief driven by an admin-configured template (Settings →
+ * Brief template). The template is an ordered list of sections; each maps a dot-path in
+ * the brief JSON to a render type (text / bullets / table). Deliberately defensive:
+ * a section whose path resolves to nothing is skipped, so briefs and templates can
+ * evolve independently without breaking the page.
  */
 
-type Shot = {
-  variation?: string
-  name?: string
-  script?: string
-  shot?: string
-  on_screen_text?: string
+import useSWR from 'swr'
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
+
+export type BriefColumn = { key: string; header: string }
+export type BriefSection = {
+  id: string
+  title: string
+  path: string
+  as: 'text' | 'bullets' | 'table'
+  columns?: BriefColumn[]
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
-function StoryboardRows({ rows }: { rows: Shot[] }) {
+/** Walk a dot-path (e.g. "final_deliverable.label") into a value, or undefined. */
+function resolvePath(root: unknown, path: string): unknown {
+  return path.split('.').reduce<unknown>((acc, key) => (isObj(acc) ? acc[key] : undefined), root)
+}
+
+// Public fetch (no auth) so the submit page renders briefs for guests too.
+const fetchTemplate = (url: string): Promise<{ sections: BriefSection[] }> =>
+  fetch(url).then((r) => (r.ok ? r.json() : { sections: [] }))
+
+/** Shared template config, cached across every surface that renders a brief. */
+export function useBriefTemplate() {
+  const { data } = useSWR(`${API_URL}/brief-template`, fetchTemplate, {
+    revalidateOnFocus: false,
+  })
+  return data?.sections ?? []
+}
+
+function Heading({ title }: { title: string }) {
+  if (!title) return null
+  return <h3 className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">{title}</h3>
+}
+
+function TableBlock({ rows, columns }: { rows: Record<string, unknown>[]; columns: BriefColumn[] }) {
+  const cols = columns.length > 0 ? columns : Object.keys(rows[0] ?? {}).map((k) => ({ key: k, header: k }))
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full min-w-[36rem] border-collapse text-sm">
         <thead>
           <tr className="bg-bg-tertiary text-left text-xs text-text-tertiary">
-            <th className="w-8 px-3 py-2 font-medium">#</th>
-            <th className="px-3 py-2 font-medium">Script</th>
-            <th className="px-3 py-2 font-medium">Shot</th>
-            <th className="px-3 py-2 font-medium">On-screen text</th>
+            {cols.map((c) => (
+              <th key={c.key} className="px-3 py-2 font-medium">{c.header}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
+          {rows.map((row, i) => (
             <tr key={i} className="border-t border-border align-top">
-              <td className="px-3 py-2.5 text-xs text-text-tertiary">{i + 1}</td>
-              <td className="px-3 py-2.5 text-text-primary">{r.script}</td>
-              <td className="px-3 py-2.5 text-text-secondary">{r.shot}</td>
-              <td className="px-3 py-2.5 text-text-secondary">{r.on_screen_text}</td>
+              {cols.map((c, j) => (
+                <td
+                  key={c.key}
+                  className={j === 0 ? 'px-3 py-2.5 font-medium text-text-primary' : 'px-3 py-2.5 text-text-secondary'}
+                >
+                  {row[c.key] == null ? '' : String(row[c.key])}
+                </td>
+              ))}
             </tr>
           ))}
         </tbody>
@@ -45,107 +78,70 @@ function StoryboardRows({ rows }: { rows: Shot[] }) {
   )
 }
 
-function HookRows({ rows }: { rows: Shot[] }) {
-  return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full min-w-[40rem] border-collapse text-sm">
-        <thead>
-          <tr className="bg-bg-tertiary text-left text-xs text-text-tertiary">
-            <th className="px-3 py-2 font-medium">Hook variation</th>
-            <th className="px-3 py-2 font-medium">Script</th>
-            <th className="px-3 py-2 font-medium">Shot</th>
-            <th className="px-3 py-2 font-medium">On-screen text</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((h, i) => (
-            <tr key={i} className="border-t border-border align-top">
-              <td className="px-3 py-2.5 font-medium text-text-primary">
-                {h.variation || `Hook ${i + 1}`}
-                {h.name ? `: ${h.name}` : ''}
-              </td>
-              <td className="px-3 py-2.5 text-text-primary">{h.script}</td>
-              <td className="px-3 py-2.5 text-text-secondary">{h.shot}</td>
-              <td className="px-3 py-2.5 text-text-secondary">{h.on_screen_text}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
+/** Render one section; returns null when there's nothing to show (so no empty heading). */
+function SectionBlock({ section, data }: { section: BriefSection; data: unknown }) {
+  const value = resolvePath(data, section.path)
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  if (section.as === 'text') {
+    const text = typeof value === 'string' ? value : value == null ? '' : String(value)
+    if (!text.trim()) return null
+    return (
+      <section className="flex flex-col gap-2">
+        <Heading title={section.title} />
+        <p className="text-sm leading-relaxed text-text-secondary">{text}</p>
+      </section>
+    )
+  }
+
+  if (section.as === 'bullets') {
+    const items = Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string' && !!x.trim()) : []
+    if (items.length === 0) return null
+    return (
+      <section className="flex flex-col gap-2">
+        <Heading title={section.title} />
+        <ul className="flex flex-col gap-1.5">
+          {items.map((rule, i) => (
+            <li key={i} className="flex gap-2 text-sm text-text-secondary">
+              <span className="mt-0.5 shrink-0 text-status-error">•</span>
+              <span>{rule}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )
+  }
+
+  // table
+  const rows = Array.isArray(value) ? value.filter(isObj) : []
+  if (rows.length === 0) return null
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">{title}</h3>
-      {children}
+      <Heading title={section.title} />
+      <TableBlock rows={rows} columns={section.columns ?? []} />
     </section>
   )
 }
 
-export function BriefView({ data }: { data: Record<string, unknown> }) {
+export function BriefView({
+  data,
+  sectionsOverride,
+}: {
+  data: Record<string, unknown>
+  /** Used by the admin builder's live preview to render an unsaved template. */
+  sectionsOverride?: BriefSection[]
+}) {
+  const fetched = useBriefTemplate()
+  const sections = sectionsOverride ?? fetched
+
   if (!isObj(data)) return null
 
   const title = typeof data.title === 'string' ? data.title : null
-  const overview = typeof data.overview === 'string' ? data.overview : null
-  const storyboard: Shot[] = Array.isArray(data.script_with_storyboard)
-    ? (data.script_with_storyboard.filter(isObj) as Shot[])
-    : []
-  // guidelines: a top-level array of strings (current), or legacy { hard_rules: [...] }.
-  const hardRules: string[] = Array.isArray(data.guidelines)
-    ? (data.guidelines as unknown[]).filter((x): x is string => typeof x === 'string')
-    : isObj(data.guidelines) && Array.isArray(data.guidelines.hard_rules)
-      ? (data.guidelines.hard_rules as unknown[]).filter((x): x is string => typeof x === 'string')
-      : []
-  const deliverable = isObj(data.final_deliverable) ? data.final_deliverable : null
-  // deliverable summary line: `label` (current) or legacy `concept`.
-  const deliverableLabel =
-    deliverable && typeof deliverable.label === 'string'
-      ? deliverable.label
-      : deliverable && typeof deliverable.concept === 'string'
-        ? `Concept: ${deliverable.concept}`
-        : null
-  const hooks: Shot[] =
-    deliverable && Array.isArray(deliverable.hook_variations)
-      ? (deliverable.hook_variations.filter(isObj) as Shot[])
-      : []
+  const blocks = sections.map((s) => <SectionBlock key={s.id} section={s} data={data} />)
 
   return (
     <div className="flex flex-col gap-6">
       {title && <h2 className="text-lg font-semibold text-text-primary">{title}</h2>}
-
-      {overview && (
-        <Section title="Overview">
-          <p className="text-sm leading-relaxed text-text-secondary">{overview}</p>
-        </Section>
-      )}
-
-      {(deliverableLabel || hooks.length > 0) && (
-        <Section title="Final deliverable">
-          {deliverableLabel && <p className="text-sm text-text-primary">{deliverableLabel}</p>}
-          {hooks.length > 0 && <HookRows rows={hooks} />}
-        </Section>
-      )}
-
-      {storyboard.length > 0 && (
-        <Section title="Script & storyboard">
-          <StoryboardRows rows={storyboard} />
-        </Section>
-      )}
-
-      {hardRules.length > 0 && (
-        <Section title="Guidelines">
-          <ul className="flex flex-col gap-1.5">
-            {hardRules.map((rule, i) => (
-              <li key={i} className="flex gap-2 text-sm text-text-secondary">
-                <span className="mt-0.5 shrink-0 text-status-error">•</span>
-                <span>{rule}</span>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
+      {blocks}
     </div>
   )
 }

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { api, ApiError } from '@/lib/api'
+import { uploadReferenceVideo } from '@/lib/reference-video'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus, Pencil, X, Film, FolderOpen, FolderPlus, FileText } from 'lucide-react'
@@ -20,6 +21,7 @@ interface SubmissionLink {
   submission_count: number
   has_brief?: boolean
   has_brief_json?: boolean
+  has_reference_video?: boolean
 }
 
 interface SubmissionItem {
@@ -114,6 +116,8 @@ export default function SubmissionsPage() {
   const [instructions, setInstructions] = useState('')
   const [briefFile, setBriefFile] = useState<File | null>(null)
   const [briefJson, setBriefJson] = useState('')
+  const [briefVideo, setBriefVideo] = useState<File | null>(null)
+  const [videoPct, setVideoPct] = useState<number | null>(null)
   const [creating, setCreating] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
 
@@ -170,10 +174,17 @@ export default function SubmissionsPage() {
       if (parsedBrief && link?.id) {
         await api.put(`/submission-links/${link.id}/brief-json`, { brief: parsedBrief })
       }
+      // Reference video uploads direct to S3 (large-file safe), then confirms.
+      if (briefVideo && link?.id) {
+        setVideoPct(0)
+        await uploadReferenceVideo(link.id, briefVideo, setVideoPct)
+      }
       setTitle('')
       setInstructions('')
       setBriefFile(null)
       setBriefJson('')
+      setBriefVideo(null)
+      setVideoPct(null)
       setShowCreate(false)
       await load()
     } catch (err) {
@@ -259,6 +270,18 @@ export default function SubmissionsPage() {
             <p className="text-xs text-text-tertiary">Submitters can view this from the submission page.</p>
           </div>
           <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Reference video (optional)</label>
+            <input
+              type="file"
+              accept="video/*"
+              onChange={(e) => setBriefVideo(e.target.files?.[0] ?? null)}
+              className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
+            />
+            <p className="text-xs text-text-tertiary">
+              {videoPct !== null ? `Uploading video… ${videoPct}%` : 'Plays inline in the View-brief dialog on the submission page.'}
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-secondary">Structured brief (JSON, optional)</label>
             <textarea
               className="flex min-h-[120px] w-full rounded-md border border-border bg-bg-secondary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
@@ -270,7 +293,7 @@ export default function SubmissionsPage() {
           </div>
           <div className="flex gap-2">
             <Button type="submit" loading={creating}>Create link</Button>
-            <Button type="button" variant="ghost" onClick={() => { setShowCreate(false); setBriefFile(null); setBriefJson('') }}>Cancel</Button>
+            <Button type="button" variant="ghost" onClick={() => { setShowCreate(false); setBriefFile(null); setBriefJson(''); setBriefVideo(null); setVideoPct(null) }}>Cancel</Button>
           </div>
         </form>
       )}
@@ -312,11 +335,15 @@ function LinkCard({
   const [editInstructions, setEditInstructions] = useState(link.instructions ?? '')
   const [editBriefJson, setEditBriefJson] = useState('')
   const [editBriefFile, setEditBriefFile] = useState<File | null>(null)
+  const [editVideo, setEditVideo] = useState<File | null>(null)
   const [hasBrief, setHasBrief] = useState(!!link.has_brief)
+  const [hasVideo, setHasVideo] = useState(!!link.has_reference_video)
+  const [videoPct, setVideoPct] = useState<number | null>(null)
   const [briefError, setBriefError] = useState('')
   const [saving, setSaving] = useState(false)
   const [preAssignOpen, setPreAssignOpen] = useState(false)
   const editFileRef = useRef<HTMLInputElement>(null)
+  const editVideoRef = useRef<HTMLInputElement>(null)
 
   const url = submitUrl(link.token)
 
@@ -324,18 +351,22 @@ function LinkCard({
     setEditTitle(link.title)
     setEditInstructions(link.instructions ?? '')
     setEditBriefFile(null)
+    setEditVideo(null)
+    setVideoPct(null)
     setBriefError('')
     setHasBrief(!!link.has_brief)
+    setHasVideo(!!link.has_reference_video)
     setEditing(true)
     // The list payload omits brief_json to stay light; fetch the full link so the
     // textarea prefills with the current brief (else saving would wipe it).
     setEditBriefJson('')
     try {
-      const full = await api.get<SubmissionLink & { brief_json?: Record<string, unknown> | null; has_brief?: boolean }>(
+      const full = await api.get<SubmissionLink & { brief_json?: Record<string, unknown> | null; has_brief?: boolean; has_reference_video?: boolean }>(
         `/submission-links/${link.id}`,
       )
       setEditBriefJson(full.brief_json ? JSON.stringify(full.brief_json, null, 2) : '')
       setHasBrief(!!full.has_brief)
+      setHasVideo(!!full.has_reference_video)
     } catch {
       /* leave empty; user can still paste */
     }
@@ -377,12 +408,27 @@ function LinkCard({
       }
       // Sets or clears the structured brief (null clears).
       await api.put(`/submission-links/${link.id}/brief-json`, { brief: parsedBrief })
+      if (editVideo) {
+        setVideoPct(0)
+        await uploadReferenceVideo(link.id, editVideo, setVideoPct)
+      }
       setEditing(false)
       await onUpdated()
     } catch (err) {
       setBriefError(err instanceof ApiError ? err.detail : 'Could not save changes.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function removeVideo() {
+    try {
+      await api.delete(`/submission-links/${link.id}/reference-video`)
+      setHasVideo(false)
+      setEditVideo(null)
+      await onUpdated()
+    } catch (err) {
+      setBriefError(err instanceof ApiError ? err.detail : 'Could not remove video.')
     }
   }
 
@@ -445,6 +491,35 @@ function LinkCard({
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Reference video (optional)</label>
+            <div className="flex items-center gap-2">
+              <input
+                ref={editVideoRef}
+                type="file"
+                accept="video/*"
+                className="hidden"
+                onChange={(e) => setEditVideo(e.target.files?.[0] ?? null)}
+              />
+              <Button type="button" variant="secondary" size="sm" onClick={() => editVideoRef.current?.click()}>
+                {hasVideo ? 'Replace video' : 'Upload video'}
+              </Button>
+              <span className="truncate text-xs text-text-tertiary">
+                {videoPct !== null
+                  ? `Uploading… ${videoPct}%`
+                  : editVideo
+                    ? editVideo.name
+                    : hasVideo
+                      ? 'A reference video is attached.'
+                      : 'No video attached.'}
+              </span>
+              {hasVideo && !editVideo && (
+                <button type="button" onClick={removeVideo} className="text-xs text-status-error hover:underline">
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-secondary">Structured brief (JSON, optional)</label>
             <textarea
               className="flex min-h-[120px] w-full rounded-md border border-border bg-bg-secondary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
@@ -474,14 +549,17 @@ function LinkCard({
             {link.instructions && (
               <p className="mt-0.5 line-clamp-2 text-sm text-text-secondary">{link.instructions}</p>
             )}
-            {(link.has_brief || link.has_brief_json) && (
+            {(link.has_brief || link.has_brief_json || link.has_reference_video) && (
               <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-text-tertiary">
                 <FileText className="h-3 w-3" />
-                {link.has_brief && link.has_brief_json
-                  ? 'Brief PDF + structured brief attached'
-                  : link.has_brief
-                    ? 'Brief PDF attached'
-                    : 'Structured brief attached'}
+                {[
+                  link.has_brief && 'Brief PDF',
+                  link.has_brief_json && 'structured brief',
+                  link.has_reference_video && 'reference video',
+                ]
+                  .filter(Boolean)
+                  .join(' + ')}{' '}
+                attached
               </p>
             )}
           </div>

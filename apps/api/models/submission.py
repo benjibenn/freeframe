@@ -52,6 +52,9 @@ class SubmissionLink(Base):
     # deliverable) rendered inline on the submit + project pages. Independent of the
     # PDF brief — a link may carry both, neither, or one.
     brief_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # An owner-uploaded reference video (S3 key), streamed inline in the View-brief
+    # dialog. Uploaded direct-to-S3 via presigned PUT. Independent of the PDF/JSON brief.
+    brief_reference_video_s3_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     # External (CF) lineage ids + human labels for the campaign this request came
     # from (the data spine). NULL for hand-made requests. The ids are stamped onto
     # every asset created under this request; the labels surface in the UI.
@@ -82,3 +85,18 @@ class Submission(Base):
     # "{request title} — {display_name}". Null => use the submitter's account name.
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BriefTemplate(Base):
+    """Singleton config for how structured JSON briefs render. `sections` is an ordered
+    list of render units — each maps a dot-path in the brief JSON to a render type
+    (text / bullets / table) — edited by admins in Settings. Kept free-form (JSONB) and
+    rendered defensively so the shape can evolve without code or schema changes. A single
+    seeded row (migration) reproduces the historically-hardcoded view."""
+    __tablename__ = "brief_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    sections: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

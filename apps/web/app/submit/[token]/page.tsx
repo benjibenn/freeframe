@@ -12,6 +12,7 @@ interface SubmissionLinkPublic {
   instructions: string | null
   requires_auth: boolean
   has_brief: boolean
+  has_reference_video: boolean
   brief_json: Record<string, unknown> | null
   persona_label: string | null
   angle_label: string | null
@@ -67,7 +68,7 @@ export default function SubmitPage() {
 
   const loginHref = `/login?from=${encodeURIComponent(`/submit/${token}`)}`
 
-  const hasBriefJson = !!link?.brief_json
+  const hasBriefJson = !!link?.brief_json || !!link?.has_reference_video
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg-primary px-4 py-8">
@@ -114,6 +115,18 @@ export default function SubmitPage() {
               >
                 📄 View brief (PDF)
               </a>
+            )}
+            {link.has_reference_video && (
+              <div className="mb-6">
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">Reference video</p>
+                <video
+                  controls
+                  playsInline
+                  preload="metadata"
+                  src={`${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/reference-video`}
+                  className="w-full rounded-lg border border-border bg-black"
+                />
+              </div>
             )}
             {link.brief_json && (
               <div className="mb-6 rounded-lg border border-border bg-bg-primary p-4 sm:p-5">

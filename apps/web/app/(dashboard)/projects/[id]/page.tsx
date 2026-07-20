@@ -1055,7 +1055,7 @@ export default function ProjectDetailPage() {
                       📄 View brief (PDF)
                     </a>
                   )}
-                  {project?.brief_json && (
+                  {(project?.brief_json || project?.reference_video_url) && (
                     <button
                       onClick={() => setBriefViewOpen(true)}
                       className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline"
@@ -1510,7 +1510,19 @@ export default function ProjectDetailPage() {
                 </button>
               </Dialog.Close>
             </div>
-            <div className="overflow-y-auto px-5 py-4">
+            <div className="flex flex-col gap-5 overflow-y-auto px-5 py-4">
+              {project?.reference_video_url && (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">Reference video</p>
+                  <video
+                    controls
+                    playsInline
+                    preload="metadata"
+                    src={`${process.env.NEXT_PUBLIC_API_URL || ''}${project.reference_video_url}`}
+                    className="w-full rounded-lg border border-border bg-black"
+                  />
+                </div>
+              )}
               {project?.brief_json && <BriefView data={project.brief_json} />}
             </div>
           </Dialog.Content>

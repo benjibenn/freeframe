@@ -217,6 +217,21 @@ def generate_presigned_get_url(s3_key: str, expires_in: int = 3600, download_fil
         ExpiresIn=expires_in,
     )
 
+def generate_presigned_put_url(s3_key: str, content_type: str, expires_in: int = 3600) -> str:
+    """Presigned single-shot PUT for a browser to upload an object direct to S3.
+
+    Single PUT handles objects up to 5 GB — enough for reference clips without the
+    multipart dance. The client MUST send the same Content-Type header it was signed
+    with, or S3 rejects the request. Bucket CORS already allows browser PUTs
+    (see ensure_bucket_exists).
+    """
+    s3 = _get_presign_client()
+    return s3.generate_presigned_url(
+        "put_object",
+        Params={"Bucket": settings.s3_bucket, "Key": s3_key, "ContentType": content_type},
+        ExpiresIn=expires_in,
+    )
+
 def put_object(s3_key: str, body: bytes, content_type: str | None = None, cache_control: str | None = None) -> None:
     """Upload a small object directly (for processed files like thumbnails)."""
     s3 = get_s3_client()

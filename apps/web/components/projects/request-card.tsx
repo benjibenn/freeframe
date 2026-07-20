@@ -16,6 +16,7 @@ export interface VideoRequest {
   submission_count: number
   has_brief?: boolean
   has_brief_json?: boolean
+  has_reference_video?: boolean
   brief_json?: Record<string, unknown> | null
   reference_project_id?: string | null
   // CF campaign labels (null for hand-made requests).

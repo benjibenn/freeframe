@@ -32,6 +32,9 @@ from ..models.submission import SubmissionLink, Submission
 from ..schemas.submission import (
     SubmissionLinkCreate,
     BriefJsonUpdate,
+    ReferenceVideoPresignRequest,
+    ReferenceVideoPresignResponse,
+    ReferenceVideoConfirm,
     SubmissionLinkResponse,
     SubmissionLinkPublic,
     SubmissionAcceptResponse,
@@ -252,6 +255,7 @@ def list_submission_links(
         resp.submission_count = counts.get(l.id, 0)
         resp.has_brief = bool(l.brief_pdf_s3_key)
         resp.has_brief_json = bool(l.brief_json)  # flag only; full brief_json omitted from lists
+        resp.has_reference_video = bool(l.brief_reference_video_s3_key)
         out.append(resp)
     return out
 
@@ -267,6 +271,7 @@ def get_submission_link(
     resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
+    resp.has_reference_video = bool(link.brief_reference_video_s3_key)
     resp.brief_json = link.brief_json  # full brief for the detail/edit view
     return resp
 
@@ -290,6 +295,7 @@ def set_submission_brief_json(
     resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
+    resp.has_reference_video = bool(link.brief_reference_video_s3_key)
     resp.brief_json = link.brief_json
     return resp
 
@@ -320,7 +326,89 @@ async def upload_submission_brief(
     resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
     resp.has_brief = True
     resp.has_brief_json = bool(link.brief_json)
+    resp.has_reference_video = bool(link.brief_reference_video_s3_key)
     return resp
+
+
+# Content-type → extension for the stored reference video. Anything video/* is
+# accepted; the extension is cosmetic (the object is served with its stored type).
+_VIDEO_EXT = {
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "video/webm": ".webm",
+    "video/x-matroska": ".mkv",
+    "video/x-msvideo": ".avi",
+}
+
+
+def _reference_video_prefix(link_id: uuid.UUID) -> str:
+    return f"briefs/manual/{link_id}-reference"
+
+
+@router.post(
+    "/submission-links/{link_id}/reference-video/presign",
+    response_model=ReferenceVideoPresignResponse,
+)
+def presign_reference_video(
+    link_id: uuid.UUID,
+    body: ReferenceVideoPresignRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner/admin: get a presigned PUT URL to upload a reference video direct to S3.
+    The browser uploads to the URL, then calls the confirm endpoint with the returned
+    key. The key is derived server-side so the client can't target arbitrary objects."""
+    link = _get_owned_link(db, link_id, current_user)
+    content_type = (body.content_type or "").lower()
+    if not content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="Reference must be a video file")
+    ext = _VIDEO_EXT.get(content_type, ".mp4")
+    s3_key = f"{_reference_video_prefix(link.id)}{ext}"
+    url = s3_service.generate_presigned_put_url(s3_key, content_type=content_type)
+    return ReferenceVideoPresignResponse(url=url, s3_key=s3_key)
+
+
+@router.put("/submission-links/{link_id}/reference-video", response_model=SubmissionLinkResponse)
+def confirm_reference_video(
+    link_id: uuid.UUID,
+    body: ReferenceVideoConfirm,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner/admin: record the uploaded reference video on the link. Rejects any key
+    that isn't the one we would have presigned for this link (guards against pointing
+    the link at an unrelated object)."""
+    link = _get_owned_link(db, link_id, current_user)
+    if not (body.s3_key or "").startswith(_reference_video_prefix(link.id)):
+        raise HTTPException(status_code=400, detail="Invalid reference video key")
+    link.brief_reference_video_s3_key = body.s3_key
+    db.commit()
+    db.refresh(link)
+    resp = SubmissionLinkResponse.model_validate(link)
+    resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
+    resp.has_brief = bool(link.brief_pdf_s3_key)
+    resp.has_brief_json = bool(link.brief_json)
+    resp.has_reference_video = True
+    resp.brief_json = link.brief_json
+    return resp
+
+
+@router.delete("/submission-links/{link_id}/reference-video", status_code=status.HTTP_204_NO_CONTENT)
+def delete_reference_video(
+    link_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner/admin: detach the reference video. Best-effort deletes the S3 object."""
+    link = _get_owned_link(db, link_id, current_user)
+    key = link.brief_reference_video_s3_key
+    link.brief_reference_video_s3_key = None
+    db.commit()
+    if key:
+        try:
+            s3_service.delete_object(key)
+        except Exception:
+            pass  # object may already be gone; the row is what matters
 
 
 @router.get("/submission-links/{link_id}/submissions", response_model=list[SubmissionItem])
@@ -430,6 +518,7 @@ def update_submission_link(
     resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
+    resp.has_reference_video = bool(link.brief_reference_video_s3_key)
     return resp
 
 
@@ -851,6 +940,7 @@ def resolve_submission_link(
         requires_auth=current_user is None,
         has_brief=bool(link.brief_pdf_s3_key),
         brief_json=link.brief_json,
+        has_reference_video=bool(link.brief_reference_video_s3_key),
         persona_label=link.persona_label,
         angle_label=link.angle_label,
         problem=link.problem,
@@ -870,6 +960,23 @@ def get_submission_brief_pdf(token: str, db: Session = Depends(get_db)):
     if not link.brief_pdf_s3_key:
         raise HTTPException(status_code=404, detail="No brief PDF for this request")
     url = s3_service.generate_presigned_get_url(link.brief_pdf_s3_key, expires_in=3600, download_filename="brief.pdf")
+    return RedirectResponse(url)
+
+
+@router.get("/submit/{token}/reference-video")
+def get_submission_reference_video(token: str, db: Session = Depends(get_db)):
+    """Public: redirect to the reference video for a submission request, if it has one.
+
+    Token-gated like the submit page. No download_filename so it's served inline
+    (Content-Disposition absent) — the browser <video> element streams it, and S3
+    honours Range requests through the redirect so seeking works.
+    """
+    link = _validate_active(
+        db.query(SubmissionLink).filter(SubmissionLink.token == token).first()
+    )
+    if not link.brief_reference_video_s3_key:
+        raise HTTPException(status_code=404, detail="No reference video for this request")
+    url = s3_service.generate_presigned_get_url(link.brief_reference_video_s3_key, expires_in=3600)
     return RedirectResponse(url)
 
 

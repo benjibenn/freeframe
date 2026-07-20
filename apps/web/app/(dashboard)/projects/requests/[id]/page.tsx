@@ -19,9 +19,11 @@ import {
   Undo2,
   UserPlus,
   FileText,
+  Film,
   Upload,
 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
+import { uploadReferenceVideo } from '@/lib/reference-video'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/shared/empty-state'
 import { useToast } from '@/components/shared/toast'
@@ -233,6 +235,43 @@ export default function RequestDetailPage() {
     ? `${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${request.token}/brief.pdf`
     : '#'
 
+  const videoInputRef = React.useRef<HTMLInputElement>(null)
+  const [uploadingVideo, setUploadingVideo] = React.useState(false)
+  const [videoPct, setVideoPct] = React.useState<number | null>(null)
+
+  const uploadVideo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !request) return
+    if (!file.type.startsWith('video/')) {
+      toast.error('Reference must be a video file')
+      return
+    }
+    setUploadingVideo(true)
+    setVideoPct(0)
+    try {
+      await uploadReferenceVideo(request.id, file, setVideoPct)
+      await mutateRequest()
+      toast.success(request.has_reference_video ? 'Reference video replaced' : 'Reference video uploaded')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : 'Could not upload the video')
+    } finally {
+      setUploadingVideo(false)
+      setVideoPct(null)
+    }
+  }
+
+  const removeVideo = async () => {
+    if (!request) return
+    try {
+      await api.delete(`/submission-links/${request.id}/reference-video`)
+      await mutateRequest()
+      toast.success('Reference video removed')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : 'Could not remove the video')
+    }
+  }
+
   // Structured JSON brief editor. Sync the textarea from the loaded request once.
   const [briefText, setBriefText] = React.useState('')
   const [briefLoaded, setBriefLoaded] = React.useState(false)
@@ -441,6 +480,44 @@ export default function RequestDetailPage() {
         >
           {uploadingBrief ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
           {request?.has_brief ? 'Replace' : 'Upload PDF'}
+        </Button>
+      </div>
+
+      {/* Reference video (owner-uploaded, streamed inline in the View-brief dialog) */}
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-bg-secondary px-4 py-3">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-bg-tertiary text-text-secondary">
+            <Film className="h-4 w-4" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-text-primary">Reference video</p>
+            <p className="text-xs text-text-tertiary">
+              {videoPct !== null
+                ? `Uploading… ${videoPct}%`
+                : 'Upload a reference clip. Submitters watch it inline before they upload.'}
+            </p>
+            {request?.has_reference_video && videoPct === null && (
+              <button onClick={removeVideo} className="mt-1 text-xs text-status-error hover:underline">
+                Remove video
+              </button>
+            )}
+          </div>
+        </div>
+        <input
+          ref={videoInputRef}
+          type="file"
+          accept="video/*"
+          className="hidden"
+          onChange={uploadVideo}
+        />
+        <Button
+          variant={request?.has_reference_video ? 'secondary' : 'primary'}
+          size="sm"
+          onClick={() => videoInputRef.current?.click()}
+          disabled={uploadingVideo || !request}
+        >
+          {uploadingVideo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+          {request?.has_reference_video ? 'Replace' : 'Upload video'}
         </Button>
       </div>
 

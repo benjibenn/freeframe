@@ -16,6 +16,22 @@ class BriefJsonUpdate(BaseModel):
     brief: Optional[dict[str, Any]] = None
 
 
+class ReferenceVideoPresignRequest(BaseModel):
+    filename: str
+    content_type: str
+
+
+class ReferenceVideoPresignResponse(BaseModel):
+    # Presigned S3 PUT URL the browser uploads the file to, plus the key it must
+    # then confirm back so the server records it on the link.
+    url: str
+    s3_key: str
+
+
+class ReferenceVideoConfirm(BaseModel):
+    s3_key: str
+
+
 class SubmissionLinkResponse(BaseModel):
     id: uuid.UUID
     token: str
@@ -31,6 +47,8 @@ class SubmissionLinkResponse(BaseModel):
     # populated on the detail endpoint (kept out of list payloads).
     has_brief_json: bool = False
     brief_json: Optional[dict[str, Any]] = None
+    # True when an owner-uploaded reference video is attached.
+    has_reference_video: bool = False
     # Shared reference project (None = strict isolation, the default).
     reference_project_id: Optional[uuid.UUID] = None
     # CF campaign labels (None for hand-made requests).
@@ -49,6 +67,8 @@ class SubmissionLinkPublic(BaseModel):
     has_brief: bool = False
     # The structured JSON brief, rendered inline on the submit page (null if none).
     brief_json: Optional[dict[str, Any]] = None
+    # True when an owner-uploaded reference video is attached (streamed inline).
+    has_reference_video: bool = False
     # CF campaign labels (None for hand-made requests).
     persona_label: Optional[str] = None
     angle_label: Optional[str] = None
