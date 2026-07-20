@@ -15,7 +15,7 @@ import secrets
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -31,6 +31,7 @@ from ..models.asset import Asset
 from ..models.submission import SubmissionLink, Submission
 from ..schemas.submission import (
     SubmissionLinkCreate,
+    BriefJsonUpdate,
     SubmissionLinkResponse,
     SubmissionLinkPublic,
     SubmissionAcceptResponse,
@@ -43,6 +44,7 @@ from ..schemas.submission import (
 )
 from ..services.share_service import build_default_project_share_link
 from ..services import s3_service
+from ..services import brief_import_service
 from ..services.permissions import require_platform_admin, is_platform_admin
 
 router = APIRouter(tags=["submissions"])
@@ -248,6 +250,8 @@ def list_submission_links(
     for l in links:
         resp = SubmissionLinkResponse.model_validate(l)
         resp.submission_count = counts.get(l.id, 0)
+        resp.has_brief = bool(l.brief_pdf_s3_key)
+        resp.has_brief_json = bool(l.brief_json)  # flag only; full brief_json omitted from lists
         out.append(resp)
     return out
 
@@ -261,6 +265,61 @@ def get_submission_link(
     link = _get_owned_link(db, link_id, current_user)
     resp = SubmissionLinkResponse.model_validate(link)
     resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
+    resp.has_brief = bool(link.brief_pdf_s3_key)
+    resp.has_brief_json = bool(link.brief_json)
+    resp.brief_json = link.brief_json  # full brief for the detail/edit view
+    return resp
+
+
+@router.put("/submission-links/{link_id}/brief-json", response_model=SubmissionLinkResponse)
+def set_submission_brief_json(
+    link_id: uuid.UUID,
+    body: BriefJsonUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Set (or clear) a request's structured JSON brief. Owner/admin only. Pass
+    brief=null to remove it. Independent of the PDF brief — a link may carry both."""
+    link = _get_owned_link(db, link_id, current_user)
+    if body.brief is not None and not body.brief:
+        raise HTTPException(status_code=400, detail="Brief JSON must be a non-empty object")
+    link.brief_json = body.brief
+    db.commit()
+    db.refresh(link)
+    resp = SubmissionLinkResponse.model_validate(link)
+    resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
+    resp.has_brief = bool(link.brief_pdf_s3_key)
+    resp.has_brief_json = bool(link.brief_json)
+    resp.brief_json = link.brief_json
+    return resp
+
+
+@router.post("/submission-links/{link_id}/brief", response_model=SubmissionLinkResponse)
+async def upload_submission_brief(
+    link_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Attach (or replace) a hand-uploaded PDF brief on a request — the non-flywheel
+    path. Owner/admin only (via _get_owned_link). The stored PDF is then served to
+    submitters through the existing public GET /submit/{token}/brief.pdf route."""
+    link = _get_owned_link(db, link_id, current_user)
+    if (file.content_type or "").lower() != "application/pdf":
+        raise HTTPException(status_code=400, detail="Brief must be a PDF")
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="The uploaded PDF is empty")
+    if len(pdf_bytes) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Brief PDF must be 25 MB or smaller")
+    try:
+        brief_import_service.attach_manual_brief(db, link, pdf_bytes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    resp = SubmissionLinkResponse.model_validate(link)
+    resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
+    resp.has_brief = True
+    resp.has_brief_json = bool(link.brief_json)
     return resp
 
 
@@ -369,6 +428,8 @@ def update_submission_link(
     db.refresh(link)
     resp = SubmissionLinkResponse.model_validate(link)
     resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
+    resp.has_brief = bool(link.brief_pdf_s3_key)
+    resp.has_brief_json = bool(link.brief_json)
     return resp
 
 
@@ -789,6 +850,7 @@ def resolve_submission_link(
         instructions=link.instructions,
         requires_auth=current_user is None,
         has_brief=bool(link.brief_pdf_s3_key),
+        brief_json=link.brief_json,
         persona_label=link.persona_label,
         angle_label=link.angle_label,
         problem=link.problem,

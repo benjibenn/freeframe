@@ -5,12 +5,14 @@ import { useParams, useRouter } from 'next/navigation'
 import { api, ApiError } from '@/lib/api'
 import { getAccessToken } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
+import { BriefView } from '@/components/projects/brief-view'
 
 interface SubmissionLinkPublic {
   title: string
   instructions: string | null
   requires_auth: boolean
   has_brief: boolean
+  brief_json: Record<string, unknown> | null
   persona_label: string | null
   angle_label: string | null
   problem: string | null
@@ -65,9 +67,15 @@ export default function SubmitPage() {
 
   const loginHref = `/login?from=${encodeURIComponent(`/submit/${token}`)}`
 
+  const hasBriefJson = !!link?.brief_json
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg-primary px-4">
-      <div className="w-full max-w-md rounded-xl border border-border bg-bg-secondary p-6 sm:p-8">
+    <div className="flex min-h-screen items-center justify-center bg-bg-primary px-4 py-8">
+      <div
+        className={`w-full rounded-xl border border-border bg-bg-secondary p-6 sm:p-8 ${
+          hasBriefJson ? 'max-w-3xl' : 'max-w-md'
+        }`}
+      >
         {phase === 'loading' && (
           <p className="text-center text-sm text-text-secondary">Loading…</p>
         )}
@@ -106,6 +114,11 @@ export default function SubmitPage() {
               >
                 📄 View brief (PDF)
               </a>
+            )}
+            {link.brief_json && (
+              <div className="mb-6 rounded-lg border border-border bg-bg-primary p-4 sm:p-5">
+                <BriefView data={link.brief_json} />
+              </div>
             )}
             <Button size="lg" className="w-full" onClick={() => router.push(loginHref)}>
               Sign in to submit

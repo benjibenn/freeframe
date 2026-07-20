@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus, Pencil, X, Film, FolderOpen, FolderPlus } from 'lucide-react'
+import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus, Pencil, X, Film, FolderOpen, FolderPlus, FileText } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 import { PreAssignFolderDialog } from '@/components/shared/pre-assign-folder-dialog'
 
@@ -18,6 +18,8 @@ interface SubmissionLink {
   expires_at: string | null
   created_at: string
   submission_count: number
+  has_brief?: boolean
+  has_brief_json?: boolean
 }
 
 interface SubmissionItem {
@@ -110,6 +112,8 @@ export default function SubmissionsPage() {
   // create form
   const [title, setTitle] = useState('')
   const [instructions, setInstructions] = useState('')
+  const [briefFile, setBriefFile] = useState<File | null>(null)
+  const [briefJson, setBriefJson] = useState('')
   const [creating, setCreating] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
 
@@ -132,14 +136,44 @@ export default function SubmissionsPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!title.trim()) return
+    if (briefFile && briefFile.type !== 'application/pdf') {
+      setError('Brief must be a PDF.')
+      return
+    }
+    // Parse the optional structured brief up front so a syntax error blocks creation.
+    let parsedBrief: Record<string, unknown> | null = null
+    if (briefJson.trim()) {
+      try {
+        parsedBrief = JSON.parse(briefJson)
+      } catch {
+        setError('Structured brief is not valid JSON.')
+        return
+      }
+      if (typeof parsedBrief !== 'object' || parsedBrief === null || Array.isArray(parsedBrief)) {
+        setError('Structured brief must be a JSON object.')
+        return
+      }
+    }
     setCreating(true)
     try {
-      await api.post('/submission-links', {
+      const link = await api.post<SubmissionLink>('/submission-links', {
         title: title.trim(),
         instructions: instructions.trim() || null,
       })
+      // Attach the optional brief PDF as a second step (the create endpoint is JSON;
+      // the brief endpoint is multipart).
+      if (briefFile && link?.id) {
+        const fd = new FormData()
+        fd.append('file', briefFile)
+        await api.upload(`/submission-links/${link.id}/brief`, fd)
+      }
+      if (parsedBrief && link?.id) {
+        await api.put(`/submission-links/${link.id}/brief-json`, { brief: parsedBrief })
+      }
       setTitle('')
       setInstructions('')
+      setBriefFile(null)
+      setBriefJson('')
       setShowCreate(false)
       await load()
     } catch (err) {
@@ -214,9 +248,29 @@ export default function SubmissionsPage() {
               onChange={(e) => setInstructions(e.target.value)}
             />
           </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Brief PDF (optional)</label>
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => setBriefFile(e.target.files?.[0] ?? null)}
+              className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
+            />
+            <p className="text-xs text-text-tertiary">Submitters can view this from the submission page.</p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Structured brief (JSON, optional)</label>
+            <textarea
+              className="flex min-h-[120px] w-full rounded-md border border-border bg-bg-secondary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+              placeholder='{ "title": "…", "overview": "…", "script_with_storyboard": [ … ] }'
+              value={briefJson}
+              onChange={(e) => setBriefJson(e.target.value)}
+            />
+            <p className="text-xs text-text-tertiary">Paste a brief object. It renders on the submission and project pages.</p>
+          </div>
           <div className="flex gap-2">
             <Button type="submit" loading={creating}>Create link</Button>
-            <Button type="button" variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
+            <Button type="button" variant="ghost" onClick={() => { setShowCreate(false); setBriefFile(null); setBriefJson('') }}>Cancel</Button>
           </div>
         </form>
       )}
@@ -338,6 +392,16 @@ function LinkCard({
             <h3 className="truncate font-medium text-text-primary">{link.title}</h3>
             {link.instructions && (
               <p className="mt-0.5 line-clamp-2 text-sm text-text-secondary">{link.instructions}</p>
+            )}
+            {(link.has_brief || link.has_brief_json) && (
+              <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-text-tertiary">
+                <FileText className="h-3 w-3" />
+                {link.has_brief && link.has_brief_json
+                  ? 'Brief PDF + structured brief attached'
+                  : link.has_brief
+                    ? 'Brief PDF attached'
+                    : 'Structured brief attached'}
+              </p>
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">

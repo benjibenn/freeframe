@@ -14,6 +14,9 @@ export interface VideoRequest {
   expires_at: string | null
   created_at: string
   submission_count: number
+  has_brief?: boolean
+  has_brief_json?: boolean
+  brief_json?: Record<string, unknown> | null
   reference_project_id?: string | null
   // CF campaign labels (null for hand-made requests).
   persona_label?: string | null

@@ -1,13 +1,19 @@
 from pydantic import BaseModel
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 
 class SubmissionLinkCreate(BaseModel):
     title: str
     instructions: Optional[str] = None
     expires_at: Optional[datetime] = None
+
+
+class BriefJsonUpdate(BaseModel):
+    # The structured brief object, or null to clear it. Free-form: stored as-is and
+    # rendered defensively (only known sections are shown), so briefs can vary in shape.
+    brief: Optional[dict[str, Any]] = None
 
 
 class SubmissionLinkResponse(BaseModel):
@@ -19,6 +25,12 @@ class SubmissionLinkResponse(BaseModel):
     expires_at: Optional[datetime] = None
     created_at: datetime
     submission_count: int = 0
+    # True when a brief PDF is attached (flywheel-imported or hand-uploaded).
+    has_brief: bool = False
+    # True when a structured JSON brief is attached. brief_json itself is only
+    # populated on the detail endpoint (kept out of list payloads).
+    has_brief_json: bool = False
+    brief_json: Optional[dict[str, Any]] = None
     # Shared reference project (None = strict isolation, the default).
     reference_project_id: Optional[uuid.UUID] = None
     # CF campaign labels (None for hand-made requests).
@@ -35,6 +47,8 @@ class SubmissionLinkPublic(BaseModel):
     instructions: Optional[str] = None
     requires_auth: bool
     has_brief: bool = False
+    # The structured JSON brief, rendered inline on the submit page (null if none).
+    brief_json: Optional[dict[str, Any]] = None
     # CF campaign labels (None for hand-made requests).
     persona_label: Optional[str] = None
     angle_label: Optional[str] = None

@@ -24,6 +24,27 @@ from ..services.auth_service import get_user_by_email
 from ..services import s3_service
 
 SOURCE = "creative-flywheel"
+# A brief PDF uploaded by an owner/admin through the app, not imported from CF.
+MANUAL_SOURCE = "manual"
+
+
+def attach_manual_brief(db: Session, link: SubmissionLink, pdf_bytes: bytes) -> SubmissionLink:
+    """Attach (or replace) a hand-uploaded PDF brief on an existing request.
+
+    Refuses links whose brief is owned by Creative Flywheel — a re-import would
+    otherwise clobber the manual PDF (and vice-versa). Flywheel imports are already
+    isolated from manual links because upsert_brief_request filters source == SOURCE,
+    so this one guard makes the separation mutual.
+    """
+    if link.source == SOURCE:
+        raise ValueError("This request's brief is managed by Creative Flywheel and can't be replaced manually")
+    s3_key = f"briefs/manual/{link.id}.pdf"
+    s3_service.put_object(s3_key, pdf_bytes, content_type="application/pdf")
+    link.brief_pdf_s3_key = s3_key
+    link.source = MANUAL_SOURCE
+    db.commit()
+    db.refresh(link)
+    return link
 
 
 def _resolve_owner(db: Session, owner_email: Optional[str]) -> User:

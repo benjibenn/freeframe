@@ -4,6 +4,7 @@ import * as React from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import useSWR, { mutate as globalMutate } from 'swr'
+import * as Dialog from '@radix-ui/react-dialog'
 import {
   ArrowLeft,
   Copy,
@@ -17,6 +18,8 @@ import {
   Trash2,
   Undo2,
   UserPlus,
+  FileText,
+  Upload,
 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -24,6 +27,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { useToast } from '@/components/shared/toast'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { PreAssignFolderDialog } from '@/components/shared/pre-assign-folder-dialog'
+import { BriefView } from '@/components/projects/brief-view'
 import type { VideoRequest } from '@/components/projects/request-card'
 
 interface SubmissionItem {
@@ -200,6 +204,82 @@ export default function RequestDetailPage() {
     }
   }
 
+  const briefInputRef = React.useRef<HTMLInputElement>(null)
+  const [uploadingBrief, setUploadingBrief] = React.useState(false)
+
+  const uploadBrief = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // let the same file be re-selected after an error
+    if (!file || !request) return
+    if (file.type !== 'application/pdf') {
+      toast.error('Brief must be a PDF')
+      return
+    }
+    setUploadingBrief(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      await api.upload(`/submission-links/${request.id}/brief`, fd)
+      await mutateRequest()
+      toast.success(request.has_brief ? 'Brief replaced' : 'Brief uploaded')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : 'Could not upload the brief')
+    } finally {
+      setUploadingBrief(false)
+    }
+  }
+
+  const briefHref = request
+    ? `${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${request.token}/brief.pdf`
+    : '#'
+
+  // Structured JSON brief editor. Sync the textarea from the loaded request once.
+  const [briefText, setBriefText] = React.useState('')
+  const [briefLoaded, setBriefLoaded] = React.useState(false)
+  const [savingBriefJson, setSavingBriefJson] = React.useState(false)
+  const [briefPreviewOpen, setBriefPreviewOpen] = React.useState(false)
+  React.useEffect(() => {
+    if (request && !briefLoaded) {
+      setBriefText(request.brief_json ? JSON.stringify(request.brief_json, null, 2) : '')
+      setBriefLoaded(true)
+    }
+  }, [request, briefLoaded])
+
+  const saveBriefJson = async () => {
+    if (!request || savingBriefJson) return
+    const text = briefText.trim()
+    let brief: Record<string, unknown> | null = null
+    if (text) {
+      try {
+        brief = JSON.parse(text)
+      } catch {
+        toast.error('Brief is not valid JSON')
+        return
+      }
+      if (typeof brief !== 'object' || brief === null || Array.isArray(brief)) {
+        toast.error('Brief must be a JSON object')
+        return
+      }
+    }
+    setSavingBriefJson(true)
+    try {
+      await api.put(`/submission-links/${request.id}/brief-json`, { brief })
+      await mutateRequest()
+      toast.success(brief ? 'Structured brief saved' : 'Structured brief cleared')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : 'Could not save the brief')
+    } finally {
+      setSavingBriefJson(false)
+    }
+  }
+
+  let briefPreview: Record<string, unknown> | null = null
+  try {
+    briefPreview = briefText.trim() ? JSON.parse(briefText) : null
+  } catch {
+    briefPreview = null
+  }
+
   const referenceEnabled = !!request?.reference_project_id
 
   const toggleReference = async () => {
@@ -320,6 +400,105 @@ export default function RequestDetailPage() {
           {referenceEnabled ? 'Disable' : 'Enable'}
         </Button>
       </div>
+
+      {/* Brief PDF (non-flywheel: hand-uploaded by the owner) */}
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-bg-secondary px-4 py-3">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-bg-tertiary text-text-secondary">
+            <FileText className="h-4 w-4" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-text-primary">Brief (PDF)</p>
+            <p className="text-xs text-text-tertiary">
+              Upload a PDF brief. Submitters can view it from the submission page before
+              they upload.
+            </p>
+            {request?.has_brief && (
+              <a
+                href={briefHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-flex items-center gap-1 text-xs text-accent hover:underline"
+              >
+                <FileText className="h-3 w-3" />
+                View brief (PDF)
+              </a>
+            )}
+          </div>
+        </div>
+        <input
+          ref={briefInputRef}
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          onChange={uploadBrief}
+        />
+        <Button
+          variant={request?.has_brief ? 'secondary' : 'primary'}
+          size="sm"
+          onClick={() => briefInputRef.current?.click()}
+          disabled={uploadingBrief || !request}
+        >
+          {uploadingBrief ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+          {request?.has_brief ? 'Replace' : 'Upload PDF'}
+        </Button>
+      </div>
+
+      {/* Structured brief (JSON) — renders inline on the submit + project pages */}
+      <div className="rounded-xl border border-border bg-bg-secondary px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-bg-tertiary text-text-secondary">
+              <FileText className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-text-primary">Structured brief (JSON)</p>
+              <p className="text-xs text-text-tertiary">
+                Paste a brief object. It renders as a formatted brief on the submission and
+                project pages. Leave empty and save to clear.
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {briefPreview && (
+              <Button variant="secondary" size="sm" onClick={() => setBriefPreviewOpen(true)}>
+                Preview
+              </Button>
+            )}
+            <Button size="sm" onClick={saveBriefJson} disabled={savingBriefJson || !request}>
+              {savingBriefJson && <Loader2 className="h-4 w-4 animate-spin" />}
+              Save
+            </Button>
+          </div>
+        </div>
+        <textarea
+          className="mt-3 flex min-h-[140px] w-full rounded-md border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+          placeholder='{ "title": "…", "overview": "…", "script_with_storyboard": [ … ] }'
+          value={briefText}
+          onChange={(e) => setBriefText(e.target.value)}
+          spellCheck={false}
+        />
+      </div>
+
+      {/* Structured brief preview */}
+      <Dialog.Root open={briefPreviewOpen} onOpenChange={setBriefPreviewOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-full max-w-3xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-bg-secondary shadow-xl">
+            <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+              <Dialog.Title className="text-sm font-semibold text-text-primary">Brief preview</Dialog.Title>
+              <Dialog.Close asChild>
+                <button className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary hover:bg-bg-hover hover:text-text-primary">
+                  <X className="h-4 w-4" />
+                </button>
+              </Dialog.Close>
+            </div>
+            <div className="overflow-y-auto px-5 py-4">
+              {briefPreview && <BriefView data={briefPreview} />}
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {/* Submissions (per-editor submissions + attached projects, unified) */}
       <h2 className="text-sm font-medium text-text-secondary">Submissions</h2>

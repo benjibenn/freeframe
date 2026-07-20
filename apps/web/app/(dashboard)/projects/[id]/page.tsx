@@ -55,6 +55,7 @@ import {
 import { NameDialog } from "@/components/projects/name-dialog";
 import { ShareCreateDialog } from "@/components/projects/share-create-dialog";
 import { BucketImportDialog } from "@/components/projects/bucket-import-dialog";
+import { BriefView } from "@/components/projects/brief-view";
 import { ProjectMembersDialog } from "@/components/projects/project-members-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -78,6 +79,7 @@ export default function ProjectDetailPage() {
   const projectId = params.id as string;
 
   const [uploadOpen, setUploadOpen] = React.useState(false);
+  const [briefViewOpen, setBriefViewOpen] = React.useState(false);
   const [assetName, setAssetName] = React.useState("");
   const [pendingFiles, setPendingFiles] = React.useState<File[]>([]);
   const [selectedAsset, setSelectedAsset] =
@@ -1053,6 +1055,14 @@ export default function ProjectDetailPage() {
                       📄 View brief (PDF)
                     </a>
                   )}
+                  {project?.brief_json && (
+                    <button
+                      onClick={() => setBriefViewOpen(true)}
+                      className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline"
+                    >
+                      <FileText className="h-4 w-4" /> View brief
+                    </button>
+                  )}
                   {canUpload && (
                     <Link
                       href={`/projects/${projectId}/sort`}
@@ -1486,6 +1496,26 @@ export default function ProjectDetailPage() {
         onOpenChange={setBucketImportOpen}
         onImported={() => { mutateAssets(); mutateSubfolders(); }}
       />
+
+      {/* Structured brief viewer */}
+      <Dialog.Root open={briefViewOpen} onOpenChange={setBriefViewOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-full max-w-3xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-bg-secondary shadow-xl data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95">
+            <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+              <Dialog.Title className="text-sm font-semibold text-text-primary">Brief</Dialog.Title>
+              <Dialog.Close asChild>
+                <button className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary hover:bg-bg-hover hover:text-text-primary">
+                  <X className="h-4 w-4" />
+                </button>
+              </Dialog.Close>
+            </div>
+            <div className="overflow-y-auto px-5 py-4">
+              {project?.brief_json && <BriefView data={project.brief_json} />}
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {/* Project members dialog */}
       <ProjectMembersDialog

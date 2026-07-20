@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import String, Enum, DateTime, ForeignKey, Boolean, func, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 try:
     from ..database import Base
@@ -48,6 +48,10 @@ class SubmissionLink(Base):
     source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
     source_brief_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     brief_pdf_s3_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    # A hand-authored structured brief (title/overview/script+storyboard/guidelines/
+    # deliverable) rendered inline on the submit + project pages. Independent of the
+    # PDF brief — a link may carry both, neither, or one.
+    brief_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     # External (CF) lineage ids + human labels for the campaign this request came
     # from (the data spine). NULL for hand-made requests. The ids are stamped onto
     # every asset created under this request; the labels surface in the UI.

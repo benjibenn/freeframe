@@ -126,6 +126,7 @@ export interface Project {
   submission_link_id?: string | null;
   request_title?: string | null;
   brief_pdf_url?: string | null;
+  brief_json?: Record<string, unknown> | null;
 }
 
 export interface ProjectMember {
