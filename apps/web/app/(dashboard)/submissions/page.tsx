@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -310,30 +310,77 @@ function LinkCard({
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(link.title)
   const [editInstructions, setEditInstructions] = useState(link.instructions ?? '')
+  const [editBriefJson, setEditBriefJson] = useState('')
+  const [editBriefFile, setEditBriefFile] = useState<File | null>(null)
+  const [hasBrief, setHasBrief] = useState(!!link.has_brief)
+  const [briefError, setBriefError] = useState('')
   const [saving, setSaving] = useState(false)
   const [preAssignOpen, setPreAssignOpen] = useState(false)
+  const editFileRef = useRef<HTMLInputElement>(null)
 
   const url = submitUrl(link.token)
 
-  function startEdit() {
+  async function startEdit() {
     setEditTitle(link.title)
     setEditInstructions(link.instructions ?? '')
+    setEditBriefFile(null)
+    setBriefError('')
+    setHasBrief(!!link.has_brief)
     setEditing(true)
+    // The list payload omits brief_json to stay light; fetch the full link so the
+    // textarea prefills with the current brief (else saving would wipe it).
+    setEditBriefJson('')
+    try {
+      const full = await api.get<SubmissionLink & { brief_json?: Record<string, unknown> | null; has_brief?: boolean }>(
+        `/submission-links/${link.id}`,
+      )
+      setEditBriefJson(full.brief_json ? JSON.stringify(full.brief_json, null, 2) : '')
+      setHasBrief(!!full.has_brief)
+    } catch {
+      /* leave empty; user can still paste */
+    }
   }
 
   async function saveEdit(e: React.FormEvent) {
     e.preventDefault()
     if (!editTitle.trim() || saving) return
+    if (editBriefFile && editBriefFile.type !== 'application/pdf') {
+      setBriefError('Brief file must be a PDF.')
+      return
+    }
+    // Parse the structured brief up front so a syntax error blocks the save.
+    let parsedBrief: Record<string, unknown> | null = null
+    const briefText = editBriefJson.trim()
+    if (briefText) {
+      try {
+        parsedBrief = JSON.parse(briefText)
+      } catch {
+        setBriefError('Structured brief is not valid JSON.')
+        return
+      }
+      if (typeof parsedBrief !== 'object' || parsedBrief === null || Array.isArray(parsedBrief)) {
+        setBriefError('Structured brief must be a JSON object.')
+        return
+      }
+    }
+    setBriefError('')
     setSaving(true)
     try {
       await api.patch(`/submission-links/${link.id}`, {
         title: editTitle.trim(),
         instructions: editInstructions.trim() || null,
       })
+      if (editBriefFile) {
+        const fd = new FormData()
+        fd.append('file', editBriefFile)
+        await api.upload(`/submission-links/${link.id}/brief`, fd)
+      }
+      // Sets or clears the structured brief (null clears).
+      await api.put(`/submission-links/${link.id}/brief-json`, { brief: parsedBrief })
       setEditing(false)
       await onUpdated()
-    } catch {
-      /* surfaced via list refresh */
+    } catch (err) {
+      setBriefError(err instanceof ApiError ? err.detail : 'Could not save changes.')
     } finally {
       setSaving(false)
     }
@@ -379,6 +426,40 @@ function LinkCard({
               onChange={(e) => setEditInstructions(e.target.value)}
             />
           </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Brief PDF (optional)</label>
+            <div className="flex items-center gap-2">
+              <input
+                ref={editFileRef}
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                onChange={(e) => setEditBriefFile(e.target.files?.[0] ?? null)}
+              />
+              <Button type="button" variant="secondary" size="sm" onClick={() => editFileRef.current?.click()}>
+                {hasBrief ? 'Replace PDF' : 'Upload PDF'}
+              </Button>
+              <span className="truncate text-xs text-text-tertiary">
+                {editBriefFile ? editBriefFile.name : hasBrief ? 'A brief PDF is attached.' : 'No PDF attached.'}
+              </span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Structured brief (JSON, optional)</label>
+            <textarea
+              className="flex min-h-[120px] w-full rounded-md border border-border bg-bg-secondary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+              placeholder='{ "title": "…", "overview": "…", "script_with_storyboard": [ … ] }'
+              value={editBriefJson}
+              onChange={(e) => setEditBriefJson(e.target.value)}
+              spellCheck={false}
+            />
+            <p className="text-xs text-text-tertiary">Empty and save to clear the structured brief.</p>
+          </div>
+          {briefError && (
+            <p className="rounded-md border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error">
+              {briefError}
+            </p>
+          )}
           <div className="flex gap-2">
             <Button type="submit" size="sm" loading={saving}>Save</Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>

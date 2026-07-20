@@ -45,6 +45,36 @@ function StoryboardRows({ rows }: { rows: Shot[] }) {
   )
 }
 
+function HookRows({ rows }: { rows: Shot[] }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full min-w-[40rem] border-collapse text-sm">
+        <thead>
+          <tr className="bg-bg-tertiary text-left text-xs text-text-tertiary">
+            <th className="px-3 py-2 font-medium">Hook variation</th>
+            <th className="px-3 py-2 font-medium">Script</th>
+            <th className="px-3 py-2 font-medium">Shot</th>
+            <th className="px-3 py-2 font-medium">On-screen text</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((h, i) => (
+            <tr key={i} className="border-t border-border align-top">
+              <td className="px-3 py-2.5 font-medium text-text-primary">
+                {h.variation || `Hook ${i + 1}`}
+                {h.name ? `: ${h.name}` : ''}
+              </td>
+              <td className="px-3 py-2.5 text-text-primary">{h.script}</td>
+              <td className="px-3 py-2.5 text-text-secondary">{h.shot}</td>
+              <td className="px-3 py-2.5 text-text-secondary">{h.on_screen_text}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
@@ -111,31 +141,7 @@ export function BriefView({ data }: { data: Record<string, unknown> }) {
               {concept}
             </p>
           )}
-          {hooks.length > 0 && (
-            <div className="mt-1 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {hooks.map((h, i) => (
-                <div key={i} className="flex flex-col gap-1 rounded-lg border border-border bg-bg-secondary p-3">
-                  <p className="text-xs font-semibold text-text-primary">
-                    {h.variation || `Hook ${i + 1}`}
-                    {h.name ? ` — ${h.name}` : ''}
-                  </p>
-                  {h.script && <p className="text-sm text-text-secondary">{h.script}</p>}
-                  {h.shot && (
-                    <p className="text-xs text-text-tertiary">
-                      <span className="font-medium">Shot: </span>
-                      {h.shot}
-                    </p>
-                  )}
-                  {h.on_screen_text && (
-                    <p className="text-xs text-text-tertiary">
-                      <span className="font-medium">On-screen: </span>
-                      {h.on_screen_text}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          {hooks.length > 0 && <HookRows rows={hooks} />}
         </Section>
       )}
     </div>
