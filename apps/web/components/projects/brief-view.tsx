@@ -92,13 +92,20 @@ export function BriefView({ data }: { data: Record<string, unknown> }) {
   const storyboard: Shot[] = Array.isArray(data.script_with_storyboard)
     ? (data.script_with_storyboard.filter(isObj) as Shot[])
     : []
-  const guidelines = isObj(data.guidelines) ? data.guidelines : null
-  const hardRules =
-    guidelines && Array.isArray(guidelines.hard_rules)
-      ? (guidelines.hard_rules as unknown[]).filter((x): x is string => typeof x === 'string')
+  // guidelines: a top-level array of strings (current), or legacy { hard_rules: [...] }.
+  const hardRules: string[] = Array.isArray(data.guidelines)
+    ? (data.guidelines as unknown[]).filter((x): x is string => typeof x === 'string')
+    : isObj(data.guidelines) && Array.isArray(data.guidelines.hard_rules)
+      ? (data.guidelines.hard_rules as unknown[]).filter((x): x is string => typeof x === 'string')
       : []
   const deliverable = isObj(data.final_deliverable) ? data.final_deliverable : null
-  const concept = deliverable && typeof deliverable.concept === 'string' ? deliverable.concept : null
+  // deliverable summary line: `label` (current) or legacy `concept`.
+  const deliverableLabel =
+    deliverable && typeof deliverable.label === 'string'
+      ? deliverable.label
+      : deliverable && typeof deliverable.concept === 'string'
+        ? `Concept: ${deliverable.concept}`
+        : null
   const hooks: Shot[] =
     deliverable && Array.isArray(deliverable.hook_variations)
       ? (deliverable.hook_variations.filter(isObj) as Shot[])
@@ -133,14 +140,9 @@ export function BriefView({ data }: { data: Record<string, unknown> }) {
         </Section>
       )}
 
-      {(concept || hooks.length > 0) && (
+      {(deliverableLabel || hooks.length > 0) && (
         <Section title="Final deliverable">
-          {concept && (
-            <p className="text-sm text-text-primary">
-              <span className="text-text-tertiary">Concept: </span>
-              {concept}
-            </p>
-          )}
+          {deliverableLabel && <p className="text-sm text-text-primary">{deliverableLabel}</p>}
           {hooks.length > 0 && <HookRows rows={hooks} />}
         </Section>
       )}
