@@ -121,6 +121,13 @@ export function BriefView({ data }: { data: Record<string, unknown> }) {
         </Section>
       )}
 
+      {(deliverableLabel || hooks.length > 0) && (
+        <Section title="Final deliverable">
+          {deliverableLabel && <p className="text-sm text-text-primary">{deliverableLabel}</p>}
+          {hooks.length > 0 && <HookRows rows={hooks} />}
+        </Section>
+      )}
+
       {storyboard.length > 0 && (
         <Section title="Script & storyboard">
           <StoryboardRows rows={storyboard} />
@@ -137,13 +144,6 @@ export function BriefView({ data }: { data: Record<string, unknown> }) {
               </li>
             ))}
           </ul>
-        </Section>
-      )}
-
-      {(deliverableLabel || hooks.length > 0) && (
-        <Section title="Final deliverable">
-          {deliverableLabel && <p className="text-sm text-text-primary">{deliverableLabel}</p>}
-          {hooks.length > 0 && <HookRows rows={hooks} />}
         </Section>
       )}
     </div>
