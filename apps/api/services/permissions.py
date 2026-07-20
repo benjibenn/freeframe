@@ -1,13 +1,41 @@
 from typing import Optional
 
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 import uuid
 from ..models.user import User
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.asset import Asset
 from ..models.share import AssetShare, ShareLink, SharePermission
+from ..models.library_access import LibraryAccess
 from ..services.redis_service import verify_share_session
+
+
+def has_library_asset_access(db: Session, asset: Asset, user: User) -> bool:
+    """True if the user has a library grant covering this asset — a project-wide grant
+    (folder_id NULL) or a folder grant matching the asset's folder. Mirrors the library
+    browser's _access_filter so anything a user can see in the library they can open."""
+    return db.query(LibraryAccess.id).filter(
+        LibraryAccess.user_id == user.id,
+        LibraryAccess.project_id == asset.project_id,
+        or_(
+            LibraryAccess.folder_id.is_(None),
+            LibraryAccess.folder_id == asset.folder_id,
+        ),
+    ).first() is not None
+
+
+def has_project_library_access(db: Session, project_id: uuid.UUID, user: User) -> bool:
+    """True if the user has a PROJECT-LEVEL library grant (folder_id NULL), which conveys
+    viewing the whole project. Folder-level grants do NOT grant project-wide view — those
+    are scoped to their folder's assets via has_library_asset_access — so a folder grantee
+    never leaks the rest of the project through can_view_project."""
+    return db.query(LibraryAccess.id).filter(
+        LibraryAccess.user_id == user.id,
+        LibraryAccess.project_id == project_id,
+        LibraryAccess.folder_id.is_(None),
+    ).first() is not None
 
 
 # ── Platform-level (superadmin / subadmin) ──────────────────────────────────────
@@ -116,6 +144,9 @@ def can_view_project(db: Session, project_id: uuid.UUID, user: User) -> bool:
         return True
     if get_project_member(db, project_id, user.id):
         return True
+    # A project-level library grant conveys viewing the whole project.
+    if has_project_library_access(db, project_id, user):
+        return True
     return is_public_project(db, project_id)
 
 
@@ -143,7 +174,12 @@ def can_access_asset(db: Session, asset: Asset, user: User) -> bool:
     if direct:
         return True
 
-    # 4. Public project — any authenticated user can view
+    # 4. Library grant (project- or folder-level) — anything visible in the library
+    #    must be openable. Scoped to the asset's folder for folder-level grants.
+    if has_library_asset_access(db, asset, user):
+        return True
+
+    # 5. Public project — any authenticated user can view
     if is_public_project(db, asset.project_id):
         return True
 

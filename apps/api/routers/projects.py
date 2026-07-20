@@ -169,7 +169,7 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
 
 @router.get("/{project_id}", response_model=ProjectResponse)
 def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    from ..services.permissions import is_platform_admin
+    from ..services.permissions import can_view_project
 
     project = _get_project(db, project_id)
     member = db.query(ProjectMember).filter(
@@ -177,7 +177,9 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
         ProjectMember.user_id == current_user.id,
         ProjectMember.deleted_at.is_(None),
     ).first()
-    if not member and not project.is_public and not is_platform_admin(current_user):
+    # Members, public projects, platform admins, and project-level library grantees
+    # may view. (can_view_project covers admin/member/public/project-library-grant.)
+    if not member and not can_view_project(db, project_id, current_user):
         raise HTTPException(status_code=403, detail="Not a project member")
     resp = ProjectResponse.model_validate(project)
     resp.poster_url = _resolve_poster_url(project)
@@ -232,16 +234,14 @@ def delete_project(project_id: uuid.UUID, db: Session = Depends(get_db), current
 
 @router.get("/{project_id}/members", response_model=list[ProjectMemberResponse])
 def list_project_members(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    from ..services.permissions import can_view_project
+
     _get_project(db, project_id)
-    # Verify user is a member
-    member = db.query(ProjectMember).filter(
-        ProjectMember.project_id == project_id,
-        ProjectMember.user_id == current_user.id,
-        ProjectMember.deleted_at.is_(None),
-    ).first()
-    if not member:
+    # Anyone who can view the project (member, public, admin, project-level library
+    # grantee) may see the member list — the viewer needs it for @mentions/assignees.
+    if not can_view_project(db, project_id, current_user):
         raise HTTPException(status_code=403, detail="Not a project member")
-    
+
     members = db.query(ProjectMember).filter(
         ProjectMember.project_id == project_id,
         ProjectMember.deleted_at.is_(None),
