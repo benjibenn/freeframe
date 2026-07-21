@@ -12,6 +12,7 @@ import { Avatar } from "@/components/shared/avatar";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useAuthStore } from "@/stores/auth-store";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { User, UserStatus } from "@/types";
 
 // Centralized so a backend rename (FastAPI rejecting the literal `:`) is a
@@ -670,6 +671,11 @@ export default function AdminPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center justify-end gap-2 whitespace-nowrap">
+                        <Button variant="ghost" size="sm" asChild>
+                          <Link href={`/settings/admin/users/${u.id}/activity`}>
+                            Activity
+                          </Link>
+                        </Button>
                         {u.status === "pending_invite" && u.invite_token && (
                           <Button
                             variant="ghost"
