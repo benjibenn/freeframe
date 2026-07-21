@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import Link from 'next/link'
+import useSWR from 'swr'
 import {
   Activity as ActivityIcon,
   Upload,
@@ -12,15 +13,19 @@ import {
   UserCheck,
   AtSign,
   ChevronRight,
+  MousePointerClick,
+  Eye,
+  Download,
 } from 'lucide-react'
 import { useActivityStore } from '@/stores/activity-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { formatRelativeTime, cn } from '@/lib/utils'
+import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Avatar } from '@/components/shared/avatar'
 import { EmptyState } from '@/components/shared/empty-state'
-import type { ActivityFeedItem } from '@/types'
+import type { ActivityFeedItem, User } from '@/types'
 
 const actionIcons: Record<string, React.ElementType> = {
   created: Upload,
@@ -30,6 +35,9 @@ const actionIcons: Record<string, React.ElementType> = {
   assigned: UserCheck,
   approved: CheckCircle,
   rejected: XCircle,
+  asset_clicked: MousePointerClick,
+  asset_viewed: Eye,
+  asset_downloaded: Download,
 }
 
 function actionPhrase(item: ActivityFeedItem): string {
@@ -48,6 +56,12 @@ function actionPhrase(item: ActivityFeedItem): string {
       return 'approved'
     case 'rejected':
       return 'requested changes on'
+    case 'asset_clicked':
+      return 'opened'
+    case 'asset_viewed':
+      return 'viewed'
+    case 'asset_downloaded':
+      return 'downloaded'
     default:
       return item.action
   }
@@ -121,9 +135,15 @@ const CATEGORIES: { label: string; value: string | null }[] = [
 export default function ActivityPage() {
   usePageTitle('Activity')
   const { user } = useAuthStore()
-  const { items, isLoading, hasMore, filter, fetchFeed, loadMore, setFilter, markSeen } =
+  const { items, isLoading, hasMore, filter, userId, fetchFeed, loadMore, setFilter, setUserId, markSeen } =
     useActivityStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
+  const isSuperAdmin = Boolean(user?.is_superadmin)
+
+  const { data: users } = useSWR<User[]>(
+    isSuperAdmin ? '/admin/users' : null,
+    () => api.get<User[]>('/admin/users'),
+  )
 
   React.useEffect(() => {
     if (!isPlatformAdmin) return
@@ -155,24 +175,41 @@ export default function ActivityPage() {
       </div>
 
       {/* Category filter */}
-      <div className="flex flex-wrap items-center gap-1 border-b border-border pb-3">
-        {CATEGORIES.map((cat) => {
-          const isActive = filter === cat.value
-          return (
-            <button
-              key={cat.label}
-              onClick={() => setFilter(cat.value)}
-              className={cn(
-                'rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
-                isActive
-                  ? 'bg-bg-hover text-text-primary'
-                  : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
-              )}
-            >
-              {cat.label}
-            </button>
-          )
-        })}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
+        <div className="flex flex-wrap items-center gap-1">
+          {CATEGORIES.map((cat) => {
+            const isActive = filter === cat.value
+            return (
+              <button
+                key={cat.label}
+                onClick={() => setFilter(cat.value)}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
+                  isActive
+                    ? 'bg-bg-hover text-text-primary'
+                    : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
+                )}
+              >
+                {cat.label}
+              </button>
+            )
+          })}
+        </div>
+
+        {users && users.length > 0 && (
+          <select
+            value={userId ?? ''}
+            onChange={(e) => setUserId(e.target.value === '' ? null : e.target.value)}
+            className="rounded-md border border-border bg-bg-secondary px-2.5 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus cursor-pointer max-w-[12rem]"
+          >
+            <option value="">All users</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {isLoading && items.length === 0 ? (
