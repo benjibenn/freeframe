@@ -22,6 +22,15 @@ class ActivityAction(str, PyEnum):
     asset_viewed = "asset_viewed"
     asset_downloaded = "asset_downloaded"
 
+# The three passive-tracking actions, as opposed to team actions (created/commented/
+# approved/shared/…). Shared so callers that need to include or exclude tracking noise
+# (retention pruning, the unread-activity badge) don't redefine this list separately.
+TRACKING_ACTIONS = (
+    ActivityAction.asset_clicked.value,
+    ActivityAction.asset_viewed.value,
+    ActivityAction.asset_downloaded.value,
+)
+
 class NotificationType(str, PyEnum):
     mention = "mention"
     assignment = "assignment"

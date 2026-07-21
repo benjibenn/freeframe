@@ -2,17 +2,13 @@ from datetime import datetime, timedelta, timezone
 
 from .celery_app import celery_app
 from ..database import SessionLocal
-from ..models.activity import ActivityLog, ActivityAction
+from ..models.activity import ActivityLog, TRACKING_ACTIONS
 
 RETENTION_DAYS = 90
 
 # ONLY these actions are pruned. Team-action rows (created/commented/approved/…)
 # are retained indefinitely — never add them here.
-TRACKING_ACTIONS = (
-    ActivityAction.asset_clicked.value,
-    ActivityAction.asset_viewed.value,
-    ActivityAction.asset_downloaded.value,
-)
+# (Re-exported from models.activity so this stays importable as rt.TRACKING_ACTIONS.)
 
 
 @celery_app.task(name="prune_asset_activity")

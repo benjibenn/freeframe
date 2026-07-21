@@ -20,7 +20,7 @@ from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.asset import Asset, AssetVersion
 from ..models.project import Project
-from ..models.activity import ActivityLog
+from ..models.activity import ActivityLog, TRACKING_ACTIONS
 from ..schemas.activity import ActivityActor, ActivityFeedItem, ActivityUnreadCount
 from ..services.permissions import require_platform_admin
 
@@ -129,9 +129,17 @@ def unread_activity_count(
     current_user: User = Depends(get_current_user),
 ):
     """Number of activity events since the caller last viewed the feed (their own
-    actions excluded). Drives the alert badge."""
+    actions excluded). Drives the alert badge.
+
+    Tracking actions (asset_clicked/viewed/downloaded) are excluded — this badge
+    signals new TEAM activity worth reviewing, not passive view/download noise.
+    """
     require_platform_admin(current_user)
-    query = db.query(func.count(ActivityLog.id)).filter(ActivityLog.user_id != current_user.id)
+    query = (
+        db.query(func.count(ActivityLog.id))
+        .filter(ActivityLog.user_id != current_user.id)
+        .filter(ActivityLog.action.notin_(TRACKING_ACTIONS))
+    )
     seen = _parse_seen(current_user)
     if seen:
         query = query.filter(ActivityLog.created_at > seen)
