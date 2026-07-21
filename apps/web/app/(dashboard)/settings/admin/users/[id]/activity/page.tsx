@@ -18,11 +18,14 @@ export default function UserActivityPage() {
   const userId = params.id
   const { user } = useAuthStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
+  const isSuperAdmin = Boolean(user?.is_superadmin)
 
   usePageTitle('User Activity')
 
+  // /admin/users is superadmin-only server-side; sub-admins skip this fetch
+  // and fall back to the plain "User Activity" header below.
   const { data: users } = useSWR<User[]>(
-    isPlatformAdmin ? '/admin/users' : null,
+    isSuperAdmin ? '/admin/users' : null,
     () => api.get<User[]>('/admin/users'),
   )
   const targetUser = users?.find((u) => u.id === userId)
