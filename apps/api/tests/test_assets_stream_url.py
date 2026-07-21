@@ -77,11 +77,13 @@ def test_video_stream_returns_hls_proxy_url_with_token(
     assert "exp" in payload
 
 
+@patch("apps.api.routers.assets.log_asset_activity")
 @patch("apps.api.routers.assets.generate_presigned_get_url")
 @patch("apps.api.routers.assets.require_asset_access")
 def test_video_download_still_returns_presigned_raw(
     mock_require_access,
     mock_presign,
+    mock_log,
     client,
     mock_db,
     auth_headers,
@@ -103,11 +105,13 @@ def test_video_download_still_returns_presigned_raw(
     assert "/stream/hls/" not in body["url"]
 
 
+@patch("apps.api.routers.assets.log_asset_activity")
 @patch("apps.api.routers.assets.generate_presigned_get_url")
 @patch("apps.api.routers.assets.require_asset_access")
 def test_video_download_allowed_while_still_transcoding(
     mock_require_access,
     mock_presign,
+    mock_log,
     client,
     mock_db,
     auth_headers,

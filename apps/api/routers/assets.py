@@ -13,7 +13,7 @@ from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, AssetStatu
 from ..models.frame_tag import FrameTag
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.share import AssetShare
-from ..models.activity import Mention, Notification, NotificationType
+from ..models.activity import Mention, Notification, NotificationType, ActivityAction
 from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse, TagsUpdate, TagCount
 from ..schemas.notification import AssignmentUpdate
 from ..services.permissions import require_project_role, require_asset_access, can_access_asset, is_public_project, get_project_member, can_view_project, is_platform_admin
@@ -22,6 +22,7 @@ from .hls_proxy import create_hls_token
 from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, mime_to_asset_type
 from ..services.s3_service import create_multipart_upload
 from ..services.tags import normalize_tags
+from ..services.activity_service import log_asset_activity
 from ..config import settings
 from ..tasks.celery_app import send_task_safe
 
@@ -529,6 +530,17 @@ def get_stream_url(
             url = generate_presigned_get_url(s3_key, download_filename=filename)
         else:
             url = generate_presigned_get_url(s3_key)
+
+    if download:
+        log_asset_activity(
+            db,
+            user_id=current_user.id,
+            asset_id=asset.id,
+            project_id=asset.project_id,
+            action=ActivityAction.asset_downloaded.value,
+            payload={"asset_name": asset.name},
+        )
+        db.commit()
 
     return StreamUrlResponse(url=url, asset_type=asset.asset_type)
 
