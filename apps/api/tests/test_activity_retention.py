@@ -21,8 +21,17 @@ def test_prune_filters_to_tracking_actions_and_age():
         deleted = rt.prune_asset_activity()
 
     assert deleted == 3
-    # Exactly one filter() call carrying BOTH an action-set predicate and an age
-    # predicate — asserted via the retention module exposing the action set.
     assert set(rt.TRACKING_ACTIONS) == {"asset_clicked", "asset_viewed", "asset_downloaded"}
     assert query.delete.called
     db.commit.assert_called_once()
+
+    # Pin the actual filter clauses, not just that .filter()/.delete() were called.
+    # Without this, a future refactor to a blanket `db.query(ActivityLog).delete()`
+    # (deleting the entire team audit trail — the exact catastrophe this task exists
+    # to prevent) would still pass every assertion above. SQLAlchemy clause elements
+    # render to SQL-ish text via str(), so inspect what was actually passed to
+    # query.filter() to confirm both the action-scoping and age predicates are there.
+    filter_args = query.filter.call_args.args
+    rendered = " ".join(str(arg) for arg in filter_args)
+    assert "activity_logs.action" in rendered
+    assert "activity_logs.created_at" in rendered
