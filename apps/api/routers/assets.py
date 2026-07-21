@@ -5,7 +5,7 @@ from sqlalchemy import func, or_
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
@@ -458,6 +458,44 @@ def list_asset_versions(
         vr.files = [MediaFileResponse.model_validate(f) for f in files_by_version.get(v.id, [])]
         result.append(vr)
     return result
+
+
+class AssetTrackRequest(BaseModel):
+    action: Literal["clicked", "viewed"]
+
+
+_TRACK_ACTION_MAP = {
+    "clicked": ActivityAction.asset_clicked.value,
+    "viewed": ActivityAction.asset_viewed.value,
+}
+
+
+@router.post("/assets/{asset_id}/track", status_code=status.HTTP_204_NO_CONTENT)
+def track_asset_activity(
+    asset_id: uuid.UUID,
+    body: AssetTrackRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Record a soft click/view signal for the current user on an asset.
+
+    Only callable by users who can access the asset. Download is intentionally
+    not trackable here — it is logged server-side by the download endpoint.
+    """
+    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    require_asset_access(db, asset, current_user)
+
+    log_asset_activity(
+        db,
+        user_id=current_user.id,
+        asset_id=asset.id,
+        project_id=asset.project_id,
+        action=_TRACK_ACTION_MAP[body.action],
+        payload={"asset_name": asset.name},
+    )
+    db.commit()
 
 
 @router.get("/assets/{asset_id}/stream", response_model=StreamUrlResponse)
