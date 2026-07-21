@@ -18,6 +18,9 @@ class ActivityAction(str, PyEnum):
     assigned = "assigned"
     approved = "approved"
     rejected = "rejected"
+    asset_clicked = "asset_clicked"
+    asset_viewed = "asset_viewed"
+    asset_downloaded = "asset_downloaded"
 
 class NotificationType(str, PyEnum):
     mention = "mention"
