@@ -14,12 +14,21 @@ depends_on = None
 
 
 def upgrade():
-    op.create_index(
-        "ix_activity_logs_user_created",
-        "activity_logs",
-        ["user_id", "created_at"],
-    )
+    with op.get_context().autocommit_block():
+        op.create_index(
+            "ix_activity_logs_user_created",
+            "activity_logs",
+            ["user_id", "created_at"],
+            postgresql_concurrently=True,
+            if_not_exists=True,
+        )
 
 
 def downgrade():
-    op.drop_index("ix_activity_logs_user_created", table_name="activity_logs")
+    with op.get_context().autocommit_block():
+        op.drop_index(
+            "ix_activity_logs_user_created",
+            table_name="activity_logs",
+            postgresql_concurrently=True,
+            if_exists=True,
+        )
