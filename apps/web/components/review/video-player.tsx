@@ -33,6 +33,8 @@ interface VideoPlayerProps {
   className?: string;
   /** Pre-fetched stream URL (for share mode — skips authenticated API call) */
   initialStreamUrl?: string | null;
+  /** Fired once, the first time the video is played (activity tracking) */
+  onFirstPlay?: () => void;
 }
 
 // ─── Video frame constraint ──────────────────────────────────────────────────
@@ -129,10 +131,12 @@ export function VideoPlayer({
   overlay,
   className,
   initialStreamUrl,
+  onFirstPlay,
 }: VideoPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [loop, setLoop] = useState(false);
+  const firedFirstPlay = useRef(false);
 
   const { isDrawingMode, timeFormat, setTimeFormat, setPlayheadTime } =
     useReviewStore();
@@ -171,6 +175,7 @@ export function VideoPlayer({
   // doesn't keep playing while the new URL is being fetched.
   useEffect(() => {
     setStreamUrl(null);
+    firedFirstPlay.current = false;
     if (initialStreamUrl) {
       const resolved = initialStreamUrl.startsWith("/")
         ? `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}${initialStreamUrl}`
@@ -222,6 +227,19 @@ export function VideoPlayer({
   useEffect(() => {
     registerPauseHandler(pause);
   }, [registerPauseHandler, pause]);
+
+  // Fire onFirstPlay once, the first time the video actually plays
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !onFirstPlay) return;
+    const handlePlay = () => {
+      if (firedFirstPlay.current) return;
+      firedFirstPlay.current = true;
+      onFirstPlay();
+    };
+    video.addEventListener("play", handlePlay);
+    return () => video.removeEventListener("play", handlePlay);
+  }, [onFirstPlay]);
 
   // Sync video currentTime to review store so comment input shows same timecode
   const lastSyncRef = useRef(0);

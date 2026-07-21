@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import useSWR from 'swr'
 import { ReviewProvider, useReview } from '@/components/review/review-provider'
@@ -102,6 +102,19 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const setExtraCrumbs = useBreadcrumbStore((s) => s.setExtraCrumbs)
   const setLabel = useBreadcrumbStore((s) => s.setLabel)
   usePageTitle(asset?.name ?? null)
+
+  // Traceability: record that this user opened the asset (clicked) and,
+  // separately, that they actually pressed play (viewed). Server dedups repeats.
+  useEffect(() => {
+    if (!asset?.id) return
+    api.post(`/assets/${asset.id}/track`, { action: 'clicked' }).catch(() => {})
+  }, [asset?.id])
+
+  const trackViewed = useCallback(() => {
+    if (!asset?.id) return
+    api.post(`/assets/${asset.id}/track`, { action: 'viewed' }).catch(() => {})
+  }, [asset?.id])
+
   const [annotationData, setAnnotationData] = useState<Record<string, unknown> | null>(null)
   const [activeTab, setActiveTab] = useState<'comments' | 'fields'>('fields')
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -416,6 +429,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
             assetId={asset.id}
             comments={comments}
             className="flex-1 min-h-0"
+            onFirstPlay={trackViewed}
             overlay={
               <>
                 <AnnotationOverlay key={focusedCommentId ?? 'none'} />
