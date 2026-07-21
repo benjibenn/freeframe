@@ -99,6 +99,7 @@ def list_activity(
     limit: int = Query(default=50, le=100),
     before: Optional[datetime] = Query(default=None, description="Return activity strictly older than this timestamp (for pagination)."),
     action: Optional[str] = Query(default=None, description="Comma-separated action names to filter by (e.g. 'created' or 'approved,rejected'). Omit for all."),
+    user_id: Optional[uuid.UUID] = Query(default=None, description="Restrict to a single user's activity (per-user drill-down)."),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -114,6 +115,8 @@ def list_activity(
         actions = [a.strip() for a in action.split(",") if a.strip()]
         if actions:
             query = query.filter(ActivityLog.action.in_(actions))
+    if user_id:
+        query = query.filter(ActivityLog.user_id == user_id)
     if before:
         query = query.filter(ActivityLog.created_at < before)
     logs = query.order_by(ActivityLog.created_at.desc()).limit(limit).all()
