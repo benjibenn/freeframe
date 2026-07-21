@@ -1520,6 +1520,9 @@ export default function ProjectDetailPage() {
                     preload="metadata"
                     src={`${process.env.NEXT_PUBLIC_API_URL || ''}${project.reference_video_url}`}
                     className="w-full rounded-lg border border-border bg-black"
+                    controlsList="nodownload noremoteplayback"
+                    disablePictureInPicture
+                    onContextMenu={(e) => e.preventDefault()}
                   />
                 </div>
               )}

@@ -691,7 +691,16 @@ function HlsVideo({ src, className }: { src: string; className?: string }) {
     }
   }, [src])
 
-  return <video ref={videoRef} controls className={className} />
+  return (
+    <video
+      ref={videoRef}
+      controls
+      className={className}
+      controlsList="nodownload noremoteplayback"
+      disablePictureInPicture
+      onContextMenu={(e) => e.preventDefault()}
+    />
+  )
 }
 
 function AssetViewer({ token, shareSession, asset, permission, allowDownload, onBack }: AssetViewerProps) {

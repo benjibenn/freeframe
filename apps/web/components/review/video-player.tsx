@@ -315,6 +315,9 @@ export function VideoPlayer({
           )}
           playsInline
           preload="metadata"
+          controlsList="nodownload noremoteplayback"
+          disablePictureInPicture
+          onContextMenu={(e) => e.preventDefault()}
         />
 
         {/* Loading spinner */}

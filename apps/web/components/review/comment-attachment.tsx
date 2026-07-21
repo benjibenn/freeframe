@@ -109,6 +109,9 @@ export function CommentAttachment({
             className="max-h-48 w-full object-contain"
             controls={false}
             preload="metadata"
+            controlsList="nodownload noremoteplayback"
+            disablePictureInPicture
+            onContextMenu={(e) => e.preventDefault()}
           />
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="rounded-full bg-black/60 p-3">

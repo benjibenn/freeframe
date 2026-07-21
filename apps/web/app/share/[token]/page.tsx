@@ -487,6 +487,9 @@ function ShareMediaViewer({ asset, token, streamUrl, streamLoading }: ShareMedia
               controls
               className="max-h-full max-w-full"
               preload="metadata"
+              controlsList="nodownload noremoteplayback"
+              disablePictureInPicture
+              onContextMenu={(e) => e.preventDefault()}
             >
               Your browser does not support video playback.
             </video>

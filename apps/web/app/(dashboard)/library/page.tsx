@@ -662,6 +662,9 @@ export default function LibraryPage() {
               autoPlay
               playsInline
               controls
+              controlsList="nodownload noremoteplayback"
+              disablePictureInPicture
+              onContextMenu={(e) => e.preventDefault()}
             />
           ) : selectedItem.thumbnail_url ? (
             // eslint-disable-next-line @next/next/no-img-element

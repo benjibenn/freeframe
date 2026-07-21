@@ -125,6 +125,9 @@ export default function SubmitPage() {
                   preload="metadata"
                   src={`${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/reference-video`}
                   className="w-full rounded-lg border border-border bg-black"
+                  controlsList="nodownload noremoteplayback"
+                  disablePictureInPicture
+                  onContextMenu={(e) => e.preventDefault()}
                 />
               </div>
             )}

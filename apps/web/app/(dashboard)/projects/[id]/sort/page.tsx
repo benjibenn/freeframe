@@ -238,6 +238,9 @@ export default function SorterPage() {
           autoPlay
           loop
           controls={false}
+          controlsList="nodownload noremoteplayback"
+          disablePictureInPicture
+          onContextMenu={(e) => e.preventDefault()}
         />
       </div>
 
