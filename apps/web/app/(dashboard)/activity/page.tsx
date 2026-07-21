@@ -19,6 +19,7 @@ const CATEGORIES: { label: string; value: string | null }[] = [
   { label: 'Comments', value: 'commented,mentioned' },
   { label: 'Approvals', value: 'approved,rejected' },
   { label: 'Shares', value: 'shared' },
+  { label: 'Views/Downloads', value: 'asset_clicked,asset_viewed,asset_downloaded' },
 ]
 
 export default function ActivityPage() {
