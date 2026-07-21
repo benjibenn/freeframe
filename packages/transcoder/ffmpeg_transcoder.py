@@ -78,65 +78,27 @@ class FFmpegTranscoder(BaseTranscoder):
         input_url = self._get_presigned_url(job.input_s3_key, expires_in=7200)
 
         try:
-            # 1. Get metadata via streaming (no download)
-            cmd = [
-                "ffprobe", "-v", "quiet", "-print_format", "json",
-                "-show_streams", "-select_streams", "v:0", input_url,
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-
-            # 3. Build quality ladder based on available qualities
-            QUALITY_MAP = {
-                "1080p": ("1920:1080", 20),
-                "720p": ("1280:720", 22),
-                "360p": ("640:360", 26),
-            }
-            qualities = [q for q in job.qualities if q in QUALITY_MAP]
+            # 1. Probe the source. Keep ALL streams (not just v:0) so we can read
+            #    the video codec and detect whether an audio track exists — both
+            #    drive the remux fast-path decision below.
+            probe = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_streams", input_url],
+                capture_output=True, text=True, timeout=120,
+            )
+            video_codec, has_audio = self._parse_probe(probe.stdout)
 
             hls_dir = work_dir / "hls"
             hls_dir.mkdir()
 
-            # Build filter_complex and map args
-            # Use force_original_aspect_ratio=decrease to preserve aspect ratio,
-            # then pad to even dimensions required by libx264
-            split_outputs = "".join(f"[v{i}]" for i in range(len(qualities)))
-            filter_complex = f"[v:0]split={len(qualities)}{split_outputs};"
-            filter_complex += ";".join(
-                f"[v{i}]scale={QUALITY_MAP[q][0]}:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2[{q}]"
-                for i, q in enumerate(qualities)
+            # 2. Build the ffmpeg command. An already-H.264 source is copied
+            #    verbatim into a single HLS rendition (seconds, not minutes);
+            #    anything else re-encodes the full libx264 quality ladder.
+            ffmpeg_cmd, variant_dirs = self._build_ffmpeg_cmd(
+                input_url, job.qualities, hls_dir, video_codec, has_audio
             )
-
-            ffmpeg_cmd = [
-                "ffmpeg", "-y",
-                "-threads", "2",  # limit per-process threads so 3 concurrent workers share 4 cores
-                "-i", input_url,
-                "-filter_complex", filter_complex,
-            ]
-
-            for i, quality in enumerate(qualities):
-                scale, crf = QUALITY_MAP[quality]
-                ffmpeg_cmd += [
-                    "-map", f"[{quality}]", "-map", "a:0",
-                    f"-c:v:{i}", "libx264", f"-crf", str(crf), "-preset", "veryfast",
-                    "-force_key_frames", "expr:gte(t,n_forced*2)",
-                ]
-
-            segment_dir = hls_dir / "%v"
-            ffmpeg_cmd += [
-                "-f", "hls",
-                "-hls_time", "2",
-                "-hls_playlist_type", "vod",
-                "-hls_flags", "independent_segments",
-                "-hls_segment_type", "mpegts",
-                "-master_pl_name", "master.m3u8",
-                "-var_stream_map", " ".join(f"v:{i},a:{i}" for i in range(len(qualities))),
-                "-hls_segment_filename", str(hls_dir / "%v" / "seg_%03d.ts"),
-                str(hls_dir / "%v" / "playlist.m3u8"),
-            ]
-
-            # Create per-quality directories
-            for q in qualities:
-                (hls_dir / q).mkdir(exist_ok=True)
+            for name in variant_dirs:
+                (hls_dir / name).mkdir(exist_ok=True)
 
             # Timeout scales with expected duration - 4 hours for very large files
             subprocess.run(ffmpeg_cmd, check=True, capture_output=True, timeout=14400)
@@ -188,6 +150,109 @@ class FFmpegTranscoder(BaseTranscoder):
             return TranscodeResult(success=False, error=str(e))
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
+
+    QUALITY_MAP = {
+        "1080p": ("1920:1080", 20),
+        "720p": ("1280:720", 22),
+        "360p": ("640:360", 26),
+    }
+
+    @staticmethod
+    def _parse_probe(probe_json: str) -> tuple[Optional[str], bool]:
+        """Extract (video_codec, has_audio) from ffprobe JSON.
+
+        Returns (None, False) on any parse failure so callers fall back to the
+        safe full re-encode path instead of remuxing an unknown/absent codec.
+        """
+        try:
+            streams = json.loads(probe_json).get("streams", [])
+        except (ValueError, TypeError, AttributeError):
+            return None, False
+        video_codec = None
+        has_audio = False
+        for s in streams:
+            kind = s.get("codec_type")
+            if kind == "video" and video_codec is None:
+                video_codec = s.get("codec_name")
+            elif kind == "audio":
+                has_audio = True
+        return video_codec, has_audio
+
+    @classmethod
+    def _build_ffmpeg_cmd(cls, input_url, qualities, hls_dir, video_codec, has_audio):
+        """Return (ffmpeg_cmd, variant_dir_names).
+
+        Fast path: an already-H.264 source is copied into a single HLS rendition.
+        Otherwise the full libx264 ladder is re-encoded.
+        """
+        if video_codec == "h264":
+            return cls._build_remux_cmd(input_url, hls_dir, has_audio), ["source"]
+        return cls._build_ladder_cmd(input_url, qualities, hls_dir)
+
+    @staticmethod
+    def _build_remux_cmd(input_url, hls_dir, has_audio):
+        """Single-rendition HLS by copying the H.264 video stream untouched.
+
+        Audio is re-encoded to AAC (cheap) so the mpegts segments are uniformly
+        playable regardless of the source's original audio codec.
+        """
+        hls_dir = Path(hls_dir)
+        cmd = ["ffmpeg", "-y", "-i", str(input_url), "-c:v", "copy"]
+        if has_audio:
+            cmd += ["-c:a", "aac"]
+        cmd += [
+            "-f", "hls",
+            "-hls_time", "2",
+            "-hls_playlist_type", "vod",
+            "-hls_flags", "independent_segments",
+            "-hls_segment_type", "mpegts",
+            "-master_pl_name", "master.m3u8",
+            "-var_stream_map", "v:0,a:0,name:source" if has_audio else "v:0,name:source",
+            "-hls_segment_filename", str(hls_dir / "%v" / "seg_%03d.ts"),
+            str(hls_dir / "%v" / "playlist.m3u8"),
+        ]
+        return cmd
+
+    @classmethod
+    def _build_ladder_cmd(cls, input_url, qualities, hls_dir):
+        """Full re-encode into a 1080/720/360 libx264 HLS ladder."""
+        hls_dir = Path(hls_dir)
+        qualities = [q for q in qualities if q in cls.QUALITY_MAP]
+
+        # Use force_original_aspect_ratio=decrease to preserve aspect ratio,
+        # then pad to even dimensions required by libx264.
+        split_outputs = "".join(f"[v{i}]" for i in range(len(qualities)))
+        filter_complex = f"[v:0]split={len(qualities)}{split_outputs};"
+        filter_complex += ";".join(
+            f"[v{i}]scale={cls.QUALITY_MAP[q][0]}:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2[{q}]"
+            for i, q in enumerate(qualities)
+        )
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-threads", "2",  # limit per-process threads so 3 concurrent workers share 4 cores
+            "-i", str(input_url),
+            "-filter_complex", filter_complex,
+        ]
+        for i, quality in enumerate(qualities):
+            _, crf = cls.QUALITY_MAP[quality]
+            cmd += [
+                "-map", f"[{quality}]", "-map", "a:0",
+                f"-c:v:{i}", "libx264", "-crf", str(crf), "-preset", "veryfast",
+                "-force_key_frames", "expr:gte(t,n_forced*2)",
+            ]
+        cmd += [
+            "-f", "hls",
+            "-hls_time", "2",
+            "-hls_playlist_type", "vod",
+            "-hls_flags", "independent_segments",
+            "-hls_segment_type", "mpegts",
+            "-master_pl_name", "master.m3u8",
+            "-var_stream_map", " ".join(f"v:{i},a:{i}" for i in range(len(qualities))),
+            "-hls_segment_filename", str(hls_dir / "%v" / "seg_%03d.ts"),
+            str(hls_dir / "%v" / "playlist.m3u8"),
+        ]
+        return cmd, qualities
 
     @staticmethod
     def _get_content_type(filename: str) -> tuple[str, str]:

@@ -331,6 +331,13 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const versionProcessing =
     currentVersion?.processing_status === 'processing' ||
     currentVersion?.processing_status === 'uploading'
+  // The original upload can be downloaded before the transcode finishes — the raw
+  // file exists from `processing` onward. Playback still requires `ready` (HLS),
+  // but there's no reason to make users wait to grab the source file.
+  const versionDownloadable =
+    currentVersion?.processing_status === 'ready' ||
+    currentVersion?.processing_status === 'processing' ||
+    currentVersion?.processing_status === 'failed'
 
   const renderMediaViewer = () => {
     if (!currentVersion || !versionReady) {
@@ -347,6 +354,11 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                   <p className="text-xs text-text-tertiary mt-1">
                     This may take a few minutes depending on file size.
                   </p>
+                  {versionDownloadable && (
+                    <p className="text-xs text-text-tertiary mt-1">
+                      You can download the original file now while the preview finishes.
+                    </p>
+                  )}
                 </div>
                 {isStalled && (
                   <button
@@ -525,9 +537,9 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           </button>
           <button
             onClick={() => void downloadAsset(asset.id, currentVersion?.id)}
-            disabled={!versionReady}
+            disabled={!versionDownloadable}
             className="hidden sm:inline-flex items-center gap-1.5 rounded-md px-2.5 h-8 text-xs font-medium border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            title="Download asset"
+            title={versionReady ? "Download asset" : "Download original (still processing preview)"}
           >
             <Download className="h-3.5 w-3.5" />
             Download

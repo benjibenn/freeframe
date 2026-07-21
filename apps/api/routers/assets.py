@@ -487,12 +487,28 @@ def get_stream_url(
 
     if not version:
         raise HTTPException(status_code=404, detail="No version found")
-    if version.processing_status != ProcessingStatus.ready:
-        raise HTTPException(status_code=409, detail="Asset version is not ready yet")
 
     media_file = db.query(MediaFile).filter(MediaFile.version_id == version.id).first()
     if not media_file:
         raise HTTPException(status_code=404, detail="Media file not found")
+
+    # Streaming/playback needs the transcoded HLS output, which only exists once
+    # the version is `ready`. A download, however, can serve the original raw
+    # upload as soon as it's stored — so users can pull the file down while
+    # transcoding is still running instead of waiting for the whole ladder. The
+    # raw file exists from `processing` onward (it's still absent during
+    # `uploading`), so only unblock download once we're past that.
+    raw_downloadable = (
+        download
+        and media_file.s3_key_raw
+        and version.processing_status in (
+            ProcessingStatus.processing,
+            ProcessingStatus.ready,
+            ProcessingStatus.failed,
+        )
+    )
+    if version.processing_status != ProcessingStatus.ready and not raw_downloadable:
+        raise HTTPException(status_code=409, detail="Asset version is not ready yet")
 
     if asset.asset_type == AssetType.video and media_file.s3_key_processed:
         if download:

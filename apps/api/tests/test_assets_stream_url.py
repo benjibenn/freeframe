@@ -8,7 +8,12 @@ from jose import jwt
 from apps.api.config import settings
 
 
-def _setup_video_asset(mock_db, asset_type):
+def _setup_video_asset(
+    mock_db,
+    asset_type,
+    processing_status=None,
+    s3_key_processed="processed/proj/version-xyz",
+):
     from apps.api.models.asset import ProcessingStatus
 
     # The conftest mock_db only chains query/filter back to itself — order_by
@@ -25,12 +30,12 @@ def _setup_video_asset(mock_db, asset_type):
     version = MagicMock()
     version.id = uuid.uuid4()
     version.asset_id = asset.id
-    version.processing_status = ProcessingStatus.ready
+    version.processing_status = processing_status or ProcessingStatus.ready
     version.deleted_at = None
 
     media_file = MagicMock()
     media_file.version_id = version.id
-    media_file.s3_key_processed = "processed/proj/version-xyz"
+    media_file.s3_key_processed = s3_key_processed
     media_file.s3_key_raw = "raw/proj/version-xyz/input.mp4"
     media_file.original_filename = "input.mp4"
 
@@ -96,6 +101,84 @@ def test_video_download_still_returns_presigned_raw(
     # Downloads bypass the HLS proxy — they need the original file, not a playlist.
     assert body["url"] == "https://s3.example.com/raw.mp4?sig=x"
     assert "/stream/hls/" not in body["url"]
+
+
+@patch("apps.api.routers.assets.generate_presigned_get_url")
+@patch("apps.api.routers.assets.require_asset_access")
+def test_video_download_allowed_while_still_transcoding(
+    mock_require_access,
+    mock_presign,
+    client,
+    mock_db,
+    auth_headers,
+):
+    """A user must be able to pull the original file down while the transcode
+    is still running — the raw upload already exists, so gating download on
+    `ready` needlessly blocks it."""
+    from apps.api.models.asset import AssetType, ProcessingStatus
+
+    asset, _, _ = _setup_video_asset(
+        mock_db, AssetType.video,
+        processing_status=ProcessingStatus.processing,
+        s3_key_processed=None,  # HLS not produced yet
+    )
+    mock_require_access.return_value = None
+    mock_presign.return_value = "https://s3.example.com/raw.mp4?sig=x"
+
+    response = client.get(
+        f"/assets/{asset.id}/stream?download=true", headers=auth_headers
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["url"] == "https://s3.example.com/raw.mp4?sig=x"
+
+
+@patch("apps.api.routers.assets.require_asset_access")
+def test_video_stream_still_blocked_while_transcoding(
+    mock_require_access,
+    client,
+    mock_db,
+    auth_headers,
+):
+    """Streaming (playback) still requires the transcoded HLS output — only the
+    raw download is unblocked early."""
+    from apps.api.models.asset import AssetType, ProcessingStatus
+
+    asset, _, _ = _setup_video_asset(
+        mock_db, AssetType.video,
+        processing_status=ProcessingStatus.processing,
+        s3_key_processed=None,
+    )
+    mock_require_access.return_value = None
+
+    response = client.get(f"/assets/{asset.id}/stream", headers=auth_headers)
+
+    assert response.status_code == 409, response.text
+
+
+@patch("apps.api.routers.assets.require_asset_access")
+def test_video_download_blocked_while_uploading(
+    mock_require_access,
+    client,
+    mock_db,
+    auth_headers,
+):
+    """Before upload finalizes the raw file isn't fully stored yet, so even a
+    download must be refused."""
+    from apps.api.models.asset import AssetType, ProcessingStatus
+
+    asset, _, _ = _setup_video_asset(
+        mock_db, AssetType.video,
+        processing_status=ProcessingStatus.uploading,
+        s3_key_processed=None,
+    )
+    mock_require_access.return_value = None
+
+    response = client.get(
+        f"/assets/{asset.id}/stream?download=true", headers=auth_headers
+    )
+
+    assert response.status_code == 409, response.text
 
 
 @patch("apps.api.routers.assets.generate_presigned_get_url")
