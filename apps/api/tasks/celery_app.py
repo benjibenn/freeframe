@@ -19,6 +19,7 @@ celery_app = Celery(
         "apps.api.tasks.email_tasks",
         "apps.api.tasks.drive_sync_tasks",
         "apps.api.tasks.autotag_tasks",
+        "apps.api.tasks.retention_tasks",
     ],
 )
 
@@ -89,6 +90,11 @@ celery_app.conf.beat_schedule = {
         # Run the lightweight maintenance sweep on `default`, NOT `transcoding`. On the
         # heavy queue it queues up behind slow transcodes and, when slots stall, beat keeps
         # appending it every 5 min — the backlog that buried real jobs ~5000-deep.
+        "options": {"queue": "default"},
+    },
+    "prune-asset-activity": {
+        "task": "prune_asset_activity",
+        "schedule": crontab(minute="0", hour="4"),  # daily at 04:00
         "options": {"queue": "default"},
     },
 }
