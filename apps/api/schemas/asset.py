@@ -45,6 +45,7 @@ class AssetResponse(BaseModel):
     folder_id: Optional[uuid.UUID] = None
     due_date: Optional[datetime]
     keywords: Optional[list]
+    run_as_ad: bool = False
     created_by: uuid.UUID
     created_at: datetime
     updated_at: datetime

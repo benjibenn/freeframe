@@ -12,6 +12,7 @@ import { FolderCard } from './folder-card'
 import { AppearancePopover } from './appearance-popover'
 import { SortPopover } from './sort-popover'
 import { MoveToDialog } from './move-to-dialog'
+import { BulkStatusMenu } from './bulk-status-menu'
 import { useViewStore } from '@/stores/view-store'
 import type { Asset, AssetStatus, User, Folder, FolderTreeNode } from '@/types'
 
@@ -58,6 +59,10 @@ interface AssetGridProps {
   onBulkDelete?: (assetIds: string[], folderIds: string[]) => void
   onBulkMove?: (assetIds: string[], folderIds: string[], targetFolderId: string | null) => void
   onBulkDownload?: (assetIds: string[], folderIds: string[]) => void
+  /** Bulk review-status change. When set, the selection bar shows "Set status". */
+  onBulkStatus?: (assetIds: string[], status: AssetStatus) => void
+  /** Bulk pipeline-stage change (admin only). Adds pipeline stages to the menu. */
+  onBulkStage?: (assetIds: string[], stageId: string | null) => void
   projectName?: string
   folderTree?: FolderTreeNode[]
   onAssetShare?: (asset: Asset) => void
@@ -108,6 +113,8 @@ export function AssetGrid({
   onBulkDelete,
   onBulkMove,
   onBulkDownload,
+  onBulkStatus,
+  onBulkStage,
   projectName = 'Project',
   folderTree = [],
   onAssetShare,
@@ -663,6 +670,22 @@ export function AssetGrid({
             <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => setMoveDialogOpen(true)}>
               <FolderInput className="h-4 w-4" /> Move to
             </Button>
+          )}
+          {onBulkStatus && selectedAssetIds.size > 0 && (
+            <BulkStatusMenu
+              onSetStatus={(status) => {
+                onBulkStatus(Array.from(selectedAssetIds), status)
+                clearSelection()
+              }}
+              onSetStage={
+                onBulkStage
+                  ? (stageId) => {
+                      onBulkStage(Array.from(selectedAssetIds), stageId)
+                      clearSelection()
+                    }
+                  : undefined
+              }
+            />
           )}
           {onCreateShareLink && (
             <Button

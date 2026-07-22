@@ -12,6 +12,7 @@ import { AnnotationOverlay } from '@/components/review/annotation-overlay'
 import { CommentPanel } from '@/components/review/comment-panel'
 import { CommentInput } from '@/components/review/comment-input'
 import { AssetStatusSelect } from '@/components/review/asset-status-select'
+import { RunAsAdToggle } from '@/components/review/run-as-ad-toggle'
 import { AssetTagsEditor } from '@/components/review/asset-tags-editor'
 import { AssetMetadataEditor } from '@/components/projects/asset-metadata'
 import { TagStampBar } from '@/components/review/tag-stamp-bar'
@@ -39,7 +40,7 @@ import Link from 'next/link'
 import { cn, downloadAsset } from '@/lib/utils'
 import { useIsDesktop } from '@/hooks/use-media-query'
 import { usePageTitle } from '@/hooks/use-page-title'
-import type { Project, AssetResponse, ProjectMember, FolderTreeNode } from '@/types'
+import type { Project, AssetResponse, ProjectMember, FolderTreeNode, User } from '@/types'
 import { ShortcutsHint } from '@/components/ui/shortcuts-hint'
 
 const ASSET_SHORTCUTS = [
@@ -190,6 +191,17 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     `/projects/${projectId}/assets`,
     () => api.get<AssetResponse[]>(`/projects/${projectId}/assets`),
   )
+
+  // Resolve the uploader (asset.created_by) to a display name for the header.
+  const uploaderId = asset?.created_by ?? null
+  const { data: uploaderUsers } = useSWR<User[]>(
+    uploaderId ? `/users?ids=${uploaderId}` : null,
+    () => api.get<User[]>(`/users?ids=${uploaderId}`),
+  )
+  const uploaderName =
+    uploaderId === user?.id
+      ? user?.name
+      : uploaderUsers?.find((u) => u.id === uploaderId)?.name
 
   const {
     comments,
@@ -489,10 +501,15 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
             <ArrowLeft className="h-4 w-4" />
           </Link>
 
-          {/* Asset name only */}
+          {/* Asset name + uploader */}
           <span className="text-[13px] text-text-primary font-medium truncate">
             {asset.name}
           </span>
+          {uploaderName && (
+            <span className="hidden sm:inline text-xs text-text-tertiary truncate shrink-0">
+              · by {uploaderName}
+            </span>
+          )}
         </div>
 
         {/* Center: asset navigation */}
@@ -538,6 +555,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
             }}
           />
           <AssetStatusSelect assetId={asset.id} taskStageId={asset.task_stage_id ?? null} label={false} />
+          <RunAsAdToggle assetId={asset.id} initial={asset.run_as_ad ?? false} />
           <div className="hidden sm:block">
             <VersionSwitcher versions={versions} />
           </div>

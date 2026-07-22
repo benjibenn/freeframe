@@ -155,6 +155,7 @@ export interface Asset {
   folder_id: string | null;
   due_date: string | null;
   keywords: string[] | null;
+  run_as_ad?: boolean;
   created_by: string;
   created_at: string;
   updated_at: string;

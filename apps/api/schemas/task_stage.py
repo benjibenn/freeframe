@@ -34,6 +34,12 @@ class TaskStageAssign(BaseModel):
     task_stage_id: Optional[uuid.UUID] = None
 
 
+class BulkTaskStageAssign(BaseModel):
+    # Move many videos to a pipeline stage at once (or back to unassigned).
+    asset_ids: list[uuid.UUID]
+    task_stage_id: Optional[uuid.UUID] = None
+
+
 class RunAsAdAssign(BaseModel):
     # Whether this video is cleared to run as an ad (exposed to external platforms).
     run_as_ad: bool

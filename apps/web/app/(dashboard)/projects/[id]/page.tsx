@@ -1005,6 +1005,14 @@ export default function ProjectDetailPage() {
               onBulkDelete={(assetIds, folderIds) => {
                 setPendingBulkDelete({ assetIds, folderIds });
               }}
+              onBulkStatus={async (assetIds, status) => {
+                await api.patch(`/assets/bulk/status`, { asset_ids: assetIds, status });
+                mutateAssets();
+              }}
+              onBulkStage={async (assetIds, stageId) => {
+                await api.patch(`/assets/bulk/stage`, { asset_ids: assetIds, task_stage_id: stageId });
+                mutateAssets();
+              }}
               onBulkDownload={async (assetIds, folderIds) => {
                 function triggerDownload(url: string) {
                   const iframe = document.createElement("iframe");

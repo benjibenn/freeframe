@@ -26,6 +26,7 @@ from ..schemas.task_stage import (
     TaskStageUpdate,
     TaskStageReorder,
     TaskStageAssign,
+    BulkTaskStageAssign,
     RunAsAdAssign,
     TaskItem,
 )
@@ -283,6 +284,33 @@ def set_asset_task_stage(
         latest_version_number=None,
         created_at=asset.created_at,
     )
+
+
+@router.patch("/assets/bulk/stage")
+def bulk_set_asset_task_stage(
+    body: BulkTaskStageAssign,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Move many videos to a pipeline stage at once (multi-select bulk edit)."""
+    require_platform_admin(current_user)
+    if not body.asset_ids:
+        raise HTTPException(status_code=422, detail="asset_ids is empty")
+    if len(body.asset_ids) > 200:
+        raise HTTPException(status_code=413, detail="Too many asset_ids (max 200)")
+    if body.task_stage_id is not None:
+        _get_stage(db, body.task_stage_id)  # validate it exists / not deleted
+    assets = db.query(Asset).filter(
+        Asset.id.in_(body.asset_ids), Asset.deleted_at.is_(None)
+    ).all()
+    found = {a.id for a in assets}
+    missing = [str(a) for a in body.asset_ids if a not in found]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Assets not found: {', '.join(missing)}")
+    for asset in assets:
+        asset.task_stage_id = body.task_stage_id
+    db.commit()
+    return {"updated": len(assets)}
 
 
 @router.patch("/assets/{asset_id}/run-as-ad", response_model=TaskItem)
