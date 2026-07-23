@@ -199,7 +199,7 @@ class FFmpegTranscoder(BaseTranscoder):
         """
         if video_codec == "h264":
             return cls._build_remux_cmd(input_url, hls_dir, has_audio), ["source"]
-        return cls._build_ladder_cmd(input_url, qualities, hls_dir)
+        return cls._build_ladder_cmd(input_url, qualities, hls_dir, has_audio)
 
     @staticmethod
     def _build_remux_cmd(input_url, hls_dir, has_audio):
@@ -226,8 +226,13 @@ class FFmpegTranscoder(BaseTranscoder):
         return cmd
 
     @classmethod
-    def _build_ladder_cmd(cls, input_url, qualities, hls_dir):
-        """Full re-encode into a 1080/720/360 libx264 HLS ladder."""
+    def _build_ladder_cmd(cls, input_url, qualities, hls_dir, has_audio=True):
+        """Full re-encode into a 1080/720/360 libx264 HLS ladder.
+
+        Audio mapping must be conditional: an unconditional `-map a:0` makes
+        ffmpeg abort with "Stream map 'a:0' matches no streams" on sources
+        without an audio track (e.g. screen recordings).
+        """
         hls_dir = Path(hls_dir)
         qualities = [q for q in qualities if q in cls.QUALITY_MAP]
 
@@ -248,8 +253,10 @@ class FFmpegTranscoder(BaseTranscoder):
         ]
         for i, quality in enumerate(qualities):
             _, crf = cls.QUALITY_MAP[quality]
+            cmd += ["-map", f"[{quality}]"]
+            if has_audio:
+                cmd += ["-map", "a:0"]
             cmd += [
-                "-map", f"[{quality}]", "-map", "a:0",
                 f"-c:v:{i}", "libx264", "-crf", str(crf), "-preset", "veryfast",
                 "-force_key_frames", "expr:gte(t,n_forced*2)",
             ]
@@ -260,7 +267,10 @@ class FFmpegTranscoder(BaseTranscoder):
             "-hls_flags", "independent_segments",
             "-hls_segment_type", "mpegts",
             "-master_pl_name", "master.m3u8",
-            "-var_stream_map", " ".join(f"v:{i},a:{i}" for i in range(len(qualities))),
+            "-var_stream_map", " ".join(
+                f"v:{i},a:{i}" if has_audio else f"v:{i}"
+                for i in range(len(qualities))
+            ),
             "-hls_segment_filename", str(hls_dir / "%v" / "seg_%03d.ts"),
             str(hls_dir / "%v" / "playlist.m3u8"),
         ]

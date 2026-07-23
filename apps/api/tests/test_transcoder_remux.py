@@ -97,3 +97,18 @@ def test_non_h264_source_uses_full_libx264_ladder():
     assert cmd.count("libx264") == 3
     assert "-filter_complex" in cmd
     assert variant_dirs == ["1080p", "720p", "360p"]
+
+
+def test_ladder_without_audio_omits_audio_mapping():
+    # An unconditional `-map a:0` aborts ffmpeg with "Stream map 'a:0'
+    # matches no streams" on audio-less sources (e.g. screen recordings),
+    # failing the whole transcode. The remux path already respects
+    # has_audio; the ladder must too.
+    cmd, variant_dirs = FFmpegTranscoder._build_ffmpeg_cmd(
+        "http://input", ["1080p", "720p", "360p"], "/tmp/hls",
+        video_codec="hevc", has_audio=False,
+    )
+    assert "a:0" not in cmd
+    vsm = cmd[cmd.index("-var_stream_map") + 1]
+    assert vsm == "v:0 v:1 v:2"
+    assert variant_dirs == ["1080p", "720p", "360p"]
