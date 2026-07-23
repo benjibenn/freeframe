@@ -272,6 +272,41 @@ def bulk_update_asset_status(
     return {"updated": len(assets)}
 
 
+class BulkRunAsAdRequest(BaseModel):
+    asset_ids: list[uuid.UUID]
+    run_as_ad: bool
+
+
+@router.patch("/assets/bulk/run-as-ad")
+def bulk_update_run_as_ad(
+    body: BulkRunAsAdRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Toggle the run-as-ad flag on many assets at once (multi-select bulk edit).
+
+    Same permission rule as the single-asset PATCH: platform admins manage every
+    project; everyone else needs editor role or higher on each asset's project."""
+    if not body.asset_ids:
+        raise HTTPException(status_code=422, detail="asset_ids is empty")
+    if len(body.asset_ids) > 200:
+        raise HTTPException(status_code=413, detail="Too many asset_ids (max 200)")
+    assets = db.query(Asset).filter(
+        Asset.id.in_(body.asset_ids), Asset.deleted_at.is_(None)
+    ).all()
+    found = {a.id for a in assets}
+    missing = [str(a) for a in body.asset_ids if a not in found]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Assets not found: {', '.join(missing)}")
+    if not is_platform_admin(current_user):
+        for asset in assets:
+            require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    for asset in assets:
+        asset.run_as_ad = body.run_as_ad
+    db.commit()
+    return {"updated": len(assets)}
+
+
 @router.put("/assets/{asset_id}/tags", response_model=AssetResponse)
 def set_asset_tags(
     asset_id: uuid.UUID,
