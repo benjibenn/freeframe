@@ -3,7 +3,7 @@
 import * as React from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import useSWR from 'swr'
-import { Tag, ChevronDown } from 'lucide-react'
+import { Tag, ChevronDown, Megaphone } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
@@ -29,9 +29,11 @@ const itemClass =
 export function BulkStatusMenu({
   onSetStatus,
   onSetStage,
+  onSetRunAsAd,
 }: {
   onSetStatus: (status: AssetStatus) => void
   onSetStage?: (stageId: string | null) => void
+  onSetRunAsAd?: (runAsAd: boolean) => void
 }) {
   const { user } = useAuthStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
@@ -97,6 +99,23 @@ export function BulkStatusMenu({
                   {stage.name}
                 </DropdownMenu.Item>
               ))}
+            </>
+          )}
+
+          {onSetRunAsAd && (
+            <>
+              <DropdownMenu.Separator className="my-1 h-px bg-border mx-1" />
+              <div className="px-3 py-1 text-2xs font-medium uppercase tracking-wider text-text-tertiary">
+                Ad
+              </div>
+              <DropdownMenu.Item onSelect={() => onSetRunAsAd(true)} className={itemClass}>
+                <Megaphone className="h-3.5 w-3.5" />
+                Mark as ad
+              </DropdownMenu.Item>
+              <DropdownMenu.Item onSelect={() => onSetRunAsAd(false)} className={itemClass}>
+                <Megaphone className="h-3.5 w-3.5 opacity-40" />
+                Unmark as ad
+              </DropdownMenu.Item>
             </>
           )}
         </DropdownMenu.Content>

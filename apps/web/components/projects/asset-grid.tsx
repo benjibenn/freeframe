@@ -64,6 +64,7 @@ interface AssetGridProps {
   onBulkStatus?: (assetIds: string[], status: AssetStatus) => void
   /** Bulk pipeline-stage change (admin only). Adds pipeline stages to the menu. */
   onBulkStage?: (assetIds: string[], stageId: string | null) => void
+  onBulkRunAsAd?: (assetIds: string[], runAsAd: boolean) => void
   projectName?: string
   folderTree?: FolderTreeNode[]
   onAssetShare?: (asset: Asset) => void
@@ -116,6 +117,7 @@ export function AssetGrid({
   onBulkDownload,
   onBulkStatus,
   onBulkStage,
+  onBulkRunAsAd,
   projectName = 'Project',
   folderTree = [],
   onAssetShare,
@@ -719,6 +721,14 @@ export function AssetGrid({
                 onBulkStage
                   ? (stageId) => {
                       onBulkStage(Array.from(selectedAssetIds), stageId)
+                      clearSelection()
+                    }
+                  : undefined
+              }
+              onSetRunAsAd={
+                onBulkRunAsAd
+                  ? (runAsAd) => {
+                      onBulkRunAsAd(Array.from(selectedAssetIds), runAsAd)
                       clearSelection()
                     }
                   : undefined

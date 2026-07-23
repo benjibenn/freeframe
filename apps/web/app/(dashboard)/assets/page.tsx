@@ -128,6 +128,10 @@ export default function AssetsPage() {
             await api.patch(`/assets/bulk/stage`, { asset_ids: assetIds, task_stage_id: stageId })
             mutate()
           }}
+          onBulkRunAsAd={async (assetIds, runAsAd) => {
+            await api.patch(`/assets/bulk/run-as-ad`, { asset_ids: assetIds, run_as_ad: runAsAd })
+            mutate()
+          }}
         />
 
         {/* Empty state */}
