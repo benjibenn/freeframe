@@ -14,6 +14,7 @@ import { SortPopover } from './sort-popover'
 import { MoveToDialog } from './move-to-dialog'
 import { BulkStatusMenu } from './bulk-status-menu'
 import { useViewStore } from '@/stores/view-store'
+import { rangeBetween, type SelectableItem } from '@/lib/selection'
 import type { Asset, AssetStatus, User, Folder, FolderTreeNode } from '@/types'
 
 const assetTypeIcons: Record<string, React.ElementType> = {
@@ -126,6 +127,7 @@ export function AssetGrid({
   const [selectedAssetIds, setSelectedAssetIds] = React.useState<Set<string>>(new Set())
   const [selectedFolderIds, setSelectedFolderIds] = React.useState<Set<string>>(new Set())
   const [moveDialogOpen, setMoveDialogOpen] = React.useState(false)
+  const lastClickedRef = React.useRef<SelectableItem | null>(null)
 
   // Legacy alias
   const selectedIds = selectedAssetIds
@@ -151,22 +153,50 @@ export function AssetGrid({
     sortDirection,
   } = useViewStore()
 
-  const toggleAssetSelect = (assetId: string) => {
+  const applyRange = (target: SelectableItem) => {
+    const anchor = lastClickedRef.current
+    const slice = anchor ? rangeBetween(visibleOrder, anchor, target) : [target]
+    setSelectedAssetIds((prev) => {
+      const next = new Set(prev)
+      slice.forEach((i) => i.kind === 'asset' && next.add(i.id))
+      return next
+    })
+    setSelectedFolderIds((prev) => {
+      const next = new Set(prev)
+      slice.forEach((i) => i.kind === 'folder' && next.add(i.id))
+      return next
+    })
+    // Anchor stays put so a follow-up shift-click re-ranges from the same origin.
+  }
+
+  const toggleAssetSelect = (assetId: string, e?: React.MouseEvent) => {
+    if (e?.shiftKey) {
+      e.preventDefault()
+      applyRange({ kind: 'asset', id: assetId })
+      return
+    }
     setSelectedAssetIds((prev) => {
       const next = new Set(prev)
       if (next.has(assetId)) next.delete(assetId)
       else next.add(assetId)
       return next
     })
+    lastClickedRef.current = { kind: 'asset', id: assetId }
   }
 
-  const toggleFolderSelect = (folderId: string) => {
+  const toggleFolderSelect = (folderId: string, e?: React.MouseEvent) => {
+    if (e?.shiftKey) {
+      e.preventDefault()
+      applyRange({ kind: 'folder', id: folderId })
+      return
+    }
     setSelectedFolderIds((prev) => {
       const next = new Set(prev)
       if (next.has(folderId)) next.delete(folderId)
       else next.add(folderId)
       return next
     })
+    lastClickedRef.current = { kind: 'folder', id: folderId }
   }
 
   const clearSelection = () => {
@@ -199,6 +229,14 @@ export function AssetGrid({
     return result
   }, [assets, sortKey, sortDirection])
 
+  const visibleOrder = React.useMemo<SelectableItem[]>(
+    () => [
+      ...(folders ?? []).map((f) => ({ kind: 'folder' as const, id: f.id })),
+      ...filtered.map((a) => ({ kind: 'asset' as const, id: a.id })),
+    ],
+    [folders, filtered],
+  )
+
   const showFolders = !flattenFolders && folders && folders.length > 0
 
   if (isLoading) {
@@ -216,7 +254,7 @@ export function AssetGrid({
   }
 
   return (
-    <div className="flex flex-col gap-3 relative">
+    <div className="flex flex-col gap-3 relative select-none">
       {/* ─── Share Selection Mode Bar ──────────────────────────────────── */}
       {shareMode && (
         <div className="flex items-center justify-between rounded-lg border border-accent/30 bg-accent/5 px-4 py-2.5">
@@ -288,7 +326,7 @@ export function AssetGrid({
                     'group/folder relative',
                     isFolderSelected && 'ring-2 ring-accent rounded-lg',
                   )}
-                  onClick={shareMode ? (e) => { e.stopPropagation(); toggleFolderSelect(folder.id) } : undefined}
+                  onClick={shareMode ? (e) => { e.stopPropagation(); toggleFolderSelect(folder.id, e) } : undefined}
                 >
                   <button
                     className={cn(
@@ -297,7 +335,7 @@ export function AssetGrid({
                         ? 'bg-accent border-accent text-white opacity-100'
                         : 'bg-black/40 border-white/30 text-transparent opacity-0 group-hover/folder:opacity-100',
                     )}
-                    onClick={(e) => { e.stopPropagation(); toggleFolderSelect(folder.id) }}
+                    onClick={(e) => { e.stopPropagation(); toggleFolderSelect(folder.id, e) }}
                   >
                     {isFolderSelected && <Check className="h-3 w-3" />}
                   </button>
@@ -354,7 +392,7 @@ export function AssetGrid({
                 thumbnailUrl={thumbnails[asset.id]}
                 fileSize={fileSizes[asset.id] ?? null}
                 selected={selectedAssetIds.has(asset.id)}
-                onSelect={() => toggleAssetSelect(asset.id)}
+                onSelect={(e) => toggleAssetSelect(asset.id, e)}
                 showInfo={showCardInfo}
                 showFileSize={showFileSize}
                 showUploader={showUploader}
@@ -416,7 +454,7 @@ export function AssetGrid({
                       'absolute inset-0 flex items-center justify-center transition-all',
                       isFolderSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
                     )}
-                    onClick={(e) => { e.stopPropagation(); toggleFolderSelect(folder.id) }}
+                    onClick={(e) => { e.stopPropagation(); toggleFolderSelect(folder.id, e) }}
                   >
                     <div className={cn(
                       'h-4 w-4 rounded border flex items-center justify-center transition-all',
@@ -535,7 +573,7 @@ export function AssetGrid({
                       'absolute inset-0 flex items-center justify-center transition-all',
                       selectedAssetIds.has(asset.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
                     )}
-                    onClick={(e) => { e.stopPropagation(); toggleAssetSelect(asset.id) }}
+                    onClick={(e) => { e.stopPropagation(); toggleAssetSelect(asset.id, e) }}
                   >
                     <div className={cn(
                       'h-4 w-4 rounded border flex items-center justify-center transition-all',
