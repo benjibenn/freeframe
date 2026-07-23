@@ -62,6 +62,32 @@ def test_h264_source_without_audio_omits_audio_mapping():
     assert variant_dirs == ["source"]
 
 
+def test_poster_thumbnail_grabs_first_frame_without_fps_sampler():
+    # Two ffmpeg >=7 regressions killed every process_asset task (2026-07):
+    # 1. fps=0.1 emits ZERO frames for clips shorter than its 10s interval,
+    #    so the poster must take the first frame directly, and
+    # 2. the mjpeg encoder hard-errors on limited-range YUV (what nearly all
+    #    camera video uses) and can't take 10-bit HEVC — so the chain must
+    #    convert to full-range 8-bit (yuvj420p) before encoding.
+    cmd = FFmpegTranscoder._build_thumb_cmd(
+        "http://input", "/tmp/thumb_%04d.jpg", single_frame=True,
+    )
+    vf = cmd[cmd.index("-vf") + 1]
+    assert "fps=" not in vf
+    assert "format=yuvj420p" in vf
+    assert cmd[cmd.index("-frames:v") + 1] == "1"
+
+
+def test_thumbnail_strip_samples_at_10s_with_full_range_conversion():
+    # The scrub strip wants one frame per 10s for the whole clip (no -frames:v
+    # cap) but still needs the yuvj420p conversion for the mjpeg encoder.
+    cmd = FFmpegTranscoder._build_thumb_cmd("http://input", "/tmp/thumb_%04d.jpg")
+    assert "-frames:v" not in cmd
+    vf = cmd[cmd.index("-vf") + 1]
+    assert "fps=0.1" in vf
+    assert "format=yuvj420p" in vf
+
+
 def test_non_h264_source_uses_full_libx264_ladder():
     cmd, variant_dirs = FFmpegTranscoder._build_ffmpeg_cmd(
         "http://input", ["1080p", "720p", "360p"], "/tmp/hls",

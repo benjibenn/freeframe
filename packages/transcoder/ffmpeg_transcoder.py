@@ -49,12 +49,7 @@ class FFmpegTranscoder(BaseTranscoder):
         input_url = self._get_presigned_url(s3_key)
         thumb_dir = tempfile.mkdtemp()
         try:
-            cmd = [
-                "ffmpeg", "-i", input_url,
-                "-vf", "fps=0.1",
-                "-q:v", "2",
-                f"{thumb_dir}/thumb_%04d.jpg",
-            ]
+            cmd = self._build_thumb_cmd(input_url, f"{thumb_dir}/thumb_%04d.jpg")
             subprocess.run(cmd, capture_output=True, check=True, timeout=600)
             return [str(p) for p in sorted(Path(thumb_dir).glob("thumb_*.jpg"))]
         finally:
@@ -118,11 +113,9 @@ class FFmpegTranscoder(BaseTranscoder):
 
             # 5. Generate and upload thumbnail (using streaming URL)
             thumb_path = work_dir / "thumb_0001.jpg"
-            thumb_cmd = [
-                "ffmpeg", "-y", "-i", input_url,
-                "-vf", "fps=0.1", "-q:v", "2", "-frames:v", "1",
-                str(work_dir / "thumb_%04d.jpg"),
-            ]
+            thumb_cmd = self._build_thumb_cmd(
+                input_url, work_dir / "thumb_%04d.jpg", single_frame=True,
+            )
             subprocess.run(thumb_cmd, check=True, capture_output=True)
             thumbnail_key = f"{job.output_s3_prefix}/thumbnail.jpg"
             if thumb_path.exists():
@@ -150,6 +143,25 @@ class FFmpegTranscoder(BaseTranscoder):
             return TranscodeResult(success=False, error=str(e))
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
+
+    @staticmethod
+    def _build_thumb_cmd(input_url, out_pattern, single_frame=False):
+        """Thumbnail extraction.
+
+        format=yuvj420p forces full-range 8-bit before the mjpeg encoder:
+        ffmpeg >=7 hard-errors on limited-range YUV (most camera video) and
+        mjpeg cannot take 10-bit HEVC input at all.
+
+        The poster thumbnail (single_frame) grabs the first frame directly —
+        on ffmpeg >=7 the fps=0.1 sampler emits zero frames for clips shorter
+        than its 10s interval, which fails the whole transcode task.
+        """
+        vf = "format=yuvj420p" if single_frame else "fps=0.1,format=yuvj420p"
+        cmd = ["ffmpeg", "-y", "-i", str(input_url), "-vf", vf, "-q:v", "2"]
+        if single_frame:
+            cmd += ["-frames:v", "1"]
+        cmd.append(str(out_pattern))
+        return cmd
 
     QUALITY_MAP = {
         "1080p": ("1920:1080", 20),
