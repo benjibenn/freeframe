@@ -95,6 +95,11 @@ class ChildProjectItem(BaseModel):
     is_reference: bool = False
 
 
+class SubmissionFile(BaseModel):
+    asset_id: uuid.UUID
+    name: str
+
+
 class SubmissionItem(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
@@ -103,6 +108,7 @@ class SubmissionItem(BaseModel):
     display_name: Optional[str] = None  # Owner-set handle override (None => account name)
     project_id: uuid.UUID
     asset_count: int
+    files: list[SubmissionFile] = []
     created_at: datetime
 
 
