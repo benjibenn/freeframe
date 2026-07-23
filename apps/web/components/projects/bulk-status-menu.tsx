@@ -38,6 +38,7 @@ export function BulkStatusMenu({
   const { user } = useAuthStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
   const showStages = isPlatformAdmin && Boolean(onSetStage)
+  const showRunAsAd = isPlatformAdmin && Boolean(onSetRunAsAd)
 
   const { data: stages } = useSWR<TaskStage[]>(
     showStages ? '/task-stages' : null,
@@ -102,17 +103,17 @@ export function BulkStatusMenu({
             </>
           )}
 
-          {onSetRunAsAd && (
+          {showRunAsAd && (
             <>
               <DropdownMenu.Separator className="my-1 h-px bg-border mx-1" />
               <div className="px-3 py-1 text-2xs font-medium uppercase tracking-wider text-text-tertiary">
                 Ad
               </div>
-              <DropdownMenu.Item onSelect={() => onSetRunAsAd(true)} className={itemClass}>
+              <DropdownMenu.Item onSelect={() => onSetRunAsAd?.(true)} className={itemClass}>
                 <Megaphone className="h-3.5 w-3.5" />
                 Mark as ad
               </DropdownMenu.Item>
-              <DropdownMenu.Item onSelect={() => onSetRunAsAd(false)} className={itemClass}>
+              <DropdownMenu.Item onSelect={() => onSetRunAsAd?.(false)} className={itemClass}>
                 <Megaphone className="h-3.5 w-3.5 opacity-40" />
                 Unmark as ad
               </DropdownMenu.Item>

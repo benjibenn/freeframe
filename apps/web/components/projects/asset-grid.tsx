@@ -204,6 +204,7 @@ export function AssetGrid({
   const clearSelection = () => {
     setSelectedAssetIds(new Set())
     setSelectedFolderIds(new Set())
+    lastClickedRef.current = null
   }
 
   const totalSelected = selectedAssetIds.size + selectedFolderIds.size

@@ -16,7 +16,7 @@ from ..models.share import AssetShare
 from ..models.activity import Mention, Notification, NotificationType, ActivityAction
 from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse, TagsUpdate, TagCount
 from ..schemas.notification import AssignmentUpdate
-from ..services.permissions import require_project_role, require_asset_access, can_access_asset, is_public_project, get_project_member, can_view_project, is_platform_admin
+from ..services.permissions import require_project_role, require_asset_access, can_access_asset, is_public_project, get_project_member, can_view_project, is_platform_admin, require_platform_admin
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
 from .hls_proxy import create_hls_token
 from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, mime_to_asset_type
@@ -285,8 +285,10 @@ def bulk_update_run_as_ad(
 ):
     """Toggle the run-as-ad flag on many assets at once (multi-select bulk edit).
 
-    Same permission rule as the single-asset PATCH: platform admins manage every
-    project; everyone else needs editor role or higher on each asset's project."""
+    Same permission rule as the single-asset PATCH: platform-admin only. run_as_ad
+    is the clearance flag external ad platforms filter by, so it isn't delegable
+    to project editors the way status/tags are."""
+    require_platform_admin(current_user)
     if not body.asset_ids:
         raise HTTPException(status_code=422, detail="asset_ids is empty")
     if len(body.asset_ids) > 200:
@@ -298,9 +300,6 @@ def bulk_update_run_as_ad(
     missing = [str(a) for a in body.asset_ids if a not in found]
     if missing:
         raise HTTPException(status_code=404, detail=f"Assets not found: {', '.join(missing)}")
-    if not is_platform_admin(current_user):
-        for asset in assets:
-            require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
     for asset in assets:
         asset.run_as_ad = body.run_as_ad
     db.commit()
