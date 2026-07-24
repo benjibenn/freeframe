@@ -31,6 +31,7 @@ interface SubmissionItem {
   user_email: string
   project_id: string
   asset_count: number
+  files: { asset_id: string; name: string }[]
   created_at: string
 }
 
@@ -602,28 +603,58 @@ function LinkCard({
           ) : subs.length === 0 ? (
             <p className="py-2 text-sm text-text-tertiary">No submissions yet.</p>
           ) : (
-            <ul className="flex flex-col">
-              {subs.map((s) => (
-                <li key={s.id}>
-                  <Link
-                    href={`/projects/${s.project_id}`}
-                    className="flex items-center justify-between rounded-md px-2 py-2 hover:bg-bg-hover"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm text-text-primary">
-                        {s.user_name || s.user_email}
-                      </span>
-                      {s.user_name && (
-                        <span className="block truncate text-xs text-text-tertiary">{s.user_email}</span>
-                      )}
-                    </span>
-                    <span className="shrink-0 text-xs text-text-tertiary">
-                      {s.asset_count} file{s.asset_count === 1 ? '' : 's'}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-2xs uppercase tracking-wider text-text-tertiary">
+                    <th className="px-2 py-1.5 font-medium">Submitter</th>
+                    <th className="px-2 py-1.5 font-medium">Files</th>
+                    <th className="px-2 py-1.5 font-medium text-right">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {subs.map((s) => (
+                    <tr key={s.id} className="border-t border-border align-top">
+                      <td className="px-2 py-2">
+                        <Link href={`/projects/${s.project_id}`} className="block hover:underline">
+                          <span className="block truncate text-text-primary">{s.user_name || s.user_email}</span>
+                          {s.user_name && (
+                            <span className="block truncate text-xs text-text-tertiary">{s.user_email}</span>
+                          )}
+                        </Link>
+                      </td>
+                      <td className="px-2 py-2">
+                        {s.files.length === 0 ? (
+                          <span className="text-xs text-text-tertiary">No files yet</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {s.files.slice(0, 6).map((f) => (
+                              <Link
+                                key={f.asset_id}
+                                href={`/projects/${s.project_id}/assets/${f.asset_id}`}
+                                className="inline-flex max-w-[160px] items-center gap-1 truncate rounded-md border border-border bg-bg-primary px-2 py-0.5 text-xs text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+                                title={f.name}
+                              >
+                                <Film className="h-3 w-3 shrink-0" />
+                                <span className="truncate">{f.name}</span>
+                              </Link>
+                            ))}
+                            {s.files.length > 6 && (
+                              <span className="inline-flex items-center px-1 text-xs text-text-tertiary">
+                                +{s.files.length - 6} more
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-2 py-2 text-right text-xs text-text-tertiary whitespace-nowrap">
+                        {new Date(s.created_at).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           <button
             onClick={() => setPreAssignOpen(true)}

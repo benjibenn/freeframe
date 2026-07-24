@@ -39,6 +39,7 @@ from ..schemas.submission import (
     SubmissionLinkPublic,
     SubmissionAcceptResponse,
     SubmissionItem,
+    SubmissionFile,
     SubmissionUpdate,
     ReferenceResponse,
     AttachProjectRequest,
@@ -423,15 +424,18 @@ def list_submissions(
     ).order_by(Submission.created_at.desc()).all()
 
     project_ids = [s.project_id for s in subs]
-    asset_counts = {}
+    files_by_project: dict[uuid.UUID, list[SubmissionFile]] = {}
     if project_ids:
         rows = (
-            db.query(Asset.project_id, func.count(Asset.id))
+            db.query(Asset.project_id, Asset.id, Asset.name)
             .filter(Asset.project_id.in_(project_ids), Asset.deleted_at.is_(None))
-            .group_by(Asset.project_id)
+            .order_by(Asset.created_at.asc())
             .all()
         )
-        asset_counts = {pid: int(c) for pid, c in rows}
+        for pid, aid, name in rows:
+            files_by_project.setdefault(pid, []).append(
+                SubmissionFile(asset_id=aid, name=name or "")
+            )
 
     user_ids = [s.user_id for s in subs]
     users = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
@@ -439,6 +443,7 @@ def list_submissions(
     out = []
     for s in subs:
         u = users.get(s.user_id)
+        files = files_by_project.get(s.project_id, [])
         out.append(SubmissionItem(
             id=s.id,
             user_id=s.user_id,
@@ -446,7 +451,8 @@ def list_submissions(
             user_email=(u.email if u else "") or "",
             display_name=s.display_name,
             project_id=s.project_id,
-            asset_count=asset_counts.get(s.project_id, 0),
+            asset_count=len(files),
+            files=files,
             created_at=s.created_at,
         ))
     return out

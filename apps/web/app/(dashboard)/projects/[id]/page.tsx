@@ -1013,6 +1013,10 @@ export default function ProjectDetailPage() {
                 await api.patch(`/assets/bulk/stage`, { asset_ids: assetIds, task_stage_id: stageId });
                 mutateAssets();
               }}
+              onBulkRunAsAd={async (assetIds, runAsAd) => {
+                await api.patch(`/assets/bulk/run-as-ad`, { asset_ids: assetIds, run_as_ad: runAsAd });
+                mutateAssets();
+              }}
               onBulkDownload={async (assetIds, folderIds) => {
                 function triggerDownload(url: string) {
                   const iframe = document.createElement("iframe");
