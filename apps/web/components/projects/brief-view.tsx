@@ -12,7 +12,11 @@ import useSWR from 'swr'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
-export type BriefColumn = { key: string; header: string }
+// `keys` is an optional ordered fallback list: the cell renders the first of these
+// fields present on the row (non-empty), letting one column absorb field-name variants
+// (e.g. an AI brief writer emitting `script` on one run, `script_voiceover` the next).
+// Falls back to `key` when `keys` is absent, so older templates keep working.
+export type BriefColumn = { key: string; header: string; keys?: string[] }
 export type BriefSection = {
   id: string
   title: string
@@ -47,6 +51,16 @@ function Heading({ title }: { title: string }) {
   return <h3 className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">{title}</h3>
 }
 
+/** First non-empty value across a column's candidate keys (aliases), as a string. */
+function cellValue(row: Record<string, unknown>, col: BriefColumn): string {
+  const keys = col.keys && col.keys.length > 0 ? col.keys : [col.key]
+  for (const k of keys) {
+    const v = row[k]
+    if (v != null && String(v).trim() !== '') return String(v)
+  }
+  return ''
+}
+
 function TableBlock({ rows, columns }: { rows: Record<string, unknown>[]; columns: BriefColumn[] }) {
   const cols = columns.length > 0 ? columns : Object.keys(rows[0] ?? {}).map((k) => ({ key: k, header: k }))
   return (
@@ -67,7 +81,7 @@ function TableBlock({ rows, columns }: { rows: Record<string, unknown>[]; column
                   key={c.key}
                   className={j === 0 ? 'px-3 py-2.5 font-medium text-text-primary' : 'px-3 py-2.5 text-text-secondary'}
                 >
-                  {row[c.key] == null ? '' : String(row[c.key])}
+                  {cellValue(row, c)}
                 </td>
               ))}
             </tr>

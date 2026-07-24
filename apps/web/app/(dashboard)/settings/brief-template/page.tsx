@@ -8,7 +8,7 @@ import { api } from '@/lib/api'
 import { useToast } from '@/components/shared/toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { BriefView, type BriefSection } from '@/components/projects/brief-view'
+import { BriefView, type BriefSection, type BriefColumn } from '@/components/projects/brief-view'
 
 const RENDER_TYPES: BriefSection['as'][] = ['text', 'bullets', 'table']
 
@@ -234,20 +234,31 @@ function ColumnsEditor({
   columns,
   onChange,
 }: {
-  columns: { key: string; header: string }[]
-  onChange: (cols: { key: string; header: string }[]) => void
+  columns: BriefColumn[]
+  onChange: (cols: BriefColumn[]) => void
 }) {
-  function set(i: number, next: Partial<{ key: string; header: string }>) {
+  function set(i: number, next: Partial<BriefColumn>) {
     onChange(columns.map((c, j) => (j === i ? { ...c, ...next } : c)))
+  }
+  // Aliases edited as a comma-separated string; empty => drop `keys` (fall back to `key`).
+  function setAliases(i: number, raw: string) {
+    const keys = raw.split(',').map((s) => s.trim()).filter(Boolean)
+    set(i, { keys: keys.length > 0 ? keys : undefined })
   }
   return (
     <div className="mt-3 rounded-md border border-border/60 bg-bg-primary/40 p-2">
-      <p className="mb-1.5 text-xs font-medium text-text-tertiary">Table columns (key → header)</p>
+      <p className="mb-1.5 text-xs font-medium text-text-tertiary">Table columns (key → header, optional aliases)</p>
       <div className="flex flex-col gap-1.5">
         {columns.map((c, i) => (
           <div key={i} className="flex items-center gap-1.5">
             <Input value={c.key} onChange={(e) => set(i, { key: e.target.value })} placeholder="key (e.g. script)" className="text-xs" />
             <Input value={c.header} onChange={(e) => set(i, { header: e.target.value })} placeholder="Header" className="text-xs" />
+            <Input
+              value={(c.keys ?? []).join(', ')}
+              onChange={(e) => setAliases(i, e.target.value)}
+              placeholder="aliases (e.g. script_voiceover, voiceover)"
+              className="text-xs"
+            />
             <button
               type="button"
               onClick={() => onChange(columns.filter((_, j) => j !== i))}

@@ -29,7 +29,7 @@ DEFAULT_SECTIONS = [
         "as": "table",
         "columns": [
             {"key": "variation", "header": "Hook variation"},
-            {"key": "script", "header": "Script"},
+            {"key": "script", "keys": ["script_voiceover", "script", "voiceover"], "header": "Script (Voiceover & Subtitle)"},
             {"key": "shot", "header": "Shot"},
             {"key": "on_screen_text", "header": "On-screen text"},
         ],
@@ -40,7 +40,7 @@ DEFAULT_SECTIONS = [
         "path": "script_with_storyboard",
         "as": "table",
         "columns": [
-            {"key": "script", "header": "Script"},
+            {"key": "script", "keys": ["script_voiceover", "script", "voiceover"], "header": "Script (Voiceover & Subtitle)"},
             {"key": "shot", "header": "Shot"},
             {"key": "on_screen_text", "header": "On-screen text"},
         ],

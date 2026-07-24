@@ -37,3 +37,21 @@ def test_table_keeps_good_columns_and_drops_keyless_ones():
 def test_non_table_section_has_no_columns_key():
     out = bt._normalize_sections([{"path": "overview", "as": "text", "columns": [{"key": "x"}]}])
     assert "columns" not in out[0]
+
+
+def test_column_keeps_alias_keys():
+    # Aliases let one column absorb field-name variants (e.g. an AI brief writer emitting
+    # `script_voiceover` where the template keys on `script`); they must survive normalize.
+    out = bt._normalize_sections([{
+        "path": "rows", "as": "table",
+        "columns": [{"key": "script", "header": "Script", "keys": ["script_voiceover", "script", " "]}],
+    }])
+    # Blank aliases are dropped; the rest preserved in order.
+    assert out[0]["columns"][0]["keys"] == ["script_voiceover", "script"]
+
+
+def test_column_without_aliases_omits_keys():
+    out = bt._normalize_sections([{
+        "path": "rows", "as": "table", "columns": [{"key": "shot", "header": "Shot"}],
+    }])
+    assert "keys" not in out[0]["columns"][0]

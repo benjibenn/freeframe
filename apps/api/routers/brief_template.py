@@ -57,7 +57,13 @@ def _normalize_sections(raw: list[dict]) -> list[dict]:
                 key = str(col.get("key") or "").strip()
                 if not key:
                     continue
-                cols.append({"key": key, "header": str(col.get("header") or key)})
+                normalized_col = {"key": key, "header": str(col.get("header") or key)}
+                # Optional alias list: field-name variants this column may read from
+                # (first non-empty wins at render time). Kept clean, blanks dropped.
+                keys = [str(k).strip() for k in (col.get("keys") or []) if str(k).strip()]
+                if keys:
+                    normalized_col["keys"] = keys
+                cols.append(normalized_col)
             section["columns"] = cols
         out.append(section)
     return out
