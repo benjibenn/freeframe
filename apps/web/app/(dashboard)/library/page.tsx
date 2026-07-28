@@ -73,6 +73,7 @@ function MultiSelectDropdown({
   onToggle,
   onClear,
   color = 'default',
+  tourKey,
 }: {
   label: string
   options: { value: string; count: number }[]
@@ -80,6 +81,8 @@ function MultiSelectDropdown({
   onToggle: (v: string) => void
   onClear: () => void
   color?: 'default' | 'purple'
+  /** `data-tour` anchor so the new-user tour can spotlight this filter. */
+  tourKey?: string
 }) {
   const [open, setOpen] = React.useState(false)
   const [search, setSearch] = React.useState('')
@@ -107,7 +110,7 @@ function MultiSelectDropdown({
     : 'border-accent bg-accent'
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative" data-tour={tourKey}>
       <button
         onClick={() => setOpen((v) => !v)}
         className={cn(
@@ -543,6 +546,7 @@ export default function LibraryPage() {
             onToggle={toggleTag}
             onClear={() => setTagFilter([])}
             color="default"
+            tourKey="library-keywords"
           />
         )}
 
@@ -555,6 +559,7 @@ export default function LibraryPage() {
             onToggle={toggleFrameLabel}
             onClear={() => setFrameLabelFilter([])}
             color="purple"
+            tourKey="library-video-labels"
           />
         )}
 

@@ -560,6 +560,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
             <VersionSwitcher versions={versions} />
           </div>
           <button
+            data-tour="new-version-button"
             onClick={() => versionFileInputRef.current?.click()}
             className="hidden sm:inline-flex items-center gap-1.5 rounded-md px-2.5 h-8 text-xs font-medium border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
             title="Upload new version"
@@ -630,6 +631,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
             <div className="px-4 pt-3 pb-2 shrink-0">
               <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5">
                 <button
+                  data-tour="comments-tab"
                   onClick={() => setActiveTab('comments')}
                   className={cn(
                     'flex-1 py-1.5 text-[13px] font-medium rounded-md transition-all',

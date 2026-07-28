@@ -145,6 +145,7 @@ export function Sidebar({ collapsed: collapsedProp, onToggle, mobileOpen = false
             <Link
               key={item.href}
               href={item.href}
+              data-tour={`sidebar-${item.label.toLowerCase()}`}
               onClick={() => setNotifOpen(false)}
               className={cn(
                 'group relative flex items-center rounded-md transition-colors duration-100',

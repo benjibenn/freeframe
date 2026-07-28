@@ -2,11 +2,12 @@
 
 import * as React from 'react'
 import { usePathname } from 'next/navigation'
-import { Search, ChevronRight, PanelRightClose, PanelRightOpen, Menu } from 'lucide-react'
+import { Search, ChevronRight, PanelRightClose, PanelRightOpen, Menu, HelpCircle } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { useViewStore } from '@/stores/view-store'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
+import { useTourStore } from '@/stores/tour-store'
 
 interface HeaderProps {
   onSearchOpen: () => void
@@ -58,6 +59,7 @@ export function Header({ onSearchOpen, onMenuOpen }: HeaderProps) {
   const pathname = usePathname()
   const { rightPanelOpen, toggleRightPanel } = useViewStore()
   const { labels, extraCrumbs } = useBreadcrumbStore()
+  const startTour = useTourStore((s) => s.start)
   const urlCrumbs = buildBreadcrumbs(pathname, labels)
   const breadcrumbs = [...urlCrumbs, ...extraCrumbs.map((c) => ({ label: c.label, href: c.href ?? '' }))]
 
@@ -100,6 +102,17 @@ export function Header({ onSearchOpen, onMenuOpen }: HeaderProps) {
 
       {/* Right side actions */}
       <div className="flex items-center gap-1.5">
+        {/* Replay the new-user tour. Always available — the tour auto-starts
+            only once, and people look for help after they're already stuck. */}
+        <button
+          onClick={startTour}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
+          title="Show me around"
+          aria-label="Show me around"
+        >
+          <HelpCircle className="h-4 w-4" />
+        </button>
+
         {/* Search trigger */}
         <button
           onClick={onSearchOpen}

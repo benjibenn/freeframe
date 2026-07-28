@@ -9,6 +9,7 @@ import { Header } from "@/components/layout/header";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { UploadsPanel } from "@/components/layout/uploads-panel";
 import { UploadSSEBridge } from "@/components/layout/upload-sse-bridge";
+import { TourOverlay } from "@/components/tour/tour-overlay";
 import { cn } from "@/lib/utils";
 
 export default function DashboardLayout({
@@ -88,6 +89,7 @@ export default function DashboardLayout({
       <UploadsPanel />
       <UploadSSEBridge />
       <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
+      <TourOverlay />
     </div>
   );
 }

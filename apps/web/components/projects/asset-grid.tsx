@@ -253,7 +253,7 @@ export function AssetGrid({
   }
 
   return (
-    <div className="flex flex-col gap-3 relative select-none">
+    <div className="flex flex-col gap-3 relative select-none" data-tour="asset-grid">
       {/* ─── Share Selection Mode Bar ──────────────────────────────────── */}
       {shareMode && (
         <div className="flex items-center justify-between rounded-lg border border-accent/30 bg-accent/5 px-4 py-2.5">

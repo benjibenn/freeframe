@@ -1134,7 +1134,7 @@ export default function ProjectDetailPage() {
                     </button>
                   )}
                   {canUpload && (
-                    <Button size="sm" onClick={() => setUploadOpen(true)}>
+                    <Button size="sm" data-tour="upload-button" onClick={() => setUploadOpen(true)}>
                       <Upload className="h-4 w-4" />
                       Upload
                     </Button>
