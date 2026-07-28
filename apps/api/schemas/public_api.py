@@ -3,14 +3,13 @@ from pydantic import BaseModel
 import uuid
 from datetime import datetime
 from typing import Optional
-from ..models.asset import AssetType, AssetStatus
+from ..models.asset import AssetType
 
 
 class PublicVideoItem(BaseModel):
     id: uuid.UUID
     name: str
     description: Optional[str] = None
-    status: AssetStatus
     asset_type: AssetType
     # Whether this video has been cleared (by an admin) to run as an ad.
     run_as_ad: bool = False

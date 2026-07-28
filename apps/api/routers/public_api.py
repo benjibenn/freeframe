@@ -46,7 +46,6 @@ def _pick_media_file(files: list[MediaFile]) -> Optional[MediaFile]:
 def list_videos(
     search: Optional[str] = Query(None, description="Filter by asset name, editor name/email, folder, project/set name, or submitter display name (partial, case-insensitive)"),
     author: Optional[str] = Query(None, description="Filter by author name or email (partial, case-insensitive)"),
-    asset_status: Optional[AssetStatus] = Query(None, alias="status", description="Filter by review status"),
     asset_type: str = Query("video", description="'video' (default) or 'all' to include every media type"),
     project_id: Optional[uuid.UUID] = Query(None, description="Restrict to a single project"),
     run_as_ad: Optional[bool] = Query(None, description="Filter by the 'run as ad' clearance flag (true = only ad-ready videos)"),
@@ -60,6 +59,10 @@ def list_videos(
         db.query(Asset)
         .join(User, Asset.created_by == User.id)
         .filter(Asset.deleted_at.is_(None))
+        # Archived assets never reach external consumers. This used to be the
+        # caller's job via ?status=, but review status is no longer exposed, so
+        # the exclusion is unconditional here.
+        .filter(Asset.status != AssetStatus.archived)
     )
 
     if asset_type != "all":
@@ -88,8 +91,6 @@ def list_videos(
                 Submission.display_name.ilike(like),
             ).exists(),
         ))
-    if asset_status is not None:
-        query = query.filter(Asset.status == asset_status)
     if author:
         like = f"%{author}%"
         query = query.filter(or_(User.name.ilike(like), User.email.ilike(like)))
@@ -185,7 +186,6 @@ def list_videos(
                 id=a.id,
                 name=a.name,
                 description=a.description,
-                status=a.status,
                 asset_type=a.asset_type,
                 run_as_ad=a.run_as_ad,
                 project_id=a.project_id,

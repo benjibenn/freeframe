@@ -120,10 +120,6 @@ export default function AssetsPage() {
           assets={assets ?? []}
           projectId=""
           isLoading={isLoading}
-          onBulkStatus={async (assetIds, status) => {
-            await api.patch(`/assets/bulk/status`, { asset_ids: assetIds, status })
-            mutate()
-          }}
           onBulkStage={async (assetIds, stageId) => {
             await api.patch(`/assets/bulk/stage`, { asset_ids: assetIds, task_stage_id: stageId })
             mutate()

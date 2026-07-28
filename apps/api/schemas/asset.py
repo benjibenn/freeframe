@@ -2,7 +2,7 @@ from pydantic import BaseModel
 import uuid
 from datetime import datetime
 from typing import Optional
-from ..models.asset import AssetType, AssetStatus, ProcessingStatus, FileType
+from ..models.asset import AssetType, ProcessingStatus, FileType
 from ..models.activity import NotificationType
 
 class MediaFileResponse(BaseModel):
@@ -38,7 +38,6 @@ class AssetResponse(BaseModel):
     name: str
     description: Optional[str]
     asset_type: AssetType
-    status: AssetStatus
     rating: Optional[int]
     assignee_id: Optional[uuid.UUID]
     task_stage_id: Optional[uuid.UUID] = None
@@ -56,7 +55,6 @@ class AssetResponse(BaseModel):
 class AssetUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    status: Optional[AssetStatus] = None
     rating: Optional[int] = None
     assignee_id: Optional[uuid.UUID] = None
     due_date: Optional[datetime] = None

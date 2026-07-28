@@ -55,7 +55,9 @@ def make_asset(db, project_id, admin_id, n: int):
         project_id=project_id,
         name=f"Demo asset {n:03d}",
         asset_type=AssetType.image,
-        status=AssetStatus.in_review,
+        # Only draft/archived remain reachable; seed the not-archived state so
+        # these assets show up everywhere the E2E suite looks for them.
+        status=AssetStatus.draft,
         created_by=admin_id,
         keywords=[],
     )

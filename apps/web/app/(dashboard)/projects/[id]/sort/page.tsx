@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { api } from '@/lib/api'
-import type { AssetResponse, AssetStatus } from '@/types'
+import type { AssetResponse } from '@/types'
 import { TagStampBar } from '@/components/review/tag-stamp-bar'
 import { useVideoPlayer } from '@/hooks/use-video-player'
 import { useSorterQueue } from '@/hooks/use-sorter-queue'
@@ -55,7 +55,7 @@ const SORTER_SHORTCUTS = [
 type Op =
   | { type: 'tag-add'; assetId: string; tag: string }
   | { type: 'tag-remove'; assetId: string; tag: string }
-  | { type: 'archive'; asset: AssetResponse; index: number; prevStatus: AssetStatus }
+  | { type: 'archive'; asset: AssetResponse; index: number }
 
 export default function SorterPage() {
   const router = useRouter()
@@ -140,11 +140,10 @@ export default function SorterPage() {
     if (!current) return
     const asset = current
     const savedIndex = queue.index
-    const prevStatus = asset.status
     queue.removeCurrent()
-    undoStack.current.push({ type: 'archive', asset, index: savedIndex, prevStatus })
+    undoStack.current.push({ type: 'archive', asset, index: savedIndex })
     enqueueWrite(asset.id, async () => {
-      await api.patch(`/assets/${asset.id}`, { status: 'archived' })
+      await api.post(`/assets/${asset.id}/archive`)
     })
   }
 
@@ -161,7 +160,7 @@ export default function SorterPage() {
       })
     } else {
       enqueueWrite(op.asset.id, async () => {
-        await api.patch(`/assets/${op.asset.id}`, { status: op.prevStatus })
+        await api.post(`/assets/${op.asset.id}/unarchive`)
       })
       queue.restoreAt(op.index, op.asset)
     }

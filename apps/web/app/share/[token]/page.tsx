@@ -900,7 +900,6 @@ function FolderAssetViewer({
     name: string
     asset_type: string
     description?: string
-    status?: string
     keywords?: string[]
   } | null>(null)
   const [loading, setLoading] = React.useState(true)
@@ -932,7 +931,6 @@ function FolderAssetViewer({
           name: streamData.name,
           asset_type: streamData.asset_type ?? 'image',
           description: streamData.description,
-          status: streamData.status,
           keywords: streamData.keywords,
         })
       else setAssetInfo({ name: 'Asset', asset_type: 'image' })
@@ -961,7 +959,6 @@ function FolderAssetViewer({
     name: assetInfo?.name ?? 'Asset',
     asset_type: assetType,
     description: assetInfo?.description,
-    status: assetInfo?.status ?? 'draft',
     keywords: assetInfo?.keywords ?? [],
     thumbnail_url: thumbnailUrl,
     stream_url: streamUrl,

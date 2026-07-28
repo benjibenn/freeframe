@@ -19,11 +19,11 @@ def _fake_asset(keywords):
 def _fake_response(asset, db):
     # Build a real AssetResponse so response_model validation passes without a DB.
     from apps.api.schemas.asset import AssetResponse
-    from apps.api.models.asset import AssetType, AssetStatus
+    from apps.api.models.asset import AssetType
     now = datetime.now(timezone.utc)
     return AssetResponse(
         id=asset.id, project_id=asset.project_id, name="demo", description=None,
-        asset_type=AssetType.video, status=AssetStatus.draft, rating=None,
+        asset_type=AssetType.video, rating=None,
         assignee_id=None, due_date=None, keywords=asset.keywords,
         created_by=uuid.uuid4(), created_at=now, updated_at=now,
     )

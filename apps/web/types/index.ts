@@ -2,8 +2,6 @@
 
 export type AssetType = "image" | "image_carousel" | "audio" | "video";
 
-export type AssetStatus = "draft" | "in_review" | "approved" | "rejected" | "archived";
-
 export type AssetVersionStatus = "uploading" | "processing" | "ready" | "failed";
 
 export type OrgRole = "owner" | "admin" | "member";
@@ -148,7 +146,6 @@ export interface Asset {
   name: string;
   description: string | null;
   asset_type: AssetType;
-  status: AssetStatus;
   rating: number | null;
   assignee_id: string | null;
   task_stage_id?: string | null;

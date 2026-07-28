@@ -14,22 +14,15 @@ import { SortPopover } from './sort-popover'
 import { MoveToDialog } from './move-to-dialog'
 import { BulkStatusMenu } from './bulk-status-menu'
 import { useViewStore } from '@/stores/view-store'
+import { useTaskStageOrder } from '@/lib/task-stages'
 import { rangeBetween, type SelectableItem } from '@/lib/selection'
-import type { Asset, AssetStatus, User, Folder, FolderTreeNode } from '@/types'
+import type { Asset, User, Folder, FolderTreeNode } from '@/types'
 
 const assetTypeIcons: Record<string, React.ElementType> = {
   video: Film,
   audio: Music,
   image: ImageIcon,
   image_carousel: Images,
-}
-
-const statusOrder: Record<AssetStatus, number> = {
-  in_review: 0,
-  draft: 1,
-  approved: 2,
-  rejected: 3,
-  archived: 4,
 }
 
 interface AssetGridProps {
@@ -60,9 +53,7 @@ interface AssetGridProps {
   onBulkDelete?: (assetIds: string[], folderIds: string[]) => void
   onBulkMove?: (assetIds: string[], folderIds: string[], targetFolderId: string | null) => void
   onBulkDownload?: (assetIds: string[], folderIds: string[]) => void
-  /** Bulk review-status change. When set, the selection bar shows "Set status". */
-  onBulkStatus?: (assetIds: string[], status: AssetStatus) => void
-  /** Bulk pipeline-stage change (admin only). Adds pipeline stages to the menu. */
+  /** Bulk pipeline-stage change (admin only). Shows the "Set status" menu. */
   onBulkStage?: (assetIds: string[], stageId: string | null) => void
   onBulkRunAsAd?: (assetIds: string[], runAsAd: boolean) => void
   projectName?: string
@@ -115,7 +106,6 @@ export function AssetGrid({
   onBulkDelete,
   onBulkMove,
   onBulkDownload,
-  onBulkStatus,
   onBulkStage,
   onBulkRunAsAd,
   projectName = 'Project',
@@ -210,19 +200,25 @@ export function AssetGrid({
   const totalSelected = selectedAssetIds.size + selectedFolderIds.size
   const selectedTotalSize = Array.from(selectedAssetIds).reduce((sum, id) => sum + (fileSizes[id] ?? 0), 0)
 
+  const { available: stagesAvailable, positionOf: stagePosition } = useTaskStageOrder()
+  // sortKey is persisted to localStorage, so a user who sorted by status before
+  // losing stage visibility (or before this option existed) can still hold it.
+  const effectiveSortKey = sortKey === 'status' && !stagesAvailable ? 'date' : sortKey
+
   const filtered = React.useMemo(() => {
     let result = [...assets]
 
-    if (sortKey !== 'custom') {
+    if (effectiveSortKey !== 'custom') {
       result.sort((a, b) => {
         let cmp = 0
-        if (sortKey === 'date') {
+        if (effectiveSortKey === 'date') {
           cmp = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
-        } else if (sortKey === 'name') {
+        } else if (effectiveSortKey === 'name') {
           cmp = a.name.localeCompare(b.name)
-        } else if (sortKey === 'status') {
-          cmp = statusOrder[a.status] - statusOrder[b.status]
-        } else if (sortKey === 'type') {
+        } else if (effectiveSortKey === 'status') {
+          // "Status" now means pipeline stage, ordered by the stage's own position.
+          cmp = stagePosition(a.task_stage_id) - stagePosition(b.task_stage_id)
+        } else if (effectiveSortKey === 'type') {
           cmp = a.asset_type.localeCompare(b.asset_type)
         }
         return sortDirection === 'asc' ? cmp : -cmp
@@ -230,7 +226,7 @@ export function AssetGrid({
     }
 
     return result
-  }, [assets, sortKey, sortDirection])
+  }, [assets, effectiveSortKey, sortDirection, stagePosition])
 
   const visibleOrder = React.useMemo<SelectableItem[]>(
     () => [
@@ -712,20 +708,12 @@ export function AssetGrid({
               <FolderInput className="h-4 w-4" /> Move to
             </Button>
           )}
-          {onBulkStatus && selectedAssetIds.size > 0 && (
+          {onBulkStage && selectedAssetIds.size > 0 && (
             <BulkStatusMenu
-              onSetStatus={(status) => {
-                onBulkStatus(Array.from(selectedAssetIds), status)
+              onSetStage={(stageId) => {
+                onBulkStage(Array.from(selectedAssetIds), stageId)
                 clearSelection()
               }}
-              onSetStage={
-                onBulkStage
-                  ? (stageId) => {
-                      onBulkStage(Array.from(selectedAssetIds), stageId)
-                      clearSelection()
-                    }
-                  : undefined
-              }
               onSetRunAsAd={
                 onBulkRunAsAd
                   ? (runAsAd) => {

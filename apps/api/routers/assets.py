@@ -236,40 +236,40 @@ def update_asset(
     return _build_asset_response(asset, db)
 
 
-class BulkStatusRequest(BaseModel):
-    asset_ids: list[uuid.UUID]
-    status: AssetStatus
-
-
-@router.patch("/assets/bulk/status")
-def bulk_update_asset_status(
-    body: BulkStatusRequest,
+@router.post("/assets/{asset_id}/archive", response_model=AssetResponse)
+def archive_asset(
+    asset_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Set the review status on many assets at once (multi-select bulk edit).
+    """Archive an asset (the Sorter's archive action).
 
-    Same permission rule as the single-asset PATCH: platform admins manage every
-    project; everyone else needs editor role or higher on each asset's project."""
-    if not body.asset_ids:
-        raise HTTPException(status_code=422, detail="asset_ids is empty")
-    if len(body.asset_ids) > 200:
-        raise HTTPException(status_code=413, detail="Too many asset_ids (max 200)")
-    assets = db.query(Asset).filter(
-        Asset.id.in_(body.asset_ids), Asset.deleted_at.is_(None)
-    ).all()
-    found = {a.id for a in assets}
-    missing = [str(a) for a in body.asset_ids if a not in found]
-    if missing:
-        raise HTTPException(status_code=404, detail=f"Assets not found: {', '.join(missing)}")
-    # Enforce edit permission on every asset before mutating any of them.
-    if not is_platform_admin(current_user):
-        for asset in assets:
-            require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
-    for asset in assets:
-        asset.status = body.status
+    Archiving is stored in Asset.status, which is otherwise internal — no API
+    surface reads or writes that column directly. Archived assets are hidden from
+    the asset listings and from the public integration API."""
+    asset = _load_editable_asset(asset_id, db, current_user)
+    asset.status = AssetStatus.archived
     db.commit()
-    return {"updated": len(assets)}
+    db.refresh(asset)
+    return _build_asset_response(asset, db)
+
+
+@router.post("/assets/{asset_id}/unarchive", response_model=AssetResponse)
+def unarchive_asset(
+    asset_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Bring an archived asset back into the listings (the Sorter's undo).
+
+    Restores the draft status rather than whatever the asset held before it was
+    archived: the other AssetStatus values are no longer reachable from any UI,
+    so draft is the only meaningful "not archived" state left."""
+    asset = _load_editable_asset(asset_id, db, current_user)
+    asset.status = AssetStatus.draft
+    db.commit()
+    db.refresh(asset)
+    return _build_asset_response(asset, db)
 
 
 class BulkRunAsAdRequest(BaseModel):
@@ -287,7 +287,7 @@ def bulk_update_run_as_ad(
 
     Same permission rule as the single-asset PATCH: platform-admin only. run_as_ad
     is the clearance flag external ad platforms filter by, so it isn't delegable
-    to project editors the way status/tags are."""
+    to project editors the way tags are."""
     require_platform_admin(current_user)
     if not body.asset_ids:
         raise HTTPException(status_code=422, detail="asset_ids is empty")

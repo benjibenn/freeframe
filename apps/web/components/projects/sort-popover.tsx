@@ -5,18 +5,23 @@ import * as Popover from '@radix-ui/react-popover'
 import { ArrowUpDown, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useViewStore, type SortKey } from '@/stores/view-store'
+import { useTaskStageOrder } from '@/lib/task-stages'
 
 const sortOptions: { value: SortKey; label: string }[] = [
   { value: 'custom', label: 'Custom' },
   { value: 'date', label: 'Date' },
   { value: 'name', label: 'Name' },
+  // Status = pipeline stage, so this option only appears for the platform admins
+  // who can see stages at all.
   { value: 'status', label: 'Status' },
   { value: 'type', label: 'Type' },
 ]
 
 export function SortPopover() {
   const { sortKey, setSortKey, sortDirection, toggleSortDirection } = useViewStore()
-  const activeLabel = sortOptions.find((o) => o.value === sortKey)?.label ?? 'Custom'
+  const { available: stagesAvailable } = useTaskStageOrder()
+  const options = stagesAvailable ? sortOptions : sortOptions.filter((o) => o.value !== 'status')
+  const activeLabel = options.find((o) => o.value === sortKey)?.label ?? 'Custom'
 
   return (
     <Popover.Root>
@@ -38,7 +43,7 @@ export function SortPopover() {
             data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0
             data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
         >
-          {sortOptions.map((opt) => (
+          {options.map((opt) => (
             <button
               key={opt.value}
               onClick={() => {

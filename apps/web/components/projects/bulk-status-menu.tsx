@@ -7,43 +7,34 @@ import { Tag, ChevronDown, Megaphone } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
-import type { AssetStatus, TaskStage } from '@/types'
-
-const REVIEW_STATUSES: { value: AssetStatus; label: string; dot: string }[] = [
-  { value: 'draft', label: 'Draft', dot: 'bg-text-tertiary' },
-  { value: 'in_review', label: 'In Review', dot: 'bg-status-warning' },
-  { value: 'approved', label: 'Approved', dot: 'bg-status-success' },
-  { value: 'rejected', label: 'Rejected', dot: 'bg-status-error' },
-  { value: 'archived', label: 'Archived', dot: 'bg-text-tertiary' },
-]
+import type { TaskStage } from '@/types'
 
 const itemClass =
   'flex items-center gap-2.5 mx-1 px-2.5 py-2 rounded-lg text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors'
 
 /**
- * "Set status" dropdown for the multi-select action bar. Always offers the
- * review-status options (draft…archived). Platform admins additionally get the
- * pipeline-stage options, mirroring the two "status" concepts that exist on the
- * single-asset review page. Opens upward since it lives in the bottom bar.
+ * "Set status" dropdown for the multi-select action bar. Status means the
+ * admin-configurable pipeline stage — the single status concept in the product —
+ * so the whole menu is platform-admin only and renders nothing for other users.
+ * Opens upward since it lives in the bottom bar.
  */
 export function BulkStatusMenu({
-  onSetStatus,
   onSetStage,
   onSetRunAsAd,
 }: {
-  onSetStatus: (status: AssetStatus) => void
-  onSetStage?: (stageId: string | null) => void
+  onSetStage: (stageId: string | null) => void
   onSetRunAsAd?: (runAsAd: boolean) => void
 }) {
   const { user } = useAuthStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
-  const showStages = isPlatformAdmin && Boolean(onSetStage)
   const showRunAsAd = isPlatformAdmin && Boolean(onSetRunAsAd)
 
   const { data: stages } = useSWR<TaskStage[]>(
-    showStages ? '/task-stages' : null,
+    isPlatformAdmin ? '/task-stages' : null,
     () => api.get<TaskStage[]>('/task-stages'),
   )
+
+  if (!isPlatformAdmin) return null
 
   return (
     <DropdownMenu.Root>
@@ -61,47 +52,25 @@ export function BulkStatusMenu({
           className="z-[100] min-w-[200px] rounded-xl border border-border bg-bg-elevated shadow-2xl py-1.5 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
         >
           <div className="px-3 py-1 text-2xs font-medium uppercase tracking-wider text-text-tertiary">
-            Review status
+            Pipeline stage
           </div>
-          {REVIEW_STATUSES.map((s) => (
+          <DropdownMenu.Item onSelect={() => onSetStage(null)} className={itemClass}>
+            <span className="h-2 w-2 rounded-full border border-border" />
+            Unassigned
+          </DropdownMenu.Item>
+          {stages?.map((stage) => (
             <DropdownMenu.Item
-              key={s.value}
-              onSelect={() => onSetStatus(s.value)}
+              key={stage.id}
+              onSelect={() => onSetStage(stage.id)}
               className={itemClass}
             >
-              <span className={cn('h-2 w-2 rounded-full', s.dot)} />
-              {s.label}
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: stage.color ?? 'var(--color-text-tertiary)' }}
+              />
+              {stage.name}
             </DropdownMenu.Item>
           ))}
-
-          {showStages && (
-            <>
-              <DropdownMenu.Separator className="my-1 h-px bg-border mx-1" />
-              <div className="px-3 py-1 text-2xs font-medium uppercase tracking-wider text-text-tertiary">
-                Pipeline stage
-              </div>
-              <DropdownMenu.Item
-                onSelect={() => onSetStage?.(null)}
-                className={itemClass}
-              >
-                <span className="h-2 w-2 rounded-full border border-border" />
-                Unassigned
-              </DropdownMenu.Item>
-              {stages?.map((stage) => (
-                <DropdownMenu.Item
-                  key={stage.id}
-                  onSelect={() => onSetStage?.(stage.id)}
-                  className={itemClass}
-                >
-                  <span
-                    className="h-2 w-2 rounded-full"
-                    style={{ backgroundColor: stage.color ?? 'var(--color-text-tertiary)' }}
-                  />
-                  {stage.name}
-                </DropdownMenu.Item>
-              ))}
-            </>
-          )}
 
           {showRunAsAd && (
             <>
