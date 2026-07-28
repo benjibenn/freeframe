@@ -438,6 +438,10 @@ export default function ProjectDetailPage() {
     }
   }, [uploadFiles, mutateAssets, mutateSubfolders, projectId]);
 
+  // Projects provisioned by a request name every new upload "Hook N" server-side,
+  // so the submitter is never offered a name field.
+  const autoNamesHooks = !!project?.submission_link_id;
+
   const handleFilesSelected = (files: File[]) => {
     setPendingFiles(files);
     if (files.length > 0) setAssetName(files[0].name.replace(/\.[^/.]+$/, ""));
@@ -1189,13 +1193,21 @@ export default function ProjectDetailPage() {
                           ))}
                         </div>
                       </div>
-                      {pendingFiles.length === 1 && (
-                        <Input
-                          label="Asset name"
-                          value={assetName}
-                          onChange={(e) => setAssetName(e.target.value)}
-                          placeholder="e.g. Hero Video Final"
-                        />
+                      {autoNamesHooks ? (
+                        <p className="text-xs text-text-tertiary">
+                          Uploads are numbered automatically — each new file becomes
+                          the next hook (Hook 1, Hook 2, …). To revise a hook you
+                          already sent, open it and upload a new version instead.
+                        </p>
+                      ) : (
+                        pendingFiles.length === 1 && (
+                          <Input
+                            label="Asset name"
+                            value={assetName}
+                            onChange={(e) => setAssetName(e.target.value)}
+                            placeholder="e.g. Hero Video Final"
+                          />
+                        )
                       )}
                       <div className="flex justify-end gap-2">
                         <Button

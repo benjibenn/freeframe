@@ -51,11 +51,20 @@ def initiate_upload(
             raise HTTPException(status_code=400, detail="Asset does not belong to the specified project")
     else:
         from ..services import brief_import_service
+        from ..services.hook_naming import next_hook_name
         asset_type = mime_to_asset_type(body.mime_type)
         cf = brief_import_service.cf_ids_for_project(db, project)
+        name = body.asset_name
+        if project.submission_link_id:
+            # Uploads into a request's per-submitter project are always "Hook N";
+            # whatever name the client sent is ignored. Lock the project row first
+            # so concurrent initiates (one per file in a multi-file selection) are
+            # numbered Hook 1..N instead of all reading the same highest number.
+            db.query(Project).filter(Project.id == project.id).with_for_update().first()
+            name = next_hook_name(db, project.id)
         asset = Asset(
             project_id=body.project_id,
-            name=body.asset_name,
+            name=name,
             asset_type=asset_type,
             created_by=current_user.id,
             folder_id=body.folder_id,
