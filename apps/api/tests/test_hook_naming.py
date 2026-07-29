@@ -7,7 +7,7 @@ to their own project, and revising a hook must not burn a new number.
 import uuid
 from unittest.mock import MagicMock, patch
 
-from apps.api.services.hook_naming import next_hook_name, next_hook_number
+from apps.api.services.hook_naming import next_hook_name, next_hook_number, variation_names
 
 
 # ── The numbering rule ─────────────────────────────────────────────────────────
@@ -42,6 +42,40 @@ def test_hook_prefix_is_matched_case_and_space_insensitively():
 def test_hook_like_names_with_a_suffix_do_not_count():
     # "Hook 7 final" is a human-chosen title, not a slot in the sequence.
     assert next_hook_number(["Hook 7 final", "Hook 1"]) == 2
+
+
+# ── Brief-prescribed deliverable names ─────────────────────────────────────────
+
+def _brief(variations):
+    return {"final_deliverable": {"hook_variations": variations}}
+
+
+def test_variation_names_reads_the_briefs_deliverable_names():
+    brief = _brief([
+        {"variation": "Dress - EN - VIDEO - Hook A"},
+        {"variation": "  Dress - EN - VIDEO - Hook B  "},
+    ])
+    assert variation_names(brief) == [
+        "Dress - EN - VIDEO - Hook A",
+        "Dress - EN - VIDEO - Hook B",
+    ]
+
+
+def test_variation_names_is_empty_for_briefs_without_the_structure():
+    # Briefs are free-form pastes; older ones predate deliverable naming.
+    # Every malformed shape must mean "no prescribed names", never an error.
+    assert variation_names(None) == []
+    assert variation_names("a pdf-only brief") == []
+    assert variation_names({}) == []
+    assert variation_names({"final_deliverable": "3 videos"}) == []
+    assert variation_names({"final_deliverable": {"hook_variations": "three"}}) == []
+    assert variation_names(_brief(["not a dict"])) == []
+    assert variation_names(_brief([{"variation": ""}, {"variation": None}, {}])) == []
+
+
+def test_variation_names_skips_unnamed_rows_but_keeps_named_ones():
+    brief = _brief([{"variation": "Named Hook"}, {"shot": "no name here"}])
+    assert variation_names(brief) == ["Named Hook"]
 
 
 # ── The DB wrapper ─────────────────────────────────────────────────────────────
@@ -110,8 +144,9 @@ def test_submission_project_upload_is_renamed_to_the_next_hook(
 ):
     project = _mock_project(uuid.uuid4())  # provisioned by a request
     added = []
-    # project lookup, CF-lineage link lookup, locked project, latest version
-    _wire_db(mock_db, added, [project, None, project, None])
+    # project lookup, CF-lineage link lookup, brief link lookup (no brief_json
+    # -> no prescribed names), locked project, latest version
+    _wire_db(mock_db, added, [project, None, None, project, None])
 
     res = client.post("/upload/initiate", json=_initiate_body(project.id), headers=auth_headers)
 
@@ -122,6 +157,70 @@ def test_submission_project_upload_is_renamed_to_the_next_hook(
     # The project row is locked first, otherwise a multi-file selection (one
     # concurrent initiate per file) would name every file the same hook.
     mock_db.with_for_update.assert_called_once()
+
+
+def _mock_link(brief_json):
+    link = MagicMock()
+    link.brief_json = brief_json
+    return link
+
+
+BRIEF_NAME = "Dress That Needs a Boost - EN - VIDEO - Demo - Editor - I just found out"
+
+
+@patch("apps.api.routers.upload.create_multipart_upload", return_value="upload-123")
+@patch("apps.api.routers.upload.require_project_role")
+def test_upload_named_from_the_brief_when_it_prescribes_deliverables(
+    mock_require_role, mock_create_upload, client, mock_db, auth_headers
+):
+    project = _mock_project(uuid.uuid4())
+    link = _mock_link({"final_deliverable": {"hook_variations": [{"variation": BRIEF_NAME}]}})
+    added = []
+    # project lookup, CF-lineage link lookup, brief link lookup, latest version
+    _wire_db(mock_db, added, [project, None, link, None])
+
+    body = _initiate_body(project.id) | {"asset_name": BRIEF_NAME}
+    res = client.post("/upload/initiate", json=body, headers=auth_headers)
+
+    assert res.status_code == 200, res.text
+    assert _created_asset(added).name == BRIEF_NAME
+    # No Hook N numbering, so no need to serialize initiates on the project row.
+    mock_db.with_for_update.assert_not_called()
+
+
+@patch("apps.api.routers.upload.create_multipart_upload", return_value="upload-123")
+@patch("apps.api.routers.upload.require_project_role")
+def test_upload_with_a_name_not_in_the_brief_is_rejected(
+    mock_require_role, mock_create_upload, client, mock_db, auth_headers
+):
+    project = _mock_project(uuid.uuid4())
+    link = _mock_link({"final_deliverable": {"hook_variations": [{"variation": BRIEF_NAME}]}})
+    added = []
+    _wire_db(mock_db, added, [project, None, link])
+
+    res = client.post("/upload/initiate", json=_initiate_body(project.id), headers=auth_headers)
+
+    assert res.status_code == 400
+    assert "deliverable" in res.json()["detail"]
+    assert added == []
+
+
+@patch("apps.api.routers.upload.create_multipart_upload", return_value="upload-123")
+@patch("apps.api.routers.upload.require_project_role")
+@patch("apps.api.services.hook_naming.next_hook_name", return_value="Hook 1")
+def test_link_with_an_unformatted_brief_falls_back_to_hook_numbering(
+    mock_next_hook_name, mock_require_role, mock_create_upload, client, mock_db, auth_headers
+):
+    # Pre-existing briefs without deliverable names keep today's behavior.
+    project = _mock_project(uuid.uuid4())
+    link = _mock_link({"title": "old brief", "overview": "no final_deliverable section"})
+    added = []
+    _wire_db(mock_db, added, [project, None, link, project, None])
+
+    res = client.post("/upload/initiate", json=_initiate_body(project.id), headers=auth_headers)
+
+    assert res.status_code == 200, res.text
+    assert _created_asset(added).name == "Hook 1"
 
 
 @patch("apps.api.routers.upload.create_multipart_upload", return_value="upload-123")

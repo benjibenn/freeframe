@@ -82,6 +82,7 @@ export default function ProjectDetailPage() {
   const [briefViewOpen, setBriefViewOpen] = React.useState(false);
   const [assetName, setAssetName] = React.useState("");
   const [pendingFiles, setPendingFiles] = React.useState<File[]>([]);
+  const [fileNames, setFileNames] = React.useState<string[]>([]);
   const [selectedAsset, setSelectedAsset] =
     React.useState<AssetResponse | null>(null);
   const [shareLinksExpanded, setShareLinksExpanded] = React.useState(true);
@@ -442,20 +443,45 @@ export default function ProjectDetailPage() {
   // so the submitter is never offered a name field.
   const autoNamesHooks = !!project?.submission_link_id;
 
+  // When the link's brief prescribes deliverable names, the submitter picks one
+  // per file instead of getting Hook N. Same defensive walk as the server.
+  const variationNames = React.useMemo(() => {
+    if (!autoNamesHooks) return [];
+    const deliverable = (project?.brief_json as Record<string, unknown> | undefined)
+      ?.final_deliverable;
+    if (typeof deliverable !== "object" || deliverable === null) return [];
+    const variations = (deliverable as Record<string, unknown>).hook_variations;
+    if (!Array.isArray(variations)) return [];
+    return variations
+      .map((row) =>
+        typeof row === "object" && row !== null
+          ? (row as Record<string, unknown>).variation
+          : undefined,
+      )
+      .filter((v): v is string => typeof v === "string" && v.trim() !== "")
+      .map((v) => v.trim());
+  }, [autoNamesHooks, project?.brief_json]);
+
   const handleFilesSelected = (files: File[]) => {
     setPendingFiles(files);
+    setFileNames(files.map(() => ""));
     if (files.length > 0) setAssetName(files[0].name.replace(/\.[^/.]+$/, ""));
   };
 
   const handleStartUpload = () => {
-    pendingFiles.forEach((file) => {
+    pendingFiles.forEach((file, i) => {
       const name =
-        pendingFiles.length === 1 ? assetName || file.name : file.name;
+        variationNames.length > 0
+          ? fileNames[i]
+          : pendingFiles.length === 1
+            ? assetName || file.name
+            : file.name;
       // Note: startUpload does not yet accept folderId — assets will upload to root.
       // Upload store needs to be updated in a future task to support folder placement.
       startUpload(file, projectId, name, project?.name, currentFolderId);
     });
     setPendingFiles([]);
+    setFileNames([]);
     setAssetName("");
     setUploadOpen(false);
   };
@@ -1178,22 +1204,46 @@ export default function ProjectDetailPage() {
                         </div>
                         <div className="max-h-40 overflow-y-auto divide-y divide-border">
                           {pendingFiles.map((f, i) => (
-                            <div key={i} className="flex items-center justify-between px-3 py-1.5">
-                              <span className="text-sm text-text-primary truncate mr-2">{f.name}</span>
-                              <span className="text-xs text-text-tertiary shrink-0">
-                                {f.size < 1024 * 1024
-                                  ? `${(f.size / 1024).toFixed(0)} KB`
-                                  : `${(f.size / (1024 * 1024)).toFixed(1)} MB`}
-                              </span>
+                            <div key={i} className="px-3 py-1.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-sm text-text-primary truncate mr-2">{f.name}</span>
+                                <span className="text-xs text-text-tertiary shrink-0">
+                                  {f.size < 1024 * 1024
+                                    ? `${(f.size / 1024).toFixed(0)} KB`
+                                    : `${(f.size / (1024 * 1024)).toFixed(1)} MB`}
+                                </span>
+                              </div>
+                              {variationNames.length > 0 && (
+                                <select
+                                  value={fileNames[i] ?? ""}
+                                  onChange={(e) =>
+                                    setFileNames((prev) => {
+                                      const next = [...prev];
+                                      next[i] = e.target.value;
+                                      return next;
+                                    })
+                                  }
+                                  className="mt-1.5 w-full rounded-md border border-border bg-bg-primary px-2 py-1.5 text-sm text-text-primary"
+                                >
+                                  <option value="" disabled>
+                                    Select deliverable…
+                                  </option>
+                                  {variationNames.map((name) => (
+                                    <option key={name} value={name}>
+                                      {name}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
                             </div>
                           ))}
                         </div>
                       </div>
                       {autoNamesHooks ? (
                         <p className="text-xs text-text-tertiary">
-                          Uploads are numbered automatically — each new file becomes
-                          the next hook (Hook 1, Hook 2, …). To revise a hook you
-                          already sent, open it and upload a new version instead.
+                          {variationNames.length > 0
+                            ? "Each file must be one of the brief's deliverables — pick which one it is. To revise a deliverable you already sent, open it and upload a new version instead."
+                            : "Uploads are numbered automatically — each new file becomes the next hook (Hook 1, Hook 2, …). To revise a hook you already sent, open it and upload a new version instead."}
                         </p>
                       ) : (
                         pendingFiles.length === 1 && (
@@ -1210,11 +1260,21 @@ export default function ProjectDetailPage() {
                           type="button"
                           variant="secondary"
                           size="sm"
-                          onClick={() => setPendingFiles([])}
+                          onClick={() => {
+                            setPendingFiles([]);
+                            setFileNames([]);
+                          }}
                         >
                           Change files
                         </Button>
-                        <Button size="sm" onClick={handleStartUpload}>
+                        <Button
+                          size="sm"
+                          onClick={handleStartUpload}
+                          disabled={
+                            variationNames.length > 0 &&
+                            pendingFiles.some((_, i) => !fileNames[i])
+                          }
+                        >
                           Start upload
                         </Button>
                       </div>

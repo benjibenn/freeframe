@@ -51,17 +51,31 @@ def initiate_upload(
             raise HTTPException(status_code=400, detail="Asset does not belong to the specified project")
     else:
         from ..services import brief_import_service
-        from ..services.hook_naming import next_hook_name
+        from ..services.hook_naming import next_hook_name, variation_names
+        from ..models.submission import SubmissionLink
         asset_type = mime_to_asset_type(body.mime_type)
         cf = brief_import_service.cf_ids_for_project(db, project)
         name = body.asset_name
         if project.submission_link_id:
-            # Uploads into a request's per-submitter project are always "Hook N";
-            # whatever name the client sent is ignored. Lock the project row first
-            # so concurrent initiates (one per file in a multi-file selection) are
+            # Submitters never free-name uploads. When the link's brief prescribes
+            # deliverable names, the client must pick one of them; otherwise every
+            # new asset is auto-numbered "Hook N". Lock the project row first so
+            # concurrent initiates (one per file in a multi-file selection) are
             # numbered Hook 1..N instead of all reading the same highest number.
-            db.query(Project).filter(Project.id == project.id).with_for_update().first()
-            name = next_hook_name(db, project.id)
+            link = db.query(SubmissionLink).filter(
+                SubmissionLink.id == project.submission_link_id
+            ).first()
+            allowed = variation_names(link.brief_json) if link else []
+            if allowed:
+                if body.asset_name not in allowed:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Asset name must be one of the brief's deliverable names",
+                    )
+                name = body.asset_name
+            else:
+                db.query(Project).filter(Project.id == project.id).with_for_update().first()
+                name = next_hook_name(db, project.id)
         asset = Asset(
             project_id=body.project_id,
             name=name,
