@@ -1,0 +1,64 @@
+# ============================================================
+# FreeFrame — hetzmet override (freeframe.multiadsx.com)
+# ------------------------------------------------------------
+# This host (135.181.29.2) is dedicated to FreeFrame: nothing else
+# listens on :80/:443, so Traefik owns both ports and terminates TLS
+# itself with Let's Encrypt. (Contrast docker-compose.override.prod.yml,
+# which exists because that host already runs nginx on :443.)
+#
+# WHY THIS FILE EXISTS: the base prod compose routes with
+# PathPrefix(`/`) only. Traefik reads the ACME domain out of the
+# router's Host() rule — with no Host() it never requests a
+# certificate. These labels re-declare the routers with an explicit
+# Host() so letsencrypt has a domain to issue for.
+#
+# Bring the stack up with:
+#   cd /opt/freeframe
+#   docker compose --env-file .env.prod \
+#     -f docker-compose.prod.yml -f docker-compose.hetzmet.yml up -d --build
+# ============================================================
+
+services:
+  traefik:
+    command: !override
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # Send all plain HTTP to HTTPS. Traefik serves the ACME HTTP-01
+      # challenge from a dedicated higher-priority router, so cert
+      # issuance and renewal still work through this redirect.
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+
+  api:
+    labels: !override
+      - traefik.enable=true
+      - traefik.http.routers.api.rule=Host(`${DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.api.entrypoints=web
+      - traefik.http.routers.api.middlewares=strip-api-prefix
+      - traefik.http.routers.api-secure.rule=Host(`${DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.api-secure.entrypoints=websecure
+      - traefik.http.routers.api-secure.tls.certresolver=letsencrypt
+      - traefik.http.routers.api-secure.middlewares=strip-api-prefix
+      - traefik.http.routers.api-secure.service=api
+      - traefik.http.middlewares.strip-api-prefix.stripprefix.prefixes=/api
+      - traefik.http.services.api.loadbalancer.server.port=8000
+
+  web:
+    labels: !override
+      - traefik.enable=true
+      - traefik.http.routers.web.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.web.entrypoints=web
+      - traefik.http.routers.web.priority=1
+      - traefik.http.routers.web-secure.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.web-secure.entrypoints=websecure
+      - traefik.http.routers.web-secure.tls.certresolver=letsencrypt
+      - traefik.http.routers.web-secure.priority=1
+      - traefik.http.routers.web-secure.service=web
+      - traefik.http.services.web.loadbalancer.server.port=3000
