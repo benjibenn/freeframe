@@ -15,6 +15,14 @@ class PublicVideoItem(BaseModel):
     run_as_ad: bool = False
     project_id: uuid.UUID
     project_name: Optional[str] = None
+    # Where the asset is filed, as a slash-joined path rooted at the project name
+    # (e.g. "Skincare/GlowCo/Serum"). The project is always the first segment, so
+    # the path reads the same whether a taxonomy level is modelled as a project or
+    # as a folder. Assets sitting loose in a project get just the project name.
+    folder_id: Optional[uuid.UUID] = None
+    folder_path: Optional[str] = None
+    # Free-form per-asset labels (page, angle, ad type, ...). Mirrors Asset.keywords.
+    keywords: list[str] = []
     # The user who created/submitted the asset.
     author_name: Optional[str] = None
     author_email: Optional[str] = None
