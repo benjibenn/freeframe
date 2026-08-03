@@ -38,6 +38,10 @@ export function ConvertToRequestDialog({
   const [mode, setMode] = React.useState<Mode>('new')
   const [placement, setPlacement] = React.useState<Placement>('reference')
   const [targetId, setTargetId] = React.useState('')
+  // Where this request's output belongs in the taxonomy. Stamped onto every
+  // asset submitted under it, since submitted work lands in a per-submitter
+  // project and cannot be filed into the shared folder tree.
+  const [taxonomyPath, setTaxonomyPath] = React.useState('')
   const [submitting, setSubmitting] = React.useState(false)
   const [error, setError] = React.useState('')
 
@@ -46,6 +50,7 @@ export function ConvertToRequestDialog({
       setMode('new')
       setPlacement('reference')
       setTargetId('')
+      setTaxonomyPath('')
       setError('')
     }
   }, [open])
@@ -64,7 +69,7 @@ export function ConvertToRequestDialog({
       if (mode === 'new') {
         const created = await api.post<{ id: string }>(
           `/submission-links/from-project/${project.id}`,
-          { as_reference: asReference },
+          { as_reference: asReference, taxonomy_path: taxonomyPath.trim() || null },
         )
         requestId = created.id
       } else {
@@ -120,6 +125,23 @@ export function ConvertToRequestDialog({
                 hint="Add into one you already have"
               />
             </div>
+
+            {mode === 'new' && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-text-secondary">
+                  Folder path <span className="font-normal text-text-tertiary">(optional)</span>
+                </label>
+                <Input
+                  value={taxonomyPath}
+                  onChange={(e) => setTaxonomyPath(e.target.value)}
+                  placeholder="Skincare/GlowCo/Serum"
+                />
+                <p className="text-xs text-text-tertiary">
+                  Niche / store / product. Everything submitted to this request is filed
+                  here, so it shows up under the right product in Tasks and the ad picker.
+                </p>
+              </div>
+            )}
 
             {mode === 'existing' && (
               <div className="flex flex-col gap-1.5">

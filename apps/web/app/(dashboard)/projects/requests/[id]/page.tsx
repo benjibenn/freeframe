@@ -18,6 +18,7 @@ import {
   Trash2,
   Undo2,
   UserPlus,
+  Settings2,
   FileText,
   Film,
   Upload,
@@ -29,6 +30,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { useToast } from '@/components/shared/toast'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { PreAssignFolderDialog } from '@/components/shared/pre-assign-folder-dialog'
+import { RequestSettingsDialog } from '@/components/projects/request-settings-dialog'
 import { BriefView } from '@/components/projects/brief-view'
 import type { VideoRequest } from '@/components/projects/request-card'
 
@@ -135,6 +137,7 @@ export default function RequestDetailPage() {
 
   const [copied, setCopied] = React.useState(false)
   const [preAssignOpen, setPreAssignOpen] = React.useState(false)
+  const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [togglingRef, setTogglingRef] = React.useState(false)
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editValue, setEditValue] = React.useState('')
@@ -377,6 +380,12 @@ export default function RequestDetailPage() {
                   ))}
               </div>
             )}
+            {request?.taxonomy_path && (
+              <p className="mt-1 flex items-center gap-1.5 text-xs text-text-tertiary">
+                <FolderOpen className="h-3 w-3" />
+                {request.taxonomy_path}
+              </p>
+            )}
             <p className="mt-1 flex items-center gap-1.5 text-xs text-text-tertiary">
               <Users className="h-3 w-3" />
               {request?.submission_count ?? subs?.length ?? 0} submission
@@ -387,6 +396,15 @@ export default function RequestDetailPage() {
             <Button variant="secondary" size="sm" onClick={copy} disabled={!request}>
               {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               {copied ? 'Copied' : 'Copy submission link'}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setSettingsOpen(true)}
+              disabled={!request}
+            >
+              <Settings2 className="h-4 w-4" />
+              Settings
             </Button>
             <Button variant="secondary" size="sm" onClick={() => setPreAssignOpen(true)}>
               <UserPlus className="h-4 w-4" />
@@ -690,6 +708,18 @@ export default function RequestDetailPage() {
             )
           })}
         </div>
+      )}
+
+      {request && (
+        <RequestSettingsDialog
+          request={request}
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          onSaved={() => {
+            mutateRequest()
+            globalMutate('/submission-links')
+          }}
+        />
       )}
 
       <PreAssignFolderDialog

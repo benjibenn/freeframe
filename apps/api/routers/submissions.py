@@ -183,6 +183,7 @@ def create_request_from_project(
         title=project.name,
         instructions=project.description,
         grant_role=ProjectRole.editor,
+        taxonomy_path=(body.taxonomy_path or "").strip("/ ") or None,
         reference_project_id=project.id if body.as_reference else None,
     )
     db.add(link)

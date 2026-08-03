@@ -91,6 +91,9 @@ class ReferenceResponse(BaseModel):
 class AttachProjectRequest(BaseModel):
     # True => attach as the request's shared reference; False => as a child folder.
     as_reference: bool = False
+    # Only read when creating a request (from-project), not when attaching to an
+    # existing one — an existing request already has its own path.
+    taxonomy_path: Optional[str] = None
 
 
 class ChildProjectItem(BaseModel):
