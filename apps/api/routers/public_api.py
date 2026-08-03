@@ -9,8 +9,8 @@ Served behind the `/api` prefix, so external callers hit:
     GET /api/public/v1/videos/{asset_id}/download
 """
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import Text, and_, cast, false, func, or_, select
 import uuid
 from typing import Optional
 from ..database import get_db
@@ -42,12 +42,68 @@ def _pick_media_file(files: list[MediaFile]) -> Optional[MediaFile]:
     return files[0]
 
 
+def _folder_paths(db: Session, folder_ids: Optional[set] = None) -> dict:
+    """Map folder id -> full path rooted at the project name.
+
+    One recursive CTE walks every folder up to its root in a single round trip;
+    following `parent_id` in Python would cost a query per level per asset.
+    Pass `folder_ids` to resolve just the folders on a page, or None for all of
+    them (needed when a prefix filter has to be matched before pagination).
+    """
+    base_where = [Folder.deleted_at.is_(None)]
+    if folder_ids is not None:
+        if not folder_ids:
+            return {}
+        base_where.append(Folder.id.in_(folder_ids))
+
+    base = (
+        select(
+            Folder.id.label("leaf_id"),
+            Folder.parent_id.label("parent_id"),
+            Folder.project_id.label("project_id"),
+            # Both terms of a recursive CTE must agree on type. folders.name is
+            # VARCHAR(255) while concat() below yields unbounded VARCHAR, which
+            # Postgres rejects outright — so pin both ends to TEXT.
+            cast(Folder.name, Text).label("path"),
+        )
+        .where(and_(*base_where))
+        .cte("folder_path_cte", recursive=True)
+    )
+    parent = aliased(Folder)
+    walk = base.union_all(
+        select(
+            base.c.leaf_id,
+            parent.parent_id,
+            base.c.project_id,
+            cast(func.concat(parent.name, "/", base.c.path), Text),
+        ).where(and_(parent.id == base.c.parent_id, parent.deleted_at.is_(None)))
+    )
+
+    # Only rows that reached a root folder (no parent left) carry a complete path.
+    rows = db.execute(
+        select(walk.c.leaf_id, walk.c.project_id, walk.c.path).where(walk.c.parent_id.is_(None))
+    ).all()
+    if not rows:
+        return {}
+
+    project_names = dict(
+        db.execute(
+            select(Project.id, Project.name).where(Project.id.in_({r.project_id for r in rows}))
+        ).all()
+    )
+    return {
+        r.leaf_id: f"{project_names.get(r.project_id, '')}/{r.path}".lstrip("/")
+        for r in rows
+    }
+
+
 @router.get("/videos", response_model=PublicVideoListResponse)
 def list_videos(
     search: Optional[str] = Query(None, description="Filter by asset name, editor name/email, folder, project/set name, or submitter display name (partial, case-insensitive)"),
     author: Optional[str] = Query(None, description="Filter by author name or email (partial, case-insensitive)"),
     asset_type: str = Query("video", description="'video' (default) or 'all' to include every media type"),
     project_id: Optional[uuid.UUID] = Query(None, description="Restrict to a single project"),
+    folder_path: Optional[str] = Query(None, description="Restrict to a folder path and everything under it, e.g. 'Skincare/GlowCo' (rooted at the project name)"),
     run_as_ad: Optional[bool] = Query(None, description="Filter by the 'run as ad' clearance flag (true = only ad-ready videos)"),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
@@ -96,6 +152,27 @@ def list_videos(
         query = query.filter(or_(User.name.ilike(like), User.email.ilike(like)))
     if project_id is not None:
         query = query.filter(Asset.project_id == project_id)
+    if folder_path:
+        # Prefix match on the resolved path, so picking a niche returns every
+        # store and product beneath it. Resolved before pagination, hence the
+        # full folder scan rather than the per-page map built further down.
+        prefix = folder_path.strip("/")
+        under = {
+            fid for fid, path in _folder_paths(db).items()
+            if path == prefix or path.startswith(prefix + "/")
+        }
+        # A bare project name also picks up assets filed loose in that project,
+        # whose path is just the project name.
+        loose_projects = {
+            pid for pid, pname in db.execute(select(Project.id, Project.name)).all()
+            if pname == prefix
+        }
+        clauses = []
+        if under:
+            clauses.append(Asset.folder_id.in_(under))
+        if loose_projects:
+            clauses.append(and_(Asset.project_id.in_(loose_projects), Asset.folder_id.is_(None)))
+        query = query.filter(or_(*clauses)) if clauses else query.filter(false())
     if run_as_ad is not None:
         query = query.filter(Asset.run_as_ad == run_as_ad)
 
@@ -161,6 +238,7 @@ def list_videos(
 
     authors = {u.id: u for u in db.query(User).filter(User.id.in_({a.created_by for a in assets})).all()}
     projects = {p.id: p for p in db.query(Project).filter(Project.id.in_({a.project_id for a in assets})).all()}
+    folder_path_by_id = _folder_paths(db, {a.folder_id for a in assets if a.folder_id})
 
     items: list[PublicVideoItem] = []
     for a in assets:
@@ -190,6 +268,10 @@ def list_videos(
                 run_as_ad=a.run_as_ad,
                 project_id=a.project_id,
                 project_name=project.name if project else None,
+                folder_id=a.folder_id,
+                # Loose assets still get a path — the project name alone.
+                folder_path=folder_path_by_id.get(a.folder_id) or (project.name if project else None),
+                keywords=a.keywords or [],
                 author_name=author_user.name if author_user else None,
                 author_email=author_user.email if author_user else None,
                 created_at=a.created_at,
