@@ -50,6 +50,11 @@ class TaskItem(BaseModel):
     name: str
     project_id: uuid.UUID
     project_name: Optional[str] = None
+    # Where the asset sits in the taxonomy, e.g. "Skincare/GlowCo/Serum".
+    # Rooted at the project name, so submitted work — which lands in a
+    # per-submitter project with no folder — still resolves to something.
+    folder_id: Optional[uuid.UUID] = None
+    folder_path: Optional[str] = None
     # The video request (submission link) this asset's project belongs to, if any.
     request_id: Optional[uuid.UUID] = None
     request_title: Optional[str] = None

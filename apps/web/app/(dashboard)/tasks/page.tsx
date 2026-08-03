@@ -358,6 +358,9 @@ export default function TasksPage() {
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
   const [filter, setFilter] = React.useState<string | null>(null)
   const [requestFilter, setRequestFilter] = React.useState<string | null>(null)
+  // Taxonomy drill-down (niche / store / product). Prefix match, so choosing a
+  // niche keeps everything filed beneath it.
+  const [folderFilter, setFolderFilter] = React.useState<string | null>(null)
   const [pageSize, setPageSize] = React.useState<number>(25)
   const [page, setPage] = React.useState<number>(1)
 
@@ -383,7 +386,7 @@ export default function TasksPage() {
   // Back to page 1 whenever the filters or page size change.
   React.useEffect(() => {
     setPage(1)
-  }, [filter, requestFilter, pageSize])
+  }, [filter, requestFilter, folderFilter, pageSize])
 
   // Distinct request groupings present in the task list (for the filter dropdown).
   const requestOptions = React.useMemo(() => {
@@ -411,13 +414,26 @@ export default function TasksPage() {
   const stageList = stages ?? []
 
   // Tasks within the chosen request grouping — also drives the stage chip counts.
-  const requestScoped = (tasks ?? []).filter((t) =>
-    requestFilter === null
-      ? true
-      : requestFilter === 'none'
-        ? !t.request_id
-        : t.request_id === requestFilter,
-  )
+  const requestScoped = (tasks ?? [])
+    .filter((t) =>
+      requestFilter === null
+        ? true
+        : requestFilter === 'none'
+          ? !t.request_id
+          : t.request_id === requestFilter,
+    )
+    .filter((t) => {
+      if (folderFilter === null) return true
+      // Prefix match on the path, but only on a segment boundary — otherwise
+      // "Skincare" would also select a sibling folder named "SkincarePro".
+      const path = t.folder_path ?? ''
+      return path === folderFilter || path.startsWith(folderFilter + '/')
+    })
+
+  // Breadcrumb segments for the active path, each carrying the prefix it selects.
+  const folderCrumbs = folderFilter
+    ? folderFilter.split('/').map((seg, i, all) => ({ label: seg, path: all.slice(0, i + 1).join('/') }))
+    : []
   const countByStage = (id: string | null) =>
     requestScoped.filter((t) => (t.task_stage_id ?? null) === id).length
 
@@ -493,6 +509,34 @@ export default function TasksPage() {
         </div>
       </div>
 
+      {folderCrumbs.length > 0 && (
+        <nav className="flex items-center flex-wrap gap-1 mb-3 text-xs" aria-label="Taxonomy filter">
+          <button
+            type="button"
+            onClick={() => setFolderFilter(null)}
+            className="text-accent hover:underline"
+          >
+            All folders
+          </button>
+          {folderCrumbs.map((c, i) => (
+            <span key={c.path} className="flex items-center gap-1">
+              <span className="text-text-tertiary">/</span>
+              <button
+                type="button"
+                onClick={() => setFolderFilter(c.path)}
+                className={
+                  i === folderCrumbs.length - 1
+                    ? 'text-text-primary font-medium'
+                    : 'text-accent hover:underline'
+                }
+              >
+                {c.label}
+              </button>
+            </span>
+          ))}
+        </nav>
+      )}
+
       {isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -545,8 +589,25 @@ export default function TasksPage() {
                             <span className="text-text-tertiary font-normal"> · v{t.latest_version_number}</span>
                           )}
                         </p>
-                        {t.project_name && (
-                          <p className="text-xs text-text-tertiary truncate">{t.project_name}</p>
+                        {t.folder_path ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              // The row is a Link; without this the click navigates
+                              // to the asset instead of drilling into the folder.
+                              e.preventDefault()
+                              e.stopPropagation()
+                              setFolderFilter(t.folder_path)
+                            }}
+                            title={`Show only ${t.folder_path}`}
+                            className="text-xs text-accent truncate text-left hover:underline"
+                          >
+                            {t.folder_path}
+                          </button>
+                        ) : (
+                          t.project_name && (
+                            <p className="text-xs text-text-tertiary truncate">{t.project_name}</p>
+                          )
                         )}
                       </div>
                     </Link>
