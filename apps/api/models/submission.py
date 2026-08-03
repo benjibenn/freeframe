@@ -40,6 +40,9 @@ class SubmissionLink(Base):
     reference_project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True
     )
+    # Taxonomy this request's output belongs to, e.g. "Skincare/GlowCo/Serum".
+    # Stamped onto every asset submitted under the link.
+    taxonomy_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     # Provenance for requests auto-created from an external source (the data
     # spine). NULL for normal hand-made requests. unique among ACTIVE rows

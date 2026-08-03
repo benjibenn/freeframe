@@ -10,7 +10,7 @@ the taxonomy is modelled as a project or as a folder.
 """
 from typing import Optional
 
-from sqlalchemy import Text, and_, cast, func, select
+from sqlalchemy import Text, and_, cast, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from ..models.folder import Folder
@@ -68,6 +68,48 @@ def folder_paths(db: Session, folder_ids: Optional[set] = None) -> dict:
         r.leaf_id: f"{project_names.get(r.project_id, '')}/{r.path}".lstrip("/")
         for r in rows
     }
+
+
+def resolve_asset_path(asset, folder_path_by_id: dict, project_name: Optional[str]) -> Optional[str]:
+    """The single answer to "where does this asset belong?".
+
+    Explicit filing wins: if someone moved the asset into a real folder, that is
+    a deliberate act and outranks whatever was stamped at upload. Otherwise the
+    stamped path from the submission link, and failing both, the project name —
+    so every asset resolves to something.
+    """
+    if asset.folder_id and folder_path_by_id.get(asset.folder_id):
+        return folder_path_by_id[asset.folder_id]
+    return getattr(asset, "taxonomy_path", None) or project_name
+
+
+def asset_path_filter(db: Session, prefix: str):
+    """SQLAlchemy clause selecting assets at or beneath `prefix`.
+
+    Covers all three ways an asset can carry a path — a real folder, a stamped
+    taxonomy_path, or bare membership of a project the prefix names — because a
+    niche filter that silently omits submitted work is worse than no filter.
+    """
+    from ..models.asset import Asset
+
+    prefix = prefix.strip("/")
+    under, loose_projects = ids_under_path(db, prefix)
+
+    clauses = [
+        # Stamped path: exact match or anything nested below it. LIKE is escaped
+        # so a folder named "50%_off" cannot turn into a wildcard.
+        Asset.taxonomy_path == prefix,
+        Asset.taxonomy_path.like(
+            prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%",
+            escape="\\",
+        ),
+    ]
+    if under:
+        clauses.append(Asset.folder_id.in_(under))
+    if loose_projects:
+        clauses.append(and_(Asset.project_id.in_(loose_projects), Asset.folder_id.is_(None)))
+
+    return or_(*clauses)
 
 
 def ids_under_path(db: Session, prefix: str) -> tuple[set, set]:

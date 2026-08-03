@@ -42,6 +42,10 @@ class Asset(Base):
     # Current stage in the admin-configurable task pipeline (see TaskStage). Null = not yet triaged.
     task_stage_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("task_stages.id"), nullable=True, index=True)
     folder_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("folders.id"), nullable=True, index=True)
+    # Where this belongs in the taxonomy, as text, when it cannot be expressed
+    # as a folder — submitted work lives in a per-submitter project, and folders
+    # are scoped per project. Stamped from the submission link at upload.
+    taxonomy_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True, index=True)
     # Marks a submitted video as cleared to run as an ad. Surfaced to external
     # platforms (UploadUnicorn) so they can pull only the ad-ready set. Indexed
     # so that filter is cheap.
