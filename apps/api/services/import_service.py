@@ -83,6 +83,10 @@ def register_s3_object_as_asset(
     db.flush()
 
     needs_transcode = asset_type == AssetType.video
+    # Images are viewable as-is, but still need a processing pass to produce the
+    # WebP + thumbnail that every grid renders from. Without it they show as blank
+    # placeholder tiles, and HEIC/HEIF won't render in a browser at all.
+    needs_processing = needs_transcode or asset_type in (AssetType.image, AssetType.image_carousel)
 
     version = AssetVersion(
         asset_id=asset.id,
@@ -105,7 +109,7 @@ def register_s3_object_as_asset(
     db.add(media_file)
     db.commit()
 
-    if needs_transcode:
+    if needs_processing:
         send_task_safe(process_asset, str(asset.id), str(version.id))
 
     return asset

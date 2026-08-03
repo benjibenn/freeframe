@@ -188,6 +188,11 @@ def complete_upload(
     # Images and audio don't need transcoding — serve the raw file directly.
     # Videos still need HLS transcoding for adaptive streaming and private bucket access.
     needs_transcode = asset and asset.asset_type == AssetType.video
+    # Images serve raw immediately, but still need a processing pass for the
+    # WebP + thumbnail the grids render from (and so HEIC/HEIF is viewable at all).
+    needs_processing = needs_transcode or (
+        asset and asset.asset_type in (AssetType.image, AssetType.image_carousel)
+    )
     if needs_transcode:
         version.processing_status = ProcessingStatus.processing
     else:
@@ -211,7 +216,7 @@ def complete_upload(
 
     db.commit()
 
-    if needs_transcode:
+    if needs_processing:
         background_tasks.add_task(_trigger_processing, body.asset_id, body.version_id)
 
     return CompleteUploadResponse(status="processing" if needs_transcode else "ready", asset_id=body.asset_id, version_id=body.version_id)
