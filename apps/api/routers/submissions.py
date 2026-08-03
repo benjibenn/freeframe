@@ -136,6 +136,7 @@ def create_submission_link(
         title=title,
         instructions=body.instructions,
         grant_role=ProjectRole.editor,
+        taxonomy_path=(body.taxonomy_path or "").strip("/ ") or None,
         expires_at=body.expires_at,
     )
     db.add(link)
@@ -517,6 +518,9 @@ def update_submission_link(
         raise HTTPException(status_code=400, detail="Title is required")
     link.title = title
     link.instructions = body.instructions
+    # Only affects assets submitted from here on; already-uploaded assets keep
+    # the path they were stamped with, which is what makes the stamp meaningful.
+    link.taxonomy_path = (body.taxonomy_path or "").strip("/ ") or None
     link.expires_at = body.expires_at
     db.commit()
     db.refresh(link)

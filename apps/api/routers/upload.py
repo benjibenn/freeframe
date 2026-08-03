@@ -56,6 +56,7 @@ def initiate_upload(
         asset_type = mime_to_asset_type(body.mime_type)
         cf = brief_import_service.cf_ids_for_project(db, project)
         name = body.asset_name
+        taxonomy_path = None
         if project.submission_link_id:
             # Submitters never free-name uploads. When the link's brief prescribes
             # deliverable names, the client must pick one of them; otherwise every
@@ -65,6 +66,9 @@ def initiate_upload(
             link = db.query(SubmissionLink).filter(
                 SubmissionLink.id == project.submission_link_id
             ).first()
+            # The link is what knows which product this request is for; the
+            # per-submitter project cannot express it, having no folder tree.
+            taxonomy_path = link.taxonomy_path if link else None
             allowed = variation_names(link.brief_json) if link else []
             if allowed:
                 if body.asset_name not in allowed:
@@ -82,6 +86,7 @@ def initiate_upload(
             asset_type=asset_type,
             created_by=current_user.id,
             folder_id=body.folder_id,
+            taxonomy_path=taxonomy_path,
             **cf,
         )
         # New videos land in the configured default task stage (e.g. "Pending")

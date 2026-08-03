@@ -24,7 +24,7 @@ from ..models.folder import Folder
 from ..models.submission import Submission
 from ..schemas.public_api import PublicVideoItem, PublicVideoListResponse, PublicVideoDownload, PublicUserItem
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
-from ..services.folder_paths import folder_paths, ids_under_path
+from ..services.folder_paths import folder_paths, asset_path_filter, resolve_asset_path
 
 router = APIRouter(prefix="/public/v1", tags=["public-api"], dependencies=[Depends(require_api_key)])
 
@@ -102,13 +102,7 @@ def list_videos(
         # Prefix match on the resolved path, so picking a niche returns every
         # store and product beneath it. Resolved before pagination, hence the
         # full folder scan rather than the per-page map built further down.
-        under, loose_projects = ids_under_path(db, folder_path)
-        clauses = []
-        if under:
-            clauses.append(Asset.folder_id.in_(under))
-        if loose_projects:
-            clauses.append(and_(Asset.project_id.in_(loose_projects), Asset.folder_id.is_(None)))
-        query = query.filter(or_(*clauses)) if clauses else query.filter(false())
+        query = query.filter(asset_path_filter(db, folder_path))
     if run_as_ad is not None:
         query = query.filter(Asset.run_as_ad == run_as_ad)
 
@@ -206,7 +200,7 @@ def list_videos(
                 project_name=project.name if project else None,
                 folder_id=a.folder_id,
                 # Loose assets still get a path — the project name alone.
-                folder_path=folder_path_by_id.get(a.folder_id) or (project.name if project else None),
+                folder_path=resolve_asset_path(a, folder_path_by_id, project.name if project else None),
                 keywords=a.keywords or [],
                 author_name=author_user.name if author_user else None,
                 author_email=author_user.email if author_user else None,

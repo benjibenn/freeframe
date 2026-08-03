@@ -20,7 +20,7 @@ from ..models.user import User
 from ..models.project import Project
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType
 from ..models.task_stage import TaskStage
-from ..services.folder_paths import folder_paths, ids_under_path
+from ..services.folder_paths import folder_paths, asset_path_filter, resolve_asset_path
 from ..schemas.task_stage import (
     TaskStageResponse,
     TaskStageCreate,
@@ -172,14 +172,10 @@ def list_tasks(
         query = query.filter(Asset.task_stage_id == uuid.UUID(stage_id))
 
     if folder_path:
-        under, loose_projects = ids_under_path(db, folder_path)
-        clauses = []
-        if under:
-            clauses.append(Asset.folder_id.in_(under))
-        if loose_projects:
-            clauses.append(and_(Asset.project_id.in_(loose_projects), Asset.folder_id.is_(None)))
-        # No match must mean no rows, not an unfiltered board.
-        query = query.filter(or_(*clauses)) if clauses else query.filter(false())
+        # Covers real folders, stamped submission paths, and bare project
+        # membership — a niche filter that omitted submitted work would be worse
+        # than no filter at all.
+        query = query.filter(asset_path_filter(db, folder_path))
 
     assets = query.order_by(Asset.created_at.desc()).all()
     if not assets:
@@ -248,7 +244,7 @@ def list_tasks(
             project_name=project.name if project else None,
             folder_id=a.folder_id,
             # Unfiled assets still get a path — the project name alone.
-            folder_path=folder_path_by_id.get(a.folder_id) or (project.name if project else None),
+            folder_path=resolve_asset_path(a, folder_path_by_id, project.name if project else None),
             request_id=req_id,
             request_title=req.title if req else None,
             task_stage_id=a.task_stage_id,

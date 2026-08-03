@@ -7,6 +7,10 @@ from typing import Any, Optional
 class SubmissionLinkCreate(BaseModel):
     title: str
     instructions: Optional[str] = None
+    # Where this request's output belongs, e.g. "Skincare/GlowCo/Serum". Stamped
+    # onto every asset submitted under the link, because submitted work lands in
+    # a per-submitter project and cannot be filed into the shared folder tree.
+    taxonomy_path: Optional[str] = None
     expires_at: Optional[datetime] = None
 
 
@@ -38,6 +42,7 @@ class SubmissionLinkResponse(BaseModel):
     title: str
     instructions: Optional[str] = None
     is_enabled: bool
+    taxonomy_path: Optional[str] = None
     expires_at: Optional[datetime] = None
     created_at: datetime
     submission_count: int = 0

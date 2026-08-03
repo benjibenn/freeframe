@@ -25,6 +25,9 @@ const NICHE = `${RUN}-niche`
 const STORE = `${RUN}-store`
 const PRODUCT = `${RUN}-product`
 const OTHER_NICHE = `${RUN}-other`
+// Fixed, not RUN-scoped: the stamped asset is written by the seed before this
+// spec loads, so both sides must agree on a constant.
+const STAMPED_PATH = 'E2E_STAMPED/Skincare/GlowCo/Serum'
 
 let token = ''
 let assetId = ''
@@ -144,6 +147,22 @@ test.describe('folder taxonomy → public API folder_path', () => {
     // segment — the failure mode that would quietly mix two clients' ads.
     const other = await listVideos(request, { folder_path: `${projectName}/${OTHER_NICHE}` })
     expect(other.items.map((v: any) => v.id)).not.toContain(assetId)
+  })
+
+  test('submitted work carries the taxonomy even with no folder', async ({ request }) => {
+    // Submitted assets are born in a per-submitter project with folder_id NULL,
+    // so without the stamped path they would sit outside the tree entirely and a
+    // niche filter would quietly omit every piece of work editors sent in.
+    const { items } = await listVideos(request)
+    const stamped = items.find((v: any) => v.name === 'E2E_TAXONOMY_MARK_STAMPED')
+
+    expect(stamped, 'stamped asset missing from the public list').toBeTruthy()
+    expect(stamped.folder_id, 'stamped asset should have no folder').toBeNull()
+    expect(stamped.folder_path).toBe(STAMPED_PATH)
+
+    // The filter must reach it — matching only real folders would miss it.
+    const byNiche = await listVideos(request, { folder_path: 'E2E_STAMPED' })
+    expect(byNiche.items.map((v: any) => v.id)).toContain(stamped.id)
   })
 
   test('an unknown path returns nothing rather than everything', async ({ request }) => {
