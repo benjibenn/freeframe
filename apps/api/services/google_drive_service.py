@@ -67,19 +67,20 @@ def extract_folder_id(link_or_id: str) -> str:
     raise ValueError(f"Cannot extract a Drive folder id from: {link_or_id!r}")
 
 
-def list_video_files(folder_id: str, recurse: bool = True) -> list[dict]:
-    """Return all video files in *folder_id* (and optionally its subfolders).
+def list_media_files(folder_id: str, recurse: bool = True) -> list[dict]:
+    """Return all video and image files in *folder_id* (and optionally its subfolders).
 
     Each item is: {id: str, name: str, mimeType: str, size: int}
     """
     drive = _drive()
-    return _list_video_files_inner(drive, folder_id, recurse)
+    return _list_media_files_inner(drive, folder_id, recurse)
 
 
-def _list_video_files_inner(drive, folder_id: str, recurse: bool) -> list[dict]:
+def _list_media_files_inner(drive, folder_id: str, recurse: bool) -> list[dict]:
     q = (
         f"'{folder_id}' in parents and trashed=false "
-        f"and (mimeType contains 'video/' or mimeType = '{_FOLDER_MIME}')"
+        f"and (mimeType contains 'video/' or mimeType contains 'image/' "
+        f"or mimeType = '{_FOLDER_MIME}')"
     )
     fields = "files(id,name,mimeType,size),nextPageToken"
     results: list[dict] = []
@@ -98,7 +99,7 @@ def _list_video_files_inner(drive, folder_id: str, recurse: bool) -> list[dict]:
         for f in resp.get("files", []):
             if f["mimeType"] == _FOLDER_MIME:
                 if recurse:
-                    results.extend(_list_video_files_inner(drive, f["id"], recurse))
+                    results.extend(_list_media_files_inner(drive, f["id"], recurse))
             else:
                 results.append({
                     "id": f["id"],

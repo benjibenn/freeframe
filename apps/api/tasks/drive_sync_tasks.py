@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from .celery_app import celery_app, send_task_safe
 from ..database import SessionLocal
 from ..models.drive_sync import DriveSyncConnection, DriveSyncedFile
-from ..services.google_drive_service import list_video_files, download_stream
+from ..services.google_drive_service import list_media_files, download_stream
 from ..services.s3_service import upload_fileobj
 from ..services.import_service import register_s3_object_as_asset
 
@@ -110,7 +110,7 @@ def sync_one_connection(connection_id: str) -> None:
             logger.info("sync_one_connection: connection %s not found / disabled", connection_id)
             return
 
-        video_files = list_video_files(conn.drive_folder_id)
+        media_files = list_media_files(conn.drive_folder_id)
 
         seen_rows = (
             db.query(DriveSyncedFile.drive_file_id)
@@ -120,7 +120,7 @@ def sync_one_connection(connection_id: str) -> None:
         seen = {row.drive_file_id for row in seen_rows}
 
         dispatched = 0
-        for file in video_files:
+        for file in media_files:
             if file["id"] in seen:
                 continue
             send_task_safe(

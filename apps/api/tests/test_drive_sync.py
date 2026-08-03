@@ -258,7 +258,7 @@ def test_sync_skips_already_seen_files():
     mock_asset.id = uuid.uuid4()
 
     with patch("apps.api.tasks.drive_sync_tasks.SessionLocal", return_value=db):
-        with patch("apps.api.tasks.drive_sync_tasks.list_video_files", return_value=TWO_FILES) as mock_list:
+        with patch("apps.api.tasks.drive_sync_tasks.list_media_files", return_value=TWO_FILES) as mock_list:
             with patch("apps.api.tasks.drive_sync_tasks.download_stream") as mock_dl:
                 with patch("apps.api.tasks.drive_sync_tasks.upload_fileobj") as mock_upload:
                     with patch("apps.api.tasks.drive_sync_tasks.register_s3_object_as_asset", return_value=mock_asset) as mock_reg:
@@ -295,7 +295,7 @@ def test_sync_failure_isolation():
         return asset_b
 
     with patch("apps.api.tasks.drive_sync_tasks.SessionLocal", return_value=db):
-        with patch("apps.api.tasks.drive_sync_tasks.list_video_files", return_value=TWO_FILES):
+        with patch("apps.api.tasks.drive_sync_tasks.list_media_files", return_value=TWO_FILES):
             with patch("apps.api.tasks.drive_sync_tasks.download_stream"):
                 with patch("apps.api.tasks.drive_sync_tasks.upload_fileobj"):
                     with patch("apps.api.tasks.drive_sync_tasks.register_s3_object_as_asset", side_effect=register_side_effect) as mock_reg:

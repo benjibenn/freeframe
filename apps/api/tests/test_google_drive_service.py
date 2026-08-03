@@ -12,7 +12,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 
 from apps.api.services.google_drive_service import (
     extract_folder_id,
-    list_video_files,
+    list_media_files,
     service_account_email,
 )
 
@@ -76,7 +76,7 @@ class TestServiceAccountEmail:
 
 
 # ---------------------------------------------------------------------------
-# list_video_files
+# list_media_files
 # ---------------------------------------------------------------------------
 
 def _make_drive_mock(pages_by_folder: dict):
@@ -101,7 +101,7 @@ def _make_drive_mock(pages_by_folder: dict):
     return drive_mock
 
 
-class TestListVideoFiles:
+class TestListMediaFiles:
     def test_returns_video_files_from_single_page(self, monkeypatch):
         video = {"id": "vid1", "name": "clip.mp4", "mimeType": "video/mp4", "size": "1024"}
         drive_mock = _make_drive_mock({
@@ -109,7 +109,7 @@ class TestListVideoFiles:
         })
 
         with patch("apps.api.services.google_drive_service._drive", return_value=drive_mock):
-            result = list_video_files("folder-root", recurse=False)
+            result = list_media_files("folder-root", recurse=False)
 
         assert result == [{"id": "vid1", "name": "clip.mp4", "mimeType": "video/mp4", "size": 1024}]
 
@@ -128,7 +128,7 @@ class TestListVideoFiles:
         })
 
         with patch("apps.api.services.google_drive_service._drive", return_value=drive_mock):
-            result = list_video_files("folder-root", recurse=True)
+            result = list_media_files("folder-root", recurse=True)
 
         assert result == [{"id": "vid2", "name": "deep.mp4", "mimeType": "video/mp4", "size": 2048}]
 
@@ -143,7 +143,7 @@ class TestListVideoFiles:
         })
 
         with patch("apps.api.services.google_drive_service._drive", return_value=drive_mock):
-            result = list_video_files("folder-root", recurse=False)
+            result = list_media_files("folder-root", recurse=False)
 
         assert result == []
 
@@ -163,7 +163,7 @@ class TestListVideoFiles:
         })
 
         with patch("apps.api.services.google_drive_service._drive", return_value=drive_mock):
-            result = list_video_files("root", recurse=True)
+            result = list_media_files("root", recurse=True)
 
         ids = {r["id"] for r in result}
         assert ids == {"vid1", "vid2"}
@@ -173,7 +173,7 @@ class TestListVideoFiles:
         drive_mock = _make_drive_mock({"folder-x": {"files": []}})
 
         with patch("apps.api.services.google_drive_service._drive", return_value=drive_mock):
-            list_video_files("folder-x", recurse=False)
+            list_media_files("folder-x", recurse=False)
 
         call_kwargs = drive_mock.files.return_value.list.call_args_list[0][1]
         assert "'folder-x' in parents" in call_kwargs["q"]
@@ -181,11 +181,34 @@ class TestListVideoFiles:
         assert call_kwargs["supportsAllDrives"] is True
         assert call_kwargs["includeItemsFromAllDrives"] is True
 
+    def test_query_asks_drive_for_images_as_well_as_video(self, monkeypatch):
+        """The mime filter runs server-side, so anything omitted here is never
+        downloaded at all. Images must be requested alongside video."""
+        drive_mock = _make_drive_mock({"folder-x": {"files": []}})
+
+        with patch("apps.api.services.google_drive_service._drive", return_value=drive_mock):
+            list_media_files("folder-x", recurse=False)
+
+        q = drive_mock.files.return_value.list.call_args_list[0][1]["q"]
+        assert "mimeType contains 'video/'" in q
+        assert "mimeType contains 'image/'" in q
+
+    def test_returns_images_alongside_videos(self, monkeypatch):
+        video = {"id": "vid1", "name": "clip.mp4", "mimeType": "video/mp4", "size": "512"}
+        image = {"id": "img1", "name": "still.png", "mimeType": "image/png", "size": "256"}
+        gif = {"id": "img2", "name": "loop.gif", "mimeType": "image/gif", "size": "128"}
+        drive_mock = _make_drive_mock({"root": {"files": [video, image, gif]}})
+
+        with patch("apps.api.services.google_drive_service._drive", return_value=drive_mock):
+            result = list_media_files("root", recurse=False)
+
+        assert {r["id"] for r in result} == {"vid1", "img1", "img2"}
+
     def test_size_defaults_to_zero_when_missing(self, monkeypatch):
         video = {"id": "vid1", "name": "clip.mp4", "mimeType": "video/mp4"}  # no size key
         drive_mock = _make_drive_mock({"f": {"files": [video]}})
 
         with patch("apps.api.services.google_drive_service._drive", return_value=drive_mock):
-            result = list_video_files("f", recurse=False)
+            result = list_media_files("f", recurse=False)
 
         assert result[0]["size"] == 0
