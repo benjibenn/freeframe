@@ -54,6 +54,9 @@ export interface TaskItem {
   name: string;
   project_id: string;
   project_name: string | null;
+  folder_id: string | null;
+  /** Taxonomy path, e.g. "Skincare/GlowCo/Serum". Rooted at the project name. */
+  folder_path: string | null;
   request_id: string | null;
   request_title: string | null;
   task_stage_id: string | null;

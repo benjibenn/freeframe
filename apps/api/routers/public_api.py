@@ -24,6 +24,7 @@ from ..models.folder import Folder
 from ..models.submission import Submission
 from ..schemas.public_api import PublicVideoItem, PublicVideoListResponse, PublicVideoDownload, PublicUserItem
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
+from ..services.folder_paths import folder_paths, ids_under_path
 
 router = APIRouter(prefix="/public/v1", tags=["public-api"], dependencies=[Depends(require_api_key)])
 
@@ -40,61 +41,6 @@ def _pick_media_file(files: list[MediaFile]) -> Optional[MediaFile]:
             if (f.duration_seconds is not None) or (f.width is not None):
                 return f
     return files[0]
-
-
-def _folder_paths(db: Session, folder_ids: Optional[set] = None) -> dict:
-    """Map folder id -> full path rooted at the project name.
-
-    One recursive CTE walks every folder up to its root in a single round trip;
-    following `parent_id` in Python would cost a query per level per asset.
-    Pass `folder_ids` to resolve just the folders on a page, or None for all of
-    them (needed when a prefix filter has to be matched before pagination).
-    """
-    base_where = [Folder.deleted_at.is_(None)]
-    if folder_ids is not None:
-        if not folder_ids:
-            return {}
-        base_where.append(Folder.id.in_(folder_ids))
-
-    base = (
-        select(
-            Folder.id.label("leaf_id"),
-            Folder.parent_id.label("parent_id"),
-            Folder.project_id.label("project_id"),
-            # Both terms of a recursive CTE must agree on type. folders.name is
-            # VARCHAR(255) while concat() below yields unbounded VARCHAR, which
-            # Postgres rejects outright — so pin both ends to TEXT.
-            cast(Folder.name, Text).label("path"),
-        )
-        .where(and_(*base_where))
-        .cte("folder_path_cte", recursive=True)
-    )
-    parent = aliased(Folder)
-    walk = base.union_all(
-        select(
-            base.c.leaf_id,
-            parent.parent_id,
-            base.c.project_id,
-            cast(func.concat(parent.name, "/", base.c.path), Text),
-        ).where(and_(parent.id == base.c.parent_id, parent.deleted_at.is_(None)))
-    )
-
-    # Only rows that reached a root folder (no parent left) carry a complete path.
-    rows = db.execute(
-        select(walk.c.leaf_id, walk.c.project_id, walk.c.path).where(walk.c.parent_id.is_(None))
-    ).all()
-    if not rows:
-        return {}
-
-    project_names = dict(
-        db.execute(
-            select(Project.id, Project.name).where(Project.id.in_({r.project_id for r in rows}))
-        ).all()
-    )
-    return {
-        r.leaf_id: f"{project_names.get(r.project_id, '')}/{r.path}".lstrip("/")
-        for r in rows
-    }
 
 
 @router.get("/videos", response_model=PublicVideoListResponse)
@@ -156,17 +102,7 @@ def list_videos(
         # Prefix match on the resolved path, so picking a niche returns every
         # store and product beneath it. Resolved before pagination, hence the
         # full folder scan rather than the per-page map built further down.
-        prefix = folder_path.strip("/")
-        under = {
-            fid for fid, path in _folder_paths(db).items()
-            if path == prefix or path.startswith(prefix + "/")
-        }
-        # A bare project name also picks up assets filed loose in that project,
-        # whose path is just the project name.
-        loose_projects = {
-            pid for pid, pname in db.execute(select(Project.id, Project.name)).all()
-            if pname == prefix
-        }
+        under, loose_projects = ids_under_path(db, folder_path)
         clauses = []
         if under:
             clauses.append(Asset.folder_id.in_(under))
@@ -238,7 +174,7 @@ def list_videos(
 
     authors = {u.id: u for u in db.query(User).filter(User.id.in_({a.created_by for a in assets})).all()}
     projects = {p.id: p for p in db.query(Project).filter(Project.id.in_({a.project_id for a in assets})).all()}
-    folder_path_by_id = _folder_paths(db, {a.folder_id for a in assets if a.folder_id})
+    folder_path_by_id = folder_paths(db, {a.folder_id for a in assets if a.folder_id})
 
     items: list[PublicVideoItem] = []
     for a in assets:
