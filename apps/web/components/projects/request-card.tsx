@@ -10,6 +10,8 @@ export interface VideoRequest {
   token: string
   title: string
   instructions: string | null
+  /** Taxonomy this request's output belongs to, e.g. "Skincare/GlowCo/Serum". */
+  taxonomy_path?: string | null
   is_enabled: boolean
   expires_at: string | null
   created_at: string
