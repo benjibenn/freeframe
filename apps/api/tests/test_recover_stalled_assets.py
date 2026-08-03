@@ -86,17 +86,54 @@ def test_long_stuck_video_gives_up_and_is_marked_failed():
     db.commit.assert_called_once()
 
 
-def test_process_asset_skips_already_ready_version():
-    """A stale/duplicate message for an already-ready version must not re-transcode."""
+def _db_for(version, asset, media_file):
+    """Mock DB that returns the right object per model, so the skip guard can be
+    exercised on its real inputs rather than one catch-all MagicMock."""
+    from apps.api.models.asset import Asset, AssetVersion, MediaFile
+
+    by_model = {AssetVersion: version, Asset: asset, MediaFile: media_file}
+    db = MagicMock()
+
+    def query(model):
+        q = MagicMock()
+        q.filter.return_value.first.return_value = by_model.get(model)
+        return q
+
+    db.query.side_effect = query
+    return db
+
+
+def test_process_asset_skips_ready_version_that_already_has_outputs():
+    """A stale/duplicate message for a genuinely-processed version must not re-transcode."""
     from apps.api.tasks import transcode_tasks as tt
 
     v = _version(age_minutes=5, status=ProcessingStatus.ready)
-    db = MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = v
+    mf = MagicMock(s3_key_thumbnail="processed/x/thumbnail.jpg")
 
-    with patch.object(tt, "SessionLocal", return_value=db), \
+    with patch.object(tt, "SessionLocal", return_value=_db_for(v, _video_asset(v), mf)), \
          patch.object(tt, "get_s3_client") as mock_s3:
         result = tt.process_asset.apply(args=[str(v.asset_id), str(v.id)]).get()
 
     assert result is None
     mock_s3.assert_not_called()  # returned before any transcode work
+
+
+def test_process_asset_processes_ready_image_that_has_no_thumbnail_yet():
+    """Images are created `ready` because they're viewable as-is, then processed for
+    their WebP + thumbnail. Skipping on `ready` alone would no-op that run, which is
+    what left every image in the library rendering as a blank placeholder tile."""
+    from apps.api.tasks import transcode_tasks as tt
+
+    v = _version(age_minutes=0, status=ProcessingStatus.ready)
+    asset = _video_asset(v)
+    asset.asset_type = AssetType.image
+    mf = MagicMock(s3_key_thumbnail=None, s3_key_raw="raw/x/photo.heic")
+
+    with patch.object(tt, "SessionLocal", return_value=_db_for(v, asset, mf)), \
+         patch.object(tt, "get_s3_client"), \
+         patch.object(tt, "_publish_event"), \
+         patch.object(tt, "_process_image") as mock_process_image:
+        tt.process_asset.apply(args=[str(v.asset_id), str(v.id)]).get()
+
+    mock_process_image.assert_called_once()
+    assert v.processing_status == ProcessingStatus.ready

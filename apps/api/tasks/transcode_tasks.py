@@ -33,9 +33,6 @@ def process_asset(self, asset_id: str, version_id: str):
         if not version:
             return  # version already cleaned up
 
-        if version.processing_status == ProcessingStatus.ready:
-            return  # already processed — this is a stale/duplicate message, don't re-transcode
-
         asset = db.query(Asset).filter(Asset.id == uuid.UUID(asset_id)).first()
         if not asset:
             if version:
@@ -47,6 +44,15 @@ def process_asset(self, asset_id: str, version_id: str):
         if not media_file:
             version.processing_status = ProcessingStatus.failed
             db.commit()
+            return
+
+        # Already processed — stale/duplicate message, don't re-transcode.
+        # `ready` alone isn't proof of that: images and audio are created ready
+        # (they're viewable as-is) and only later get their derived files, so
+        # status would short-circuit the very run that produces them. Every
+        # processed type ends up with s3_key_thumbnail set — video and image get
+        # a thumbnail, audio gets its waveform JSON — so that is the real signal.
+        if version.processing_status == ProcessingStatus.ready and media_file.s3_key_thumbnail:
             return
 
         # Reset to processing status before each attempt
