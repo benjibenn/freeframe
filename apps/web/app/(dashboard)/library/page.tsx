@@ -367,6 +367,7 @@ export default function LibraryPage() {
   const [search, setSearch] = React.useState('')
   const [debouncedSearch, setDebouncedSearch] = React.useState('')
   const [projectFilter, setProjectFilter] = React.useState('')
+  const [mediaFilter, setMediaFilter] = React.useState('')
   const [tagFilter, setTagFilter] = React.useState<string[]>([])
   const [frameLabelFilter, setFrameLabelFilter] = React.useState<string[]>([])
   const [selectedIndex, setSelectedIndex] = React.useState<number | null>(null)
@@ -390,11 +391,12 @@ export default function LibraryPage() {
       const qp = new URLSearchParams({ page: String(index + 1), per_page: String(PER_PAGE) })
       if (debouncedSearch) qp.set('q', debouncedSearch)
       if (projectFilter) qp.set('project_id', projectFilter)
+      if (mediaFilter) qp.set('media_type', mediaFilter)
       tagFilter.forEach((t) => qp.append('tag', t))
       frameLabelFilter.forEach((l) => qp.append('frame_label', l))
       return `/library?${qp}`
     },
-    [debouncedSearch, projectFilter, tagFilter, frameLabelFilter],
+    [debouncedSearch, projectFilter, mediaFilter, tagFilter, frameLabelFilter],
   )
 
   const { data: pages, isLoading, isValidating, setSize } = useSWRInfinite<LibraryPage>(
@@ -404,7 +406,7 @@ export default function LibraryPage() {
   )
 
   // Collapse back to page 1 whenever the filters change.
-  React.useEffect(() => { setSize(1) }, [debouncedSearch, projectFilter, tagFilter, frameLabelFilter, setSize])
+  React.useEffect(() => { setSize(1) }, [debouncedSearch, projectFilter, mediaFilter, tagFilter, frameLabelFilter, setSize])
   const { data: projects } = useSWR<ProjectOption[]>(
     '/library/projects',
     (k: string) => api.get<ProjectOption[]>(k),
@@ -434,10 +436,10 @@ export default function LibraryPage() {
   const toggleFrameLabel = (label: string) =>
     setFrameLabelFilter((prev) => prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label])
 
-  const hasActiveFilters = tagFilter.length > 0 || frameLabelFilter.length > 0 || projectFilter || debouncedSearch
+  const hasActiveFilters = tagFilter.length > 0 || frameLabelFilter.length > 0 || projectFilter || mediaFilter || debouncedSearch
 
   // Reset selection when results change
-  React.useEffect(() => { setSelectedIndex(null) }, [debouncedSearch, projectFilter, tagFilter, frameLabelFilter])
+  React.useEffect(() => { setSelectedIndex(null) }, [debouncedSearch, projectFilter, mediaFilter, tagFilter, frameLabelFilter])
 
   // Scroll selected card into view
   React.useEffect(() => {
@@ -537,6 +539,24 @@ export default function LibraryPage() {
           </div>
         )}
 
+        {/* Media type filter */}
+        <div className="relative">
+          <select
+            value={mediaFilter}
+            onChange={(e) => setMediaFilter(e.target.value)}
+            className={cn(
+              'h-8 appearance-none rounded-md border bg-bg-secondary pl-2.5 pr-7 text-sm focus:outline-none focus:border-border-focus cursor-pointer',
+              mediaFilter ? 'border-accent text-accent' : 'border-border text-text-primary',
+            )}
+          >
+            <option value="">All types</option>
+            <option value="video">Video</option>
+            <option value="image">Image</option>
+            <option value="gif">GIF</option>
+          </select>
+          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-tertiary pointer-events-none" />
+        </div>
+
         {/* Keywords multi-select */}
         {tagOptions.length > 0 && (
           <MultiSelectDropdown
@@ -585,7 +605,7 @@ export default function LibraryPage() {
 
         {hasActiveFilters && (
           <button
-            onClick={() => { setSearch(''); setProjectFilter(''); setTagFilter([]); setFrameLabelFilter([]) }}
+            onClick={() => { setSearch(''); setProjectFilter(''); setMediaFilter(''); setTagFilter([]); setFrameLabelFilter([]) }}
             className="text-xs text-text-tertiary hover:text-text-primary underline"
           >
             Clear all

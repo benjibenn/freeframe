@@ -101,6 +101,40 @@ def _require_admin(current_user: User) -> None:
         raise HTTPException(status_code=403, detail="Platform admin required")
 
 
+def _is_gif_clause():
+    """EXISTS clause matching assets whose latest-or-any media file is a GIF.
+
+    GIFs are stored as AssetType.image — the only distinguishing signal is the
+    media file's mime type (filename is a fallback for uploads that arrived as
+    application/octet-stream).
+    """
+    return exists().where(
+        and_(
+            AssetVersion.asset_id == Asset.id,
+            AssetVersion.deleted_at.is_(None),
+            MediaFile.version_id == AssetVersion.id,
+            or_(
+                MediaFile.mime_type == "image/gif",
+                MediaFile.original_filename.ilike("%.gif"),
+            ),
+        )
+    )
+
+
+def _media_type_filter(query, media_type: str):
+    """Filter by coarse media kind: image (non-GIF), gif, or video."""
+    if media_type == "video":
+        return query.filter(Asset.asset_type == AssetType.video)
+    if media_type == "gif":
+        return query.filter(_is_gif_clause())
+    if media_type == "image":
+        return query.filter(
+            Asset.asset_type.in_([AssetType.image, AssetType.image_carousel]),
+            ~_is_gif_clause(),
+        )
+    return query
+
+
 def _access_filter(query, current_user: User):
     """Apply access-control filter to an Asset query for non-admin users."""
     return query.filter(
@@ -144,6 +178,7 @@ def list_library_assets(
     project_id: Optional[uuid.UUID] = Query(None),
     tag: Optional[list[str]] = Query(None),
     frame_label: Optional[list[str]] = Query(None),
+    media_type: Optional[str] = Query(None, pattern="^(image|gif|video)$"),
     q: Optional[str] = Query(None, description="Name search"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -155,6 +190,9 @@ def list_library_assets(
 
     if project_id:
         query = query.filter(Asset.project_id == project_id)
+
+    if media_type:
+        query = _media_type_filter(query, media_type)
 
     if q:
         query = query.filter(Asset.name.ilike(f"%{q.strip()}%"))
