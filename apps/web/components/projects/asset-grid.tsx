@@ -451,7 +451,7 @@ export function AssetGrid({
       )}
 
       {/* ─── Assets (grid) ───────────────────────────────────────────── */}
-      {filtered.length === 0 && !showFolders ? (
+      {filtered.length === 0 && !showFolders && reqItems.length === 0 ? (
         <div className="rounded-lg border border-border bg-bg-secondary">
           <EmptyState
             icon={Layers}
@@ -506,7 +506,7 @@ export function AssetGrid({
             </div>
           ))}
         </div>
-      ) : layout === 'list' && (showFolders || filtered.length > 0) ? (
+      ) : layout === 'list' && (showFolders || filtered.length > 0 || reqItems.length > 0) ? (
         /* ─── Unified list view (folders + assets) ─────────────────── */
         <div className="rounded-lg border border-border overflow-hidden">
           {/* Column headers */}

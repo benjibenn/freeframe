@@ -17,6 +17,9 @@ interface SubmissionLink {
   title: string
   instructions: string | null
   /** Taxonomy this request's output is filed under, e.g. "Phones/Store 1/iPhone 17e". */
+  home_project_id?: string | null
+  home_folder_id?: string | null
+  home_path?: string | null
   taxonomy_path?: string | null
   is_enabled: boolean
   expires_at: string | null
@@ -411,6 +414,10 @@ function LinkCard({
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(link.title)
   const [editInstructions, setEditInstructions] = useState(link.instructions ?? '')
+  const [editHome, setEditHome] = useState<HomeValue>({
+    projectId: link.home_project_id ?? null,
+    folderId: link.home_folder_id ?? null,
+  })
   const [editBriefJson, setEditBriefJson] = useState('')
   const [editBriefFile, setEditBriefFile] = useState<File | null>(null)
   const [editVideo, setEditVideo] = useState<File | null>(null)
@@ -431,6 +438,10 @@ function LinkCard({
   async function startEdit() {
     setEditTitle(link.title)
     setEditInstructions(link.instructions ?? '')
+    setEditHome({
+      projectId: link.home_project_id ?? null,
+      folderId: link.home_folder_id ?? null,
+    })
     setEditBriefFile(null)
     setEditVideo(null)
     setVideoPct(null)
@@ -456,6 +467,10 @@ function LinkCard({
   async function saveEdit(e: React.FormEvent) {
     e.preventDefault()
     if (!editTitle.trim() || saving) return
+    if (!editHome.projectId) {
+      setBriefError('Choose where this request is filed.')
+      return
+    }
     if (editBriefFile && editBriefFile.type !== 'application/pdf') {
       setBriefError('Brief file must be a PDF.')
       return
@@ -481,6 +496,9 @@ function LinkCard({
       await api.patch(`/submission-links/${link.id}`, {
         title: editTitle.trim(),
         instructions: editInstructions.trim() || null,
+        home_project_id: editHome.projectId,
+        home_folder_id: editHome.folderId,
+        expires_at: link.expires_at ?? null,
       })
       if (editBriefFile) {
         const fd = new FormData()
@@ -552,6 +570,9 @@ function LinkCard({
               value={editInstructions}
               onChange={(e) => setEditInstructions(e.target.value)}
             />
+          </div>
+          <div className="rounded-lg border border-border p-3">
+            <HomePicker value={editHome} onChange={setEditHome} autoSelectSingleProject={false} />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-secondary">Brief PDF (optional)</label>
