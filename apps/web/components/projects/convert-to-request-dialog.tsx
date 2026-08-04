@@ -10,6 +10,7 @@ import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/shared/toast'
+import { HomePicker, type HomeValue } from './home-picker'
 import type { VideoRequest } from './request-card'
 import type { Project } from '@/types'
 
@@ -41,7 +42,7 @@ export function ConvertToRequestDialog({
   // Where this request's output belongs in the taxonomy. Stamped onto every
   // asset submitted under it, since submitted work lands in a per-submitter
   // project and cannot be filed into the shared folder tree.
-  const [taxonomyPath, setTaxonomyPath] = React.useState('')
+  const [home, setHome] = React.useState<HomeValue>({ projectId: null, folderId: null })
   const [submitting, setSubmitting] = React.useState(false)
   const [error, setError] = React.useState('')
 
@@ -50,7 +51,7 @@ export function ConvertToRequestDialog({
       setMode('new')
       setPlacement('reference')
       setTargetId('')
-      setTaxonomyPath('')
+      setHome({ projectId: null, folderId: null })
       setError('')
     }
   }, [open])
@@ -69,7 +70,11 @@ export function ConvertToRequestDialog({
       if (mode === 'new') {
         const created = await api.post<{ id: string }>(
           `/submission-links/from-project/${project.id}`,
-          { as_reference: asReference, taxonomy_path: taxonomyPath.trim() || null },
+          {
+            as_reference: asReference,
+            home_project_id: home.projectId,
+            home_folder_id: home.folderId,
+          },
         )
         requestId = created.id
       } else {
@@ -127,18 +132,12 @@ export function ConvertToRequestDialog({
             </div>
 
             {mode === 'new' && (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-text-secondary">
-                  Folder path <span className="font-normal text-text-tertiary">(optional)</span>
-                </label>
-                <Input
-                  value={taxonomyPath}
-                  onChange={(e) => setTaxonomyPath(e.target.value)}
-                  placeholder="Skincare/GlowCo/Serum"
-                />
-                <p className="text-xs text-text-tertiary">
-                  Niche / store / product. Everything submitted to this request is filed
-                  here, so it shows up under the right product in Tasks and the ad picker.
+              <div className="border-t border-border pt-4">
+                <HomePicker value={home} onChange={setHome} />
+                <p className="mt-2 text-xs text-text-tertiary">
+                  Everything submitted to this request is filed here, so it shows up under
+                  the right product in Tasks and the ad picker. Leave the project blank to
+                  file it where it is being converted from.
                 </p>
               </div>
             )}

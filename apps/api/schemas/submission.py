@@ -7,10 +7,11 @@ from typing import Any, Optional
 class SubmissionLinkCreate(BaseModel):
     title: str
     instructions: Optional[str] = None
-    # Where this request's output belongs, e.g. "Skincare/GlowCo/Serum". Stamped
-    # onto every asset submitted under the link, because submitted work lands in
-    # a per-submitter project and cannot be filed into the shared folder tree.
-    taxonomy_path: Optional[str] = None
+    # Where the request is filed. A project is required — a request with no home
+    # is invisible in the tree, which is the state this replaces. The folder is
+    # optional: no folder means the project root.
+    home_project_id: uuid.UUID
+    home_folder_id: Optional[uuid.UUID] = None
     expires_at: Optional[datetime] = None
 
 
@@ -42,6 +43,12 @@ class SubmissionLinkResponse(BaseModel):
     title: str
     instructions: Optional[str] = None
     is_enabled: bool
+    # Where the request is filed in the shared tree.
+    home_project_id: Optional[uuid.UUID] = None
+    home_folder_id: Optional[uuid.UUID] = None
+    # Full path derived from the folder above ("ecom/Phones/Store 1"), recomputed
+    # on read so folder renames carry. Null only for legacy links filed nowhere.
+    home_path: Optional[str] = None
     taxonomy_path: Optional[str] = None
     expires_at: Optional[datetime] = None
     created_at: datetime
@@ -91,9 +98,11 @@ class ReferenceResponse(BaseModel):
 class AttachProjectRequest(BaseModel):
     # True => attach as the request's shared reference; False => as a child folder.
     as_reference: bool = False
-    # Only read when creating a request (from-project), not when attaching to an
-    # existing one — an existing request already has its own path.
-    taxonomy_path: Optional[str] = None
+    # Where the new request is filed. Only read when creating a request
+    # (from-project), not when attaching to an existing one — an existing request
+    # already has a home. Defaults to the project being converted.
+    home_project_id: Optional[uuid.UUID] = None
+    home_folder_id: Optional[uuid.UUID] = None
 
 
 class ChildProjectItem(BaseModel):

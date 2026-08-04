@@ -21,7 +21,13 @@ from ..models.project import Project
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType
 from ..models.task_stage import TaskStage
 from ..models.submission import Submission, SubmissionLink
-from ..services.folder_paths import folder_paths, asset_path_filter, resolve_asset_path
+from ..services.folder_paths import (
+    folder_paths,
+    asset_path_filter,
+    resolve_asset_path,
+    link_home_paths,
+    resolve_link_home_path,
+)
 from ..schemas.task_stage import (
     TaskStageResponse,
     TaskStageCreate,
@@ -310,19 +316,25 @@ def get_task_board(
     for it in items:
         (by_request.setdefault(it.request_id, []) if it.request_id else unbriefed).append(it)
 
-    link_q = db.query(SubmissionLink).filter(SubmissionLink.deleted_at.is_(None))
+    links = (
+        db.query(SubmissionLink)
+        .filter(SubmissionLink.deleted_at.is_(None))
+        .order_by(SubmissionLink.created_at.desc())
+        .all()
+    )
+    # Derived from where each request is filed rather than read off the row, so a
+    # renamed folder is reflected immediately. Filtering therefore happens here in
+    # Python instead of in SQL — briefs number in the dozens, not the millions, and
+    # a filter that disagreed with the path on screen would be worse than slower.
+    link_path = link_home_paths(db, links)
     if folder_path:
         # A brief matches on its own path, so an un-started brief is still
         # filterable — it has no assets to match through.
         prefix = folder_path.strip("/")
-        link_q = link_q.filter(or_(
-            SubmissionLink.taxonomy_path == prefix,
-            SubmissionLink.taxonomy_path.like(
-                prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%",
-                escape="\\",
-            ),
-        ))
-    links = link_q.order_by(SubmissionLink.created_at.desc()).all()
+        links = [
+            l for l in links
+            if (p := link_path.get(l.id)) and (p == prefix or p.startswith(prefix + "/"))
+        ]
 
     owners = {
         u.id: u for u in db.query(User)
@@ -348,7 +360,7 @@ def get_task_board(
         BriefTaskItem(
             id=l.id,
             title=l.title,
-            taxonomy_path=l.taxonomy_path,
+            taxonomy_path=link_path.get(l.id),
             task_stage_id=l.task_stage_id,
             assignee_id=l.assignee_id,
             assignee_name=(owners[l.assignee_id].name if l.assignee_id in owners else None),
@@ -543,7 +555,7 @@ def _brief_item(db: Session, link: SubmissionLink) -> BriefTaskItem:
     return BriefTaskItem(
         id=link.id,
         title=link.title,
-        taxonomy_path=link.taxonomy_path,
+        taxonomy_path=resolve_link_home_path(db, link),
         task_stage_id=link.task_stage_id,
         assignee_id=link.assignee_id,
         assignee_name=owner.name if owner else None,

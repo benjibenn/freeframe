@@ -25,6 +25,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProjectCard } from "@/components/projects/project-card";
 import { RequestCard, type VideoRequest } from "@/components/projects/request-card";
+import { HomePicker, type HomeValue } from "@/components/projects/home-picker";
+import { RequestRows } from "@/components/projects/request-rows";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -278,6 +280,10 @@ export default function ProjectsPage() {
   const [requestDialogOpen, setRequestDialogOpen] = React.useState(false);
   const [isCreatingRequest, setIsCreatingRequest] = React.useState(false);
   const [requestError, setRequestError] = React.useState("");
+  const [requestHome, setRequestHome] = React.useState<HomeValue>({
+    projectId: null,
+    folderId: null,
+  });
   const [requestForm, setRequestForm] = React.useState({
     title: "",
     instructions: "",
@@ -343,16 +349,23 @@ export default function ProjectsPage() {
       setRequestError("Request name is required.");
       return;
     }
+    if (!requestHome.projectId) {
+      setRequestError("Choose where this request is filed.");
+      return;
+    }
     setIsCreatingRequest(true);
     setRequestError("");
     try {
       const created = await api.post<{ id: string }>("/submission-links", {
         title: requestForm.title.trim(),
         instructions: requestForm.instructions.trim() || null,
+        home_project_id: requestHome.projectId,
+        home_folder_id: requestHome.folderId,
       });
       await mutateRequests();
       setRequestDialogOpen(false);
       setRequestForm({ title: "", instructions: "" });
+      setRequestHome({ projectId: null, folderId: null });
       router.push(`/projects/requests/${created.id}`);
     } catch (err) {
       setRequestError(
@@ -577,6 +590,7 @@ export default function ProjectsPage() {
               setRequestDialogOpen(open);
               if (!open) {
                 setRequestForm({ title: "", instructions: "" });
+                setRequestHome({ projectId: null, folderId: null });
                 setRequestError("");
               }
             }}
@@ -623,6 +637,10 @@ export default function ProjectsPage() {
                       }
                       className="flex w-full rounded-md border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus"
                     />
+                  </div>
+
+                  <div className="border-t border-border pt-4">
+                    <HomePicker value={requestHome} onChange={setRequestHome} />
                   </div>
 
                   {requestError && (
@@ -694,15 +712,10 @@ export default function ProjectsPage() {
                   {(requests ?? []).length}
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-                {(requests ?? []).map((r) => (
-                  <RequestCard
-                    key={r.id}
-                    request={r}
-                    onDelete={handleDeleteRequest}
-                  />
-                ))}
-              </div>
+              <RequestRows
+                requests={requests ?? []}
+                onDelete={handleDeleteRequest}
+              />
             </div>
           )}
           <ProjectSection
