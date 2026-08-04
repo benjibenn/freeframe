@@ -156,7 +156,7 @@ export function BriefRow({
         <td className="px-3 py-2.5">
           {!canAssign ? (
             <span className="text-xs text-text-secondary">
-              {brief.assignee_name || 'Unowned'}
+              {brief.assignee_name || 'Unassigned'}
             </span>
           ) : (
           <select
@@ -165,23 +165,13 @@ export function BriefRow({
             onChange={(e) => setOwner(e.target.value === '' ? null : e.target.value)}
             className="w-full rounded-md border border-border bg-bg-secondary px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-border-focus disabled:opacity-60 cursor-pointer"
           >
-            <option value="">Unowned</option>
+            <option value="">Unassigned</option>
             {owners.map((u) => (
               <option key={u.id} value={u.id}>
                 {u.name || u.email}
               </option>
             ))}
           </select>
-          )}
-        </td>
-
-        <td className="px-3 py-2.5">
-          {brief.editors.length === 0 ? (
-            <span className="text-xs text-text-tertiary">Not accepted</span>
-          ) : (
-            <span className="text-xs text-text-secondary" title={brief.editors.map((e) => e.email).join(', ')}>
-              {brief.editors.map((e) => e.name || e.email).join(', ')}
-            </span>
           )}
         </td>
 
@@ -199,7 +189,7 @@ export function BriefRow({
       {expanded &&
         (assets.length === 0 ? (
           <tr className="border-t border-border/50 bg-bg-secondary/30">
-            <td colSpan={6} className="px-3 py-2 pl-12 text-xs text-text-tertiary">
+            <td colSpan={5} className="px-3 py-2 pl-12 text-xs text-text-tertiary">
               Nothing submitted yet.
             </td>
           </tr>
@@ -244,9 +234,7 @@ export function AssetSubRow({ asset, stages }: { asset: TaskItem; stages: TaskSt
       <td className="px-3 py-2 text-xs text-text-tertiary">—</td>
       <td className="px-3 py-2 text-xs text-text-tertiary">
         {asset.submitter_name || asset.submitter_email || '—'}
-      </td>
-      <td className="px-3 py-2 text-xs text-text-tertiary">
-        {formatRelativeTime(asset.created_at)}
+        <span className="text-text-tertiary/70"> · {formatRelativeTime(asset.created_at)}</span>
       </td>
       <td className="px-3 py-2 text-center text-xs text-text-tertiary">
         {asset.run_as_ad ? 'Ad' : ''}

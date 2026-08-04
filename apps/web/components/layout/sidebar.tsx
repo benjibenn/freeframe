@@ -16,6 +16,7 @@ import {
   Activity,
   ListChecks,
   Library,
+  BookOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useIsDesktop } from '@/hooks/use-media-query'
@@ -272,6 +273,27 @@ export function Sidebar({ collapsed: collapsedProp, onToggle, mobileOpen = false
             </span>
           )}
         </button>
+
+        {/* Guide — everyone, since editors need the folder and task steps too */}
+        <Link
+          href="/help"
+          onClick={() => setNotifOpen(false)}
+          className={cn(
+            'group relative flex items-center rounded-md transition-colors duration-100',
+            collapsed ? 'justify-center h-9 w-9 mx-auto' : 'gap-2.5 px-2.5 h-9',
+            pathname.startsWith('/help')
+              ? 'bg-bg-hover text-text-primary'
+              : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
+          )}
+          title={collapsed ? 'Guide' : undefined}
+        >
+          <BookOpen className="h-[18px] w-[18px] shrink-0" strokeWidth={pathname.startsWith('/help') ? 2 : 1.5} />
+          {!collapsed && (
+            <span className={cn('text-[13px]', pathname.startsWith('/help') && 'font-medium')}>
+              Guide
+            </span>
+          )}
+        </Link>
       </nav>
 
       {/* Bottom section */}
