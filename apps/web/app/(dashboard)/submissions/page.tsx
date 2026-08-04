@@ -15,6 +15,8 @@ interface SubmissionLink {
   token: string
   title: string
   instructions: string | null
+  /** Taxonomy this request's output is filed under, e.g. "Phones/Store 1/iPhone 17e". */
+  taxonomy_path?: string | null
   is_enabled: boolean
   expires_at: string | null
   created_at: string
@@ -151,6 +153,10 @@ export default function SubmissionsPage() {
   // create form
   const [title, setTitle] = useState('')
   const [instructions, setInstructions] = useState('')
+  // Where this request's output belongs. Stamped onto every asset submitted
+  // under the link — submitted work lands in a per-submitter project and so
+  // cannot be filed into the shared folder tree.
+  const [taxonomyPath, setTaxonomyPath] = useState('')
   const [briefFile, setBriefFile] = useState<File | null>(null)
   const [briefJson, setBriefJson] = useState('')
   const [briefVideo, setBriefVideo] = useState<File | null>(null)
@@ -200,6 +206,7 @@ export default function SubmissionsPage() {
       const link = await api.post<SubmissionLink>('/submission-links', {
         title: title.trim(),
         instructions: instructions.trim() || null,
+        taxonomy_path: taxonomyPath.trim() || null,
       })
       // Attach the optional brief PDF as a second step (the create endpoint is JSON;
       // the brief endpoint is multipart).
@@ -218,6 +225,7 @@ export default function SubmissionsPage() {
       }
       setTitle('')
       setInstructions('')
+      setTaxonomyPath('')
       setBriefFile(null)
       setBriefJson('')
       setBriefVideo(null)
@@ -295,6 +303,18 @@ export default function SubmissionsPage() {
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
             />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Folder path (optional)</label>
+            <Input
+              placeholder="Phones/Store 1/iPhone 17e"
+              value={taxonomyPath}
+              onChange={(e) => setTaxonomyPath(e.target.value)}
+            />
+            <p className="text-xs text-text-tertiary">
+              Project / store / product, matching your folder tree. Everything submitted here
+              is filed under it, so it groups correctly in Tasks and the ad picker.
+            </p>
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-secondary">Brief PDF (optional)</label>
@@ -622,6 +642,12 @@ function LinkCard({
                     .join(' + ')}{' '}
                   attached
                 </p>
+              )}
+              {link.taxonomy_path && (
+                <span className="inline-flex items-center gap-1 text-xs text-text-tertiary">
+                  <FolderOpen className="h-3 w-3" />
+                  {link.taxonomy_path}
+                </span>
               )}
               {link.instructions && (
                 <button
