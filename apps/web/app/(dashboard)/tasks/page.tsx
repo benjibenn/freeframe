@@ -65,30 +65,18 @@ export default function TasksPage() {
   const [folderFilter, setFolderFilter] = React.useState<string | null>(null)
   const [typeFilter, setTypeFilter] = React.useState<string>('all')
 
-  const { data: stages } = useSWR<TaskStage[]>(
-    isPlatformAdmin ? STAGES_KEY : null,
-    () => api.get<TaskStage[]>(STAGES_KEY),
+  const { data: stages } = useSWR<TaskStage[]>(STAGES_KEY, () =>
+    api.get<TaskStage[]>(STAGES_KEY),
   )
-  const { data: board, isLoading } = useSWR<TaskBoardResponse>(
-    isPlatformAdmin ? BOARD_KEY : null,
-    () => api.get<TaskBoardResponse>(BOARD_KEY),
+  // The board is scoped server-side: an editor's response contains only the
+  // briefs they own, so there is nothing here to filter or hide client-side.
+  const { data: board, isLoading } = useSWR<TaskBoardResponse>(BOARD_KEY, () =>
+    api.get<TaskBoardResponse>(BOARD_KEY),
   )
   const { data: owners } = useSWR<User[]>(
     isPlatformAdmin ? OWNERS_KEY : null,
     () => api.get<User[]>(OWNERS_KEY),
   )
-
-  if (!isPlatformAdmin) {
-    return (
-      <div className="p-4 sm:p-6 max-w-3xl">
-        <EmptyState
-          icon={ListChecks}
-          title="Admins only"
-          description="The task list is available to admins and sub-admins."
-        />
-      </div>
-    )
-  }
 
   const stageList = stages ?? []
   const allBriefs = board?.briefs ?? []
@@ -125,8 +113,9 @@ export default function TasksPage() {
         <div>
           <h1 className="text-lg font-semibold text-text-primary">Tasks</h1>
           <p className="mt-1 text-sm text-text-secondary">
-            Every brief and what has been delivered against it. A brief appears here from
-            the moment you create it, so an empty one is visible rather than forgotten.
+            {isPlatformAdmin
+              ? 'Every brief and what has been delivered against it. A brief appears here from the moment you create it, so an empty one is visible rather than forgotten.'
+              : 'The briefs assigned to you. Move one along as you work on it.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -156,7 +145,7 @@ export default function TasksPage() {
               Pipeline
             </button>
           </div>
-          <ManageStagesDialog stages={stageList} />
+          {isPlatformAdmin && <ManageStagesDialog stages={stageList} />}
         </div>
       </div>
 
@@ -238,7 +227,9 @@ export default function TasksPage() {
           description={
             folderFilter
               ? `No briefs or files under ${folderFilter}.`
-              : 'Create a request to start tracking work.'
+              : isPlatformAdmin
+                ? 'Create a request to start tracking work.'
+                : 'Nothing is assigned to you yet. An admin puts a brief on your desk by setting you as its owner.'
           }
         />
       ) : view === 'pipeline' ? (
@@ -263,6 +254,7 @@ export default function TasksPage() {
                   brief={b}
                   stages={stageList}
                   owners={owners ?? []}
+                  canAssign={isPlatformAdmin}
                   folderFilter={folderFilter}
                   typeFilter={typeFilter}
                   onDrillTo={setFolderFilter}
