@@ -13,6 +13,7 @@ interface SubmissionLinkPublic {
   requires_auth: boolean
   has_brief: boolean
   has_reference_video: boolean
+  has_reference_image: boolean
   brief_json: Record<string, unknown> | null
   persona_label: string | null
   angle_label: string | null
@@ -68,7 +69,8 @@ export default function SubmitPage() {
 
   const loginHref = `/login?from=${encodeURIComponent(`/submit/${token}`)}`
 
-  const hasBriefJson = !!link?.brief_json || !!link?.has_reference_video
+  const hasBriefJson =
+    !!link?.brief_json || !!link?.has_reference_video || !!link?.has_reference_image
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg-primary px-4 py-8">
@@ -115,6 +117,18 @@ export default function SubmitPage() {
               >
                 📄 View brief (PDF)
               </a>
+            )}
+            {link.has_reference_image && (
+              <div className="mb-6">
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">Reference image</p>
+                {/* eslint-disable-next-line @next/next/no-img-element -- served via API redirect to a short-lived presigned URL; next/image can't optimize it */}
+                <img
+                  src={`${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/reference-image`}
+                  alt="Reference ad to adapt"
+                  className="w-full rounded-lg border border-border bg-bg-primary"
+                  onContextMenu={(e) => e.preventDefault()}
+                />
+              </div>
             )}
             {link.has_reference_video && (
               <div className="mb-6">

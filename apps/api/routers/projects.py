@@ -213,6 +213,8 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
                 resp.brief_pdf_url = f"/submit/{link.token}/brief.pdf"
             if link.brief_reference_video_s3_key:
                 resp.reference_video_url = f"/submit/{link.token}/reference-video"
+            if link.brief_reference_image_s3_key:
+                resp.reference_image_url = f"/submit/{link.token}/reference-image"
             resp.brief_json = link.brief_json
     return resp
 

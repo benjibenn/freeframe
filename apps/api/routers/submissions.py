@@ -328,6 +328,7 @@ def list_submission_links(
         resp.has_brief = bool(l.brief_pdf_s3_key)
         resp.has_brief_json = bool(l.brief_json)  # flag only; full brief_json omitted from lists
         resp.has_reference_video = bool(l.brief_reference_video_s3_key)
+        resp.has_reference_image = bool(l.brief_reference_image_s3_key)
         out.append(resp)
     return out
 
@@ -344,6 +345,7 @@ def get_submission_link(
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
     resp.has_reference_video = bool(link.brief_reference_video_s3_key)
+    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
     resp.brief_json = link.brief_json  # full brief for the detail/edit view
     resp.home_path = resolve_link_home_path(db, link)
     return resp
@@ -369,6 +371,7 @@ def set_submission_brief_json(
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
     resp.has_reference_video = bool(link.brief_reference_video_s3_key)
+    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
     resp.brief_json = link.brief_json
     return resp
 
@@ -400,6 +403,7 @@ async def upload_submission_brief(
     resp.has_brief = True
     resp.has_brief_json = bool(link.brief_json)
     resp.has_reference_video = bool(link.brief_reference_video_s3_key)
+    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
     return resp
 
 
@@ -462,6 +466,7 @@ def confirm_reference_video(
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
     resp.has_reference_video = True
+    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
     resp.brief_json = link.brief_json
     return resp
 
@@ -476,6 +481,72 @@ def delete_reference_video(
     link = _get_owned_link(db, link_id, current_user)
     key = link.brief_reference_video_s3_key
     link.brief_reference_video_s3_key = None
+    db.commit()
+    if key:
+        try:
+            s3_service.delete_object(key)
+        except Exception:
+            pass  # object may already be gone; the row is what matters
+
+
+# Content-type → extension for the stored reference image. Images are small enough
+# to pass through the API directly (multipart, like the brief PDF) — no presign dance.
+_IMAGE_EXT = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+
+def _link_response_with_flags(db: Session, link: SubmissionLink) -> SubmissionLinkResponse:
+    resp = SubmissionLinkResponse.model_validate(link)
+    resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
+    resp.has_brief = bool(link.brief_pdf_s3_key)
+    resp.has_brief_json = bool(link.brief_json)
+    resp.has_reference_video = bool(link.brief_reference_video_s3_key)
+    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
+    resp.brief_json = link.brief_json
+    return resp
+
+
+@router.post("/submission-links/{link_id}/reference-image", response_model=SubmissionLinkResponse)
+async def upload_reference_image(
+    link_id: uuid.UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner/admin: attach (or replace) a static reference image on a request — the
+    "adapt this ad" picture for static briefs. Served to submitters through the public
+    GET /submit/{token}/reference-image route."""
+    link = _get_owned_link(db, link_id, current_user)
+    content_type = (file.content_type or "").lower()
+    if content_type not in _IMAGE_EXT:
+        raise HTTPException(status_code=400, detail="Reference image must be JPEG, PNG, WebP, or GIF")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="The uploaded image is empty")
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Reference image must be 15 MB or smaller")
+    s3_key = f"briefs/manual/{link.id}-reference-image{_IMAGE_EXT[content_type]}"
+    s3_service.put_object(s3_key, data, content_type=content_type)
+    link.brief_reference_image_s3_key = s3_key
+    db.commit()
+    db.refresh(link)
+    return _link_response_with_flags(db, link)
+
+
+@router.delete("/submission-links/{link_id}/reference-image", status_code=status.HTTP_204_NO_CONTENT)
+def delete_reference_image(
+    link_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner/admin: detach the reference image. Best-effort deletes the S3 object."""
+    link = _get_owned_link(db, link_id, current_user)
+    key = link.brief_reference_image_s3_key
+    link.brief_reference_image_s3_key = None
     db.commit()
     if key:
         try:
@@ -602,6 +673,7 @@ def update_submission_link(
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
     resp.has_reference_video = bool(link.brief_reference_video_s3_key)
+    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
     resp.home_path = resolve_link_home_path(db, link)
     return resp
 
@@ -1076,6 +1148,7 @@ def resolve_submission_link(
         has_brief=bool(link.brief_pdf_s3_key),
         brief_json=link.brief_json,
         has_reference_video=bool(link.brief_reference_video_s3_key),
+        has_reference_image=bool(link.brief_reference_image_s3_key),
         persona_label=link.persona_label,
         angle_label=link.angle_label,
         problem=link.problem,
@@ -1112,6 +1185,21 @@ def get_submission_reference_video(token: str, db: Session = Depends(get_db)):
     if not link.brief_reference_video_s3_key:
         raise HTTPException(status_code=404, detail="No reference video for this request")
     url = s3_service.generate_presigned_get_url(link.brief_reference_video_s3_key, expires_in=3600)
+    return RedirectResponse(url)
+
+
+@router.get("/submit/{token}/reference-image")
+def get_submission_reference_image(token: str, db: Session = Depends(get_db)):
+    """Public: redirect to the static reference image for a submission request.
+
+    Token-gated like the submit page; served inline (no download_filename) so the
+    browser <img> renders it straight from the redirect."""
+    link = _validate_active(
+        db.query(SubmissionLink).filter(SubmissionLink.token == token).first()
+    )
+    if not link.brief_reference_image_s3_key:
+        raise HTTPException(status_code=404, detail="No reference image for this request")
+    url = s3_service.generate_presigned_get_url(link.brief_reference_image_s3_key, expires_in=3600)
     return RedirectResponse(url)
 
 

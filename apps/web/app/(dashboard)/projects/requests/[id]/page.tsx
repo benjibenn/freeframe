@@ -21,6 +21,7 @@ import {
   Settings2,
   FileText,
   Film,
+  ImageIcon,
   Upload,
 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
@@ -273,6 +274,38 @@ export default function RequestDetailPage() {
       toast.success('Reference video removed')
     } catch (err) {
       toast.error(err instanceof ApiError ? err.detail : 'Could not remove the video')
+    }
+  }
+
+  const imageInputRef = React.useRef<HTMLInputElement>(null)
+  const [uploadingImage, setUploadingImage] = React.useState(false)
+
+  const uploadImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !request) return
+    setUploadingImage(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      await api.upload(`/submission-links/${request.id}/reference-image`, fd)
+      await mutateRequest()
+      toast.success(request.has_reference_image ? 'Reference image replaced' : 'Reference image uploaded')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : 'Could not upload the image')
+    } finally {
+      setUploadingImage(false)
+    }
+  }
+
+  const removeImage = async () => {
+    if (!request) return
+    try {
+      await api.delete(`/submission-links/${request.id}/reference-image`)
+      await mutateRequest()
+      toast.success('Reference image removed')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : 'Could not remove the image')
     }
   }
 
@@ -537,6 +570,52 @@ export default function RequestDetailPage() {
         >
           {uploadingVideo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
           {request?.has_reference_video ? 'Replace' : 'Upload video'}
+        </Button>
+      </div>
+
+      {/* Reference image (owner-uploaded static ad, shown inline on the submit page) */}
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-bg-secondary px-4 py-3">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-bg-tertiary text-text-secondary">
+            <ImageIcon className="h-4 w-4" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-text-primary">Reference image</p>
+            <p className="text-xs text-text-tertiary">
+              The static ad to adapt. Submitters see it inline before they upload.
+            </p>
+            {request?.has_reference_image && (
+              <div className="mt-1 flex items-center gap-3">
+                <a
+                  href={`${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${request.token}/reference-image`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-accent hover:underline"
+                >
+                  View image
+                </a>
+                <button onClick={removeImage} className="text-xs text-status-error hover:underline">
+                  Remove image
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          className="hidden"
+          onChange={uploadImage}
+        />
+        <Button
+          variant={request?.has_reference_image ? 'secondary' : 'primary'}
+          size="sm"
+          onClick={() => imageInputRef.current?.click()}
+          disabled={uploadingImage || !request}
+        >
+          {uploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+          {request?.has_reference_image ? 'Replace' : 'Upload image'}
         </Button>
       </div>
 
