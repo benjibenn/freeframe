@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import useSWR from 'swr'
-import { ListChecks } from 'lucide-react'
+import { Columns3, List, ListChecks } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -10,6 +10,7 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { useAuthStore } from '@/stores/auth-store'
 import { ManageStagesDialog } from '@/components/tasks/manage-stages-dialog'
 import { BriefRow, AssetSubRow, relativePath } from '@/components/tasks/brief-row'
+import { PipelineBoard } from '@/components/tasks/pipeline-board'
 import type { TaskStage, TaskBoardResponse, User } from '@/types'
 
 const STAGES_KEY = '/task-stages'
@@ -56,6 +57,10 @@ export default function TasksPage() {
   const { user } = useAuthStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
 
+  // Two readings of the same briefs: 'list' answers "what is on my plate and
+  // whose", 'pipeline' answers "where is everything in review". Neither is a
+  // subset of the other, so both stay.
+  const [view, setView] = React.useState<'list' | 'pipeline'>('list')
   const [stageFilter, setStageFilter] = React.useState<string | null>(null)
   const [folderFilter, setFolderFilter] = React.useState<string | null>(null)
   const [typeFilter, setTypeFilter] = React.useState<string>('all')
@@ -100,6 +105,7 @@ export default function TasksPage() {
     folderBriefs.filter((b) => (b.task_stage_id ?? null) === id).length
 
   const briefs = folderBriefs.filter((b) => {
+    if (view === 'pipeline') return true
     if (stageFilter === null) return true
     if (stageFilter === 'unassigned') return b.task_stage_id === null
     return b.task_stage_id === stageFilter
@@ -123,9 +129,38 @@ export default function TasksPage() {
             the moment you create it, so an empty one is visible rather than forgotten.
           </p>
         </div>
-        <ManageStagesDialog stages={stageList} />
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-lg border border-border p-0.5">
+            <button
+              onClick={() => setView('list')}
+              className={cn(
+                'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors',
+                view === 'list'
+                  ? 'bg-bg-secondary text-text-primary'
+                  : 'text-text-tertiary hover:text-text-primary',
+              )}
+            >
+              <List className="h-3.5 w-3.5" />
+              To-do
+            </button>
+            <button
+              onClick={() => setView('pipeline')}
+              className={cn(
+                'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors',
+                view === 'pipeline'
+                  ? 'bg-bg-secondary text-text-primary'
+                  : 'text-text-tertiary hover:text-text-primary',
+              )}
+            >
+              <Columns3 className="h-3.5 w-3.5" />
+              Pipeline
+            </button>
+          </div>
+          <ManageStagesDialog stages={stageList} />
+        </div>
       </div>
 
+      {view === 'list' && (
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap items-center gap-1">
           <StageChip
@@ -165,6 +200,7 @@ export default function TasksPage() {
           </select>
         </div>
       </div>
+      )}
 
       {crumbs.length > 0 && (
         <nav className="flex items-center flex-wrap gap-1 text-xs" aria-label="Taxonomy filter">
@@ -205,16 +241,19 @@ export default function TasksPage() {
               : 'Create a request to start tracking work.'
           }
         />
+      ) : view === 'pipeline' ? (
+        <PipelineBoard briefs={briefs} stages={stageList} folderFilter={folderFilter} />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border">
           <table className="w-full min-w-[52rem]">
             <thead className="bg-bg-secondary">
               <tr className="text-left text-xs font-medium text-text-tertiary">
-                <th className="w-[32%] px-3 py-2.5">Brief</th>
-                <th className="w-[16%] px-3 py-2.5">Owner</th>
-                <th className="w-[20%] px-3 py-2.5">Editor</th>
+                <th className="w-[26%] px-3 py-2.5">Brief</th>
+                <th className="w-[18%] px-3 py-2.5">Category</th>
+                <th className="w-[15%] px-3 py-2.5">Owner</th>
+                <th className="w-[18%] px-3 py-2.5">Editor</th>
                 <th className="w-[8%] px-3 py-2.5 text-center">Files</th>
-                <th className="w-[14%] px-3 py-2.5">Status</th>
+                <th className="w-[15%] px-3 py-2.5">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -233,7 +272,7 @@ export default function TasksPage() {
               {unbriefed.length > 0 && (
                 <>
                   <tr className="border-t border-border bg-bg-secondary/60">
-                    <td colSpan={5} className="px-3 py-2 text-xs font-medium text-text-tertiary">
+                    <td colSpan={6} className="px-3 py-2 text-xs font-medium text-text-tertiary">
                       Uploaded directly — no brief ({unbriefed.length})
                     </td>
                   </tr>
