@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils'
 import { useViewStore } from '@/stores/view-store'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
 import { useTourStore } from '@/stores/tour-store'
+import { loadTourContext } from '@/lib/tour-context'
+import type { TourContext } from '@/components/tour/tour-steps'
 
 interface HeaderProps {
   onSearchOpen: () => void
@@ -60,6 +62,19 @@ export function Header({ onSearchOpen, onMenuOpen }: HeaderProps) {
   const { rightPanelOpen, toggleRightPanel } = useViewStore()
   const { labels, extraCrumbs } = useBreadcrumbStore()
   const startTour = useTourStore((s) => s.start)
+  const [tourCtx, setTourCtx] = React.useState<TourContext | null>(null)
+
+  // Resolve once on mount. Null means this user is an editor nowhere, so there
+  // is no tour to offer and the button never renders.
+  React.useEffect(() => {
+    let cancelled = false
+    loadTourContext().then((c) => {
+      if (!cancelled) setTourCtx(c)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const urlCrumbs = buildBreadcrumbs(pathname, labels)
   const breadcrumbs = [...urlCrumbs, ...extraCrumbs.map((c) => ({ label: c.label, href: c.href ?? '' }))]
 
@@ -102,16 +117,20 @@ export function Header({ onSearchOpen, onMenuOpen }: HeaderProps) {
 
       {/* Right side actions */}
       <div className="flex items-center gap-1.5">
-        {/* Replay the new-user tour. Always available — the tour auto-starts
-            only once, and people look for help after they're already stuck. */}
-        <button
-          onClick={startTour}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
-          title="Show me around"
-          aria-label="Show me around"
-        >
-          <HelpCircle className="h-4 w-4" />
-        </button>
+        {/* Replay the tour. Only for editors — the copy teaches uploading and
+            revising, which reviewers and viewers cannot do. Available whenever
+            it applies: the tour auto-starts only once, and people look for help
+            after they're already stuck. */}
+        {tourCtx && (
+          <button
+            onClick={() => startTour(tourCtx)}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
+            title="Show me around"
+            aria-label="Show me around"
+          >
+            <HelpCircle className="h-4 w-4" />
+          </button>
+        )}
 
         {/* Search trigger */}
         <button
