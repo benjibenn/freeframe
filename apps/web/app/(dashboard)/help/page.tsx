@@ -17,6 +17,7 @@ import {
   ListChecks,
   ShieldCheck,
   Info,
+  Layers,
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 import { usePageTitle } from '@/hooks/use-page-title'
@@ -93,6 +94,33 @@ function Step({ children }: { children: React.ReactNode }) {
   )
 }
 
+/** The house folder shape, drawn from a real project so it is recognisable. */
+function Tree() {
+  const rows: { indent: number; name: string; role: string }[] = [
+    { indent: 0, name: 'ecom', role: 'project (base folder)' },
+    { indent: 1, name: 'Phones', role: 'category' },
+    { indent: 2, name: 'Store 1', role: 'store' },
+    { indent: 3, name: 'iPhone 15', role: 'product' },
+    { indent: 4, name: 'iPhone 15 - Static - Sale', role: 'request — the ad brief' },
+  ]
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border bg-bg-tertiary/40 p-3">
+      <ul className="min-w-[22rem] space-y-1 font-mono text-[12px]">
+        {rows.map((row) => (
+          <li key={row.name} className="flex items-baseline gap-2 whitespace-nowrap">
+            <span style={{ paddingLeft: `${row.indent * 1.25}rem` }} className="text-text-tertiary">
+              {row.indent > 0 && '└─ '}
+            </span>
+            <span className="text-text-primary">{row.name}</span>
+            <span className="text-text-tertiary">← {row.role}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function Note({ children }: { children: React.ReactNode }) {
   return (
     <p className="flex gap-2 rounded-lg border border-border bg-bg-tertiary/40 px-3 py-2 text-[12px] leading-relaxed text-text-tertiary">
@@ -112,8 +140,8 @@ export default function HelpPage() {
       <div>
         <h1 className="text-lg font-semibold text-text-primary">Admin guide</h1>
         <p className="mt-1 text-sm text-text-secondary">
-          Three things you will do most: file work into folders, ask an editor for a
-          video, and move that work along the pipeline.
+          How to lay a project out, file work into it, ask an editor for a video,
+          and move that work along the pipeline.
         </p>
       </div>
 
@@ -123,6 +151,60 @@ export default function HelpPage() {
           superadmin or sub-admin account — those buttons are hidden for you.
         </Note>
       )}
+
+      <Section
+        icon={Layers}
+        title="Arrange a project"
+        blurb="One shape, used everywhere: category, then store, then product, then the request. Get this right and the task list, the filters and the ad exports all line up on their own."
+      >
+        <p className="text-[13px] leading-relaxed text-text-secondary">
+          The project is the base folder. Inside it you nest three levels of folders,
+          and the request sits at the bottom:
+        </p>
+
+        <Tree />
+
+        <Steps>
+          <Step>
+            <strong className="font-medium text-text-primary">Project</strong> — the
+            base folder everything hangs off, e.g. <Ui>ecom</Ui>.
+            <AdminOnly />
+          </Step>
+          <Step>
+            <strong className="font-medium text-text-primary">Category</strong> — the
+            niche, e.g. <Ui>Phones</Ui> or <Ui>Consumer electronics</Ui>. This is the
+            level you will most often filter the task list by.
+          </Step>
+          <Step>
+            <strong className="font-medium text-text-primary">Store</strong> — the
+            storefront selling in that category, e.g. <Ui>Store 1</Ui>. Keep it even
+            when there is only one store today, so adding a second later does not
+            mean re-filing everything.
+          </Step>
+          <Step>
+            <strong className="font-medium text-text-primary">Product</strong> — the
+            item the ad is for, e.g. <Ui>iPhone 15</Ui>. This is the last folder you
+            make; requests go inside it.
+          </Step>
+          <Step>
+            <strong className="font-medium text-text-primary">Request</strong> — the
+            ad brief itself, e.g. <Ui>iPhone 15 - Static - Sale</Ui>. One request per
+            ad you want made. It is not a folder — you create it with{' '}
+            <Ui>New Request</Ui> and the videos an editor submits against it land
+            underneath.
+            <AdminOnly />
+          </Step>
+        </Steps>
+
+        <Note>
+          The full path is written as{' '}
+          <Ui>ecom/Phones/Store 1/iPhone 15</Ui> and appears in the{' '}
+          <Ui>Category</Ui> column on the Tasks page. Click it to filter the whole
+          list down to that branch, then use the breadcrumb to come back up. It is
+          derived from the folder, never typed, so renaming a folder moves every
+          request and video beneath it at once.
+        </Note>
+      </Section>
 
       <Section
         icon={FolderPlus}
@@ -142,8 +224,9 @@ export default function HelpPage() {
           </Step>
           <Step>
             To nest one level deeper, hover a folder in the left-hand tree, open its{' '}
-            menu and choose <Ui>New Subfolder</Ui>. The same menu has{' '}
-            <Ui>Rename</Ui>.
+            menu and choose <Ui>New Subfolder</Ui>. This is how you build category →
+            store → product: make the category at the root, then a subfolder under
+            it, then one more. The same menu has <Ui>Rename</Ui>.
           </Step>
           <Step>
             Drag videos or whole folders onto another folder in the tree to move
@@ -173,17 +256,20 @@ export default function HelpPage() {
           </Step>
           <Step>
             Give it a <Ui>Request name</Ui>. This is what everyone sees in the task
-            list, so name it the way you want the finished work labelled.
+            list, so name it the way you want the finished work labelled. The house
+            pattern is product, format, then angle:{' '}
+            <Ui>iPhone 15 - Static - Sale</Ui>.
           </Step>
           <Step>
             Add <Ui>Instructions</Ui> if the editor needs a brief. Editors read this
             before they upload.
           </Step>
           <Step>
-            Choose the <Ui>Project</Ui> and, optionally, the folder this request is
-            filed under. A project is required. The folder is the source of truth
-            for the request's path, so renaming the folder later carries the request
-            with it.
+            Choose the <Ui>Project</Ui> and the folder this request is filed under.
+            Pick the <strong className="font-medium text-text-primary">product</strong>{' '}
+            folder — that is what gives the finished video its category and store. A
+            project is required; leaving the folder blank files the request at the
+            project root, where it has no category to filter by.
           </Step>
           <Step>
             Click <Ui>Create request</Ui>. You land on the request page — click{' '}

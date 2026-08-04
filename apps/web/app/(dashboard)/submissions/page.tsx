@@ -5,6 +5,7 @@ import { HomePicker, type HomeValue } from '@/components/projects/home-picker'
 import Link from 'next/link'
 import { api, ApiError } from '@/lib/api'
 import { uploadReferenceVideo } from '@/lib/reference-video'
+import { SAMPLE_BRIEF_JSON } from '@/lib/sample-brief'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus, Pencil, X, Film, FolderOpen, FolderPlus, FileText } from 'lucide-react'
@@ -118,34 +119,6 @@ function MySubmissionsView() {
 // script_with_storyboard is omitted: it is a video concept and renders as an empty
 // section on a static brief.
 // Paths must match GET /brief-template or the content is stored but never shown.
-const SAMPLE_BRIEF_JSON = `{
-  "title": "Static - iPhone",
-  "overview": "Adapt the reference ad below into 2 localised static variations. Layout, composition and product framing stay as-is \u2014 only the copy and the price change.\n\nReference ad: https://app.gethookd.ai/share/ad/131405144",
-  "final_deliverable": {
-    "label": "2 static images \u2014 German and Swedish \u2014 matching the reference ad's dimensions",
-    "hook_variations": [
-      {
-        "variation": "German",
-        "script_voiceover": "All copy translated to German",
-        "shot": "Identical to reference ad \u2014 same scene, model and composition",
-        "on_screen_text": "Price: 255 EUR"
-      },
-      {
-        "variation": "Swedish",
-        "script_voiceover": "All copy translated to Swedish",
-        "shot": "Identical to reference ad \u2014 same scene, model and composition",
-        "on_screen_text": "Price: 2800 SEK"
-      }
-    ]
-  },
-  "guidelines": [
-    "Work from the reference ad linked in the overview \u2014 do not redesign it",
-    "Only the copy language and the price differ between variations",
-    "Keep the original scene, model, product framing and layout unchanged",
-    "Match the reference ad's dimensions and safe areas",
-    "Deliver each variation as a separate file, named by language"
-  ]
-}`
 
 export default function SubmissionsPage() {
   const { user } = useAuthStore()
@@ -162,7 +135,8 @@ export default function SubmissionsPage() {
   // cannot be filed into the shared folder tree.
   const [home, setHome] = useState<HomeValue>({ projectId: null, folderId: null })
   const [briefFile, setBriefFile] = useState<File | null>(null)
-  const [briefJson, setBriefJson] = useState('')
+  // Starts as the full sample: editing a concrete brief beats composing from a hint.
+  const [briefJson, setBriefJson] = useState(SAMPLE_BRIEF_JSON)
   const [briefVideo, setBriefVideo] = useState<File | null>(null)
   const [videoPct, setVideoPct] = useState<number | null>(null)
   const [creating, setCreating] = useState(false)
@@ -236,7 +210,7 @@ export default function SubmissionsPage() {
       setInstructions('')
       setHome({ projectId: null, folderId: null })
       setBriefFile(null)
-      setBriefJson('')
+      setBriefJson(SAMPLE_BRIEF_JSON)
       setBriefVideo(null)
       setVideoPct(null)
       setShowCreate(false)
@@ -347,16 +321,10 @@ export default function SubmissionsPage() {
               <label className="text-sm font-medium text-text-secondary">Structured brief (JSON, optional)</label>
               <button
                 type="button"
-                onClick={() => setBriefJson(SAMPLE_BRIEF_JSON)}
-                disabled={briefJson.trim().length > 0}
-                title={
-                  briefJson.trim()
-                    ? 'Clear the field first — this will not overwrite what you have typed'
-                    : 'Fill the field with a sample brief'
-                }
-                className="text-xs text-accent hover:underline disabled:cursor-not-allowed disabled:text-text-tertiary disabled:no-underline"
+                onClick={() => setBriefJson(briefJson.trim() ? '' : SAMPLE_BRIEF_JSON)}
+                className="text-xs text-accent hover:underline"
               >
-                Insert sample
+                {briefJson.trim() ? 'Clear' : 'Insert sample'}
               </button>
             </div>
             <textarea
