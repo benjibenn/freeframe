@@ -160,6 +160,7 @@ export interface Project {
   request_title?: string | null;
   brief_pdf_url?: string | null;
   reference_video_url?: string | null;
+  reference_image_url?: string | null;
   brief_json?: Record<string, unknown> | null;
 }
 

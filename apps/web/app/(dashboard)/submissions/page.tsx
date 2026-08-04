@@ -5,7 +5,7 @@ import { HomePicker, type HomeValue } from '@/components/projects/home-picker'
 import Link from 'next/link'
 import { api, ApiError } from '@/lib/api'
 import { uploadReferenceVideo } from '@/lib/reference-video'
-import { SAMPLE_BRIEF_JSON } from '@/lib/sample-brief'
+import { SAMPLE_BRIEF_JSON, languagesFromBrief, withLanguages } from '@/lib/sample-brief'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus, Pencil, X, Film, FolderOpen, FolderPlus, FileText } from 'lucide-react'
@@ -29,6 +29,7 @@ interface SubmissionLink {
   has_brief?: boolean
   has_brief_json?: boolean
   has_reference_video?: boolean
+  has_reference_image?: boolean
 }
 
 interface SubmissionItem {
@@ -137,7 +138,9 @@ export default function SubmissionsPage() {
   const [briefFile, setBriefFile] = useState<File | null>(null)
   // Starts as the full sample: editing a concrete brief beats composing from a hint.
   const [briefJson, setBriefJson] = useState(SAMPLE_BRIEF_JSON)
+  const [languages, setLanguages] = useState(languagesFromBrief(JSON.parse(SAMPLE_BRIEF_JSON)))
   const [briefVideo, setBriefVideo] = useState<File | null>(null)
+  const [briefImage, setBriefImage] = useState<File | null>(null)
   const [videoPct, setVideoPct] = useState<number | null>(null)
   const [creating, setCreating] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
@@ -183,6 +186,8 @@ export default function SubmissionsPage() {
       setError('Choose where this request is filed.')
       return
     }
+    // The dedicated languages input wins over whatever the JSON textarea carries.
+    parsedBrief = withLanguages(parsedBrief, languages)
     setCreating(true)
     try {
       const link = await api.post<SubmissionLink>('/submission-links', {
@@ -201,6 +206,12 @@ export default function SubmissionsPage() {
       if (parsedBrief && link?.id) {
         await api.put(`/submission-links/${link.id}/brief-json`, { brief: parsedBrief })
       }
+      // Reference image is small enough to go through the API (multipart, like the PDF).
+      if (briefImage && link?.id) {
+        const fd = new FormData()
+        fd.append('file', briefImage)
+        await api.upload(`/submission-links/${link.id}/reference-image`, fd)
+      }
       // Reference video uploads direct to S3 (large-file safe), then confirms.
       if (briefVideo && link?.id) {
         setVideoPct(0)
@@ -211,7 +222,9 @@ export default function SubmissionsPage() {
       setHome({ projectId: null, folderId: null })
       setBriefFile(null)
       setBriefJson(SAMPLE_BRIEF_JSON)
+      setLanguages(languagesFromBrief(JSON.parse(SAMPLE_BRIEF_JSON)))
       setBriefVideo(null)
+      setBriefImage(null)
       setVideoPct(null)
       setShowCreate(false)
       await load()
@@ -295,6 +308,17 @@ export default function SubmissionsPage() {
             </p>
           </div>
           <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Output languages (optional)</label>
+            <Input
+              placeholder="e.g. German, Swedish"
+              value={languages}
+              onChange={(e) => setLanguages(e.target.value)}
+            />
+            <p className="text-xs text-text-tertiary">
+              Comma-separated. One deliverable per language — saved into the brief.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-secondary">Brief PDF (optional)</label>
             <input
               type="file"
@@ -303,6 +327,16 @@ export default function SubmissionsPage() {
               className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
             />
             <p className="text-xs text-text-tertiary">Submitters can view this from the submission page.</p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Reference image (optional)</label>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              onChange={(e) => setBriefImage(e.target.files?.[0] ?? null)}
+              className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
+            />
+            <p className="text-xs text-text-tertiary">The static ad to adapt — shown on the submission page.</p>
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-secondary">Reference video (optional)</label>
@@ -342,7 +376,7 @@ export default function SubmissionsPage() {
           </div>
           <div className="flex gap-2">
             <Button type="submit" loading={creating}>Create link</Button>
-            <Button type="button" variant="ghost" onClick={() => { setShowCreate(false); setBriefFile(null); setBriefJson(''); setBriefVideo(null); setVideoPct(null) }}>Cancel</Button>
+            <Button type="button" variant="ghost" onClick={() => { setShowCreate(false); setBriefFile(null); setBriefJson(''); setBriefVideo(null); setBriefImage(null); setVideoPct(null) }}>Cancel</Button>
           </div>
         </form>
       )}
@@ -389,6 +423,9 @@ function LinkCard({
   const [editBriefJson, setEditBriefJson] = useState('')
   const [editBriefFile, setEditBriefFile] = useState<File | null>(null)
   const [editVideo, setEditVideo] = useState<File | null>(null)
+  const [editImage, setEditImage] = useState<File | null>(null)
+  const [hasImage, setHasImage] = useState(!!link.has_reference_image)
+  const [editLanguages, setEditLanguages] = useState('')
   const [hasBrief, setHasBrief] = useState(!!link.has_brief)
   const [hasVideo, setHasVideo] = useState(!!link.has_reference_video)
   const [videoPct, setVideoPct] = useState<number | null>(null)
@@ -400,6 +437,7 @@ function LinkCard({
   const [instructionsOpen, setInstructionsOpen] = useState(false)
   const editFileRef = useRef<HTMLInputElement>(null)
   const editVideoRef = useRef<HTMLInputElement>(null)
+  const editImageRef = useRef<HTMLInputElement>(null)
 
   const url = submitUrl(link.token)
 
@@ -412,10 +450,13 @@ function LinkCard({
     })
     setEditBriefFile(null)
     setEditVideo(null)
+    setEditImage(null)
     setVideoPct(null)
     setBriefError('')
     setHasBrief(!!link.has_brief)
     setHasVideo(!!link.has_reference_video)
+    setHasImage(!!link.has_reference_image)
+    setEditLanguages('')
     setEditing(true)
     // The list payload omits brief_json to stay light; fetch the full link so the
     // textarea prefills with the current brief (else saving would wipe it).
@@ -425,8 +466,10 @@ function LinkCard({
         `/submission-links/${link.id}`,
       )
       setEditBriefJson(full.brief_json ? JSON.stringify(full.brief_json, null, 2) : '')
+      setEditLanguages(languagesFromBrief(full.brief_json))
       setHasBrief(!!full.has_brief)
       setHasVideo(!!full.has_reference_video)
+      setHasImage(!!full.has_reference_image)
     } catch {
       /* leave empty; user can still paste */
     }
@@ -458,6 +501,8 @@ function LinkCard({
         return
       }
     }
+    // The dedicated languages input wins over whatever the JSON textarea carries.
+    parsedBrief = withLanguages(parsedBrief, editLanguages)
     setBriefError('')
     setSaving(true)
     try {
@@ -475,6 +520,11 @@ function LinkCard({
       }
       // Sets or clears the structured brief (null clears).
       await api.put(`/submission-links/${link.id}/brief-json`, { brief: parsedBrief })
+      if (editImage) {
+        const fd = new FormData()
+        fd.append('file', editImage)
+        await api.upload(`/submission-links/${link.id}/reference-image`, fd)
+      }
       if (editVideo) {
         setVideoPct(0)
         await uploadReferenceVideo(link.id, editVideo, setVideoPct)
@@ -496,6 +546,17 @@ function LinkCard({
       await onUpdated()
     } catch (err) {
       setBriefError(err instanceof ApiError ? err.detail : 'Could not remove video.')
+    }
+  }
+
+  async function removeImage() {
+    try {
+      await api.delete(`/submission-links/${link.id}/reference-image`)
+      setHasImage(false)
+      setEditImage(null)
+      await onUpdated()
+    } catch (err) {
+      setBriefError(err instanceof ApiError ? err.detail : 'Could not remove image.')
     }
   }
 
@@ -543,6 +604,17 @@ function LinkCard({
             <HomePicker value={editHome} onChange={setEditHome} autoSelectSingleProject={false} />
           </div>
           <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Output languages (optional)</label>
+            <Input
+              placeholder="e.g. German, Swedish"
+              value={editLanguages}
+              onChange={(e) => setEditLanguages(e.target.value)}
+            />
+            <p className="text-xs text-text-tertiary">
+              Comma-separated. Saved into the brief; clear to remove.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-secondary">Brief PDF (optional)</label>
             <div className="flex items-center gap-2">
               <input
@@ -558,6 +630,29 @@ function LinkCard({
               <span className="truncate text-xs text-text-tertiary">
                 {editBriefFile ? editBriefFile.name : hasBrief ? 'A brief PDF is attached.' : 'No PDF attached.'}
               </span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Reference image (optional)</label>
+            <div className="flex items-center gap-2">
+              <input
+                ref={editImageRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="hidden"
+                onChange={(e) => setEditImage(e.target.files?.[0] ?? null)}
+              />
+              <Button type="button" variant="secondary" size="sm" onClick={() => editImageRef.current?.click()}>
+                {hasImage ? 'Replace image' : 'Upload image'}
+              </Button>
+              <span className="truncate text-xs text-text-tertiary">
+                {editImage ? editImage.name : hasImage ? 'A reference image is attached.' : 'No image attached.'}
+              </span>
+              {hasImage && !editImage && (
+                <button type="button" onClick={removeImage} className="text-xs text-status-error hover:underline">
+                  Remove
+                </button>
+              )}
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
@@ -620,13 +715,14 @@ function LinkCard({
               <p className="mt-0.5 line-clamp-2 text-sm text-text-secondary">{link.instructions}</p>
             )}
             <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-              {(link.has_brief || link.has_brief_json || link.has_reference_video) && (
+              {(link.has_brief || link.has_brief_json || link.has_reference_video || link.has_reference_image) && (
                 <p className="inline-flex items-center gap-1 text-xs text-text-tertiary">
                   <FileText className="h-3 w-3" />
                   {[
                     link.has_brief && 'Brief PDF',
                     link.has_brief_json && 'structured brief',
                     link.has_reference_video && 'reference video',
+                    link.has_reference_image && 'reference image',
                   ]
                     .filter(Boolean)
                     .join(' + ')}{' '}

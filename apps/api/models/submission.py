@@ -80,6 +80,10 @@ class SubmissionLink(Base):
     # An owner-uploaded reference video (S3 key), streamed inline in the View-brief
     # dialog. Uploaded direct-to-S3 via presigned PUT. Independent of the PDF/JSON brief.
     brief_reference_video_s3_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    # An owner-uploaded static reference image (S3 key) — the "adapt this ad" picture
+    # for static briefs. Uploaded through the API (images are small). Independent of
+    # the video/PDF/JSON brief.
+    brief_reference_image_s3_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     # External (CF) lineage ids + human labels for the campaign this request came
     # from (the data spine). NULL for hand-made requests. The ids are stamped onto
     # every asset created under this request; the labels surface in the UI.

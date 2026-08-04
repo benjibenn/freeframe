@@ -5,13 +5,15 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { uploadReferenceVideo } from '@/lib/reference-video'
-import { SAMPLE_BRIEF_JSON } from '@/lib/sample-brief'
+import { SAMPLE_BRIEF_JSON, languagesFromBrief, withLanguages } from '@/lib/sample-brief'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/shared/toast'
 import type { VideoRequest } from './request-card'
 
 export const LINKS_KEY = '/submission-links'
+
+const SAMPLE_LANGUAGES = languagesFromBrief(JSON.parse(SAMPLE_BRIEF_JSON))
 
 /**
  * Create a request already filed in the folder you are standing in — with the
@@ -42,6 +44,8 @@ export function NewRequestDialog({
   const [instructions, setInstructions] = React.useState('')
   const [briefFile, setBriefFile] = React.useState<File | null>(null)
   const [briefVideo, setBriefVideo] = React.useState<File | null>(null)
+  const [briefImage, setBriefImage] = React.useState<File | null>(null)
+  const [languages, setLanguages] = React.useState(SAMPLE_LANGUAGES)
   const [briefJson, setBriefJson] = React.useState(SAMPLE_BRIEF_JSON)
   const [videoPct, setVideoPct] = React.useState<number | null>(null)
   const [saving, setSaving] = React.useState(false)
@@ -53,6 +57,8 @@ export function NewRequestDialog({
       setInstructions('')
       setBriefFile(null)
       setBriefVideo(null)
+      setBriefImage(null)
+      setLanguages(SAMPLE_LANGUAGES)
       setBriefJson(SAMPLE_BRIEF_JSON)
       setVideoPct(null)
       setError('')
@@ -81,6 +87,8 @@ export function NewRequestDialog({
         return
       }
     }
+    // The dedicated languages input wins over whatever the JSON textarea carries.
+    parsedBrief = withLanguages(parsedBrief, languages)
     setSaving(true)
     setError('')
     try {
@@ -99,6 +107,11 @@ export function NewRequestDialog({
       }
       if (parsedBrief && link?.id) {
         await api.put(`/submission-links/${link.id}/brief-json`, { brief: parsedBrief })
+      }
+      if (briefImage && link?.id) {
+        const fd = new FormData()
+        fd.append('file', briefImage)
+        await api.upload(`/submission-links/${link.id}/reference-image`, fd)
       }
       if (briefVideo && link?.id) {
         setVideoPct(0)
@@ -166,6 +179,20 @@ export function NewRequestDialog({
 
             <div className="flex flex-col gap-1.5">
               <label className="text-sm font-medium text-text-secondary">
+                Output languages <span className="font-normal text-text-tertiary">(optional)</span>
+              </label>
+              <Input
+                value={languages}
+                onChange={(e) => setLanguages(e.target.value)}
+                placeholder="e.g. German, Swedish"
+              />
+              <p className="text-xs text-text-tertiary">
+                Comma-separated. One deliverable per language — saved into the brief.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-text-secondary">
                 Brief PDF <span className="font-normal text-text-tertiary">(optional)</span>
               </label>
               <input
@@ -175,6 +202,19 @@ export function NewRequestDialog({
                 className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
               />
               <p className="text-xs text-text-tertiary">Editors can view it from the submission page.</p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-text-secondary">
+                Reference image <span className="font-normal text-text-tertiary">(optional)</span>
+              </label>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                onChange={(e) => setBriefImage(e.target.files?.[0] ?? null)}
+                className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
+              />
+              <p className="text-xs text-text-tertiary">The static ad to adapt — shown on the submission page.</p>
             </div>
 
             <div className="flex flex-col gap-1.5">

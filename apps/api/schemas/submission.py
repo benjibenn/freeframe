@@ -61,6 +61,8 @@ class SubmissionLinkResponse(BaseModel):
     brief_json: Optional[dict[str, Any]] = None
     # True when an owner-uploaded reference video is attached.
     has_reference_video: bool = False
+    # True when an owner-uploaded static reference image is attached.
+    has_reference_image: bool = False
     # Shared reference project (None = strict isolation, the default).
     reference_project_id: Optional[uuid.UUID] = None
     # CF campaign labels (None for hand-made requests).
@@ -81,6 +83,8 @@ class SubmissionLinkPublic(BaseModel):
     brief_json: Optional[dict[str, Any]] = None
     # True when an owner-uploaded reference video is attached (streamed inline).
     has_reference_video: bool = False
+    # True when an owner-uploaded static reference image is attached (shown inline).
+    has_reference_image: bool = False
     # CF campaign labels (None for hand-made requests).
     persona_label: Optional[str] = None
     angle_label: Optional[str] = None
