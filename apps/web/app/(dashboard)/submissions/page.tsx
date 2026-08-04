@@ -105,48 +105,39 @@ function MySubmissionsView() {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-// Every path here is one the brief template actually renders
-// (GET /brief-template): overview, final_deliverable.label,
-// final_deliverable.hook_variations, script_with_storyboard, guidelines.
-// Keys outside those are stored but never shown, so a brief that "saves fine"
-// yet appears blank is almost always a path that does not match.
+// Modelled on the briefs actually written here: a GetHookd reference ad plus a
+// list of changes, often across language variations. The hook_variations table
+// carries the variations — its columns (variation / script / shot / on_screen_text)
+// fit "which locale, what copy, what scene, what price" without modification.
+// script_with_storyboard is omitted: it is a video concept and renders as an empty
+// section on a static brief.
+// Paths must match GET /brief-template or the content is stored but never shown.
 const SAMPLE_BRIEF_JSON = `{
-  "title": "GlowCo Serum — UGC hooks",
-  "overview": "Three 20-30s UGC videos for the Serum launch. Casual, phone-shot, no studio lighting.",
+  "title": "Static - iPhone",
+  "overview": "Adapt the reference ad below into 2 localised static variations. Layout, composition and product framing stay as-is \u2014 only the copy and the price change.\n\nReference ad: https://app.gethookd.ai/share/ad/131405144",
   "final_deliverable": {
-    "label": "3 x 9:16 videos, 20-30s, 1080x1920",
+    "label": "2 static images \u2014 German and Swedish \u2014 matching the reference ad's dimensions",
     "hook_variations": [
       {
-        "variation": "Problem-first",
-        "script_voiceover": "My skin was so dry I stopped wearing makeup.",
-        "shot": "Close-up, bare face, morning light",
-        "on_screen_text": "Day 1"
+        "variation": "German",
+        "script_voiceover": "All copy translated to German",
+        "shot": "Identical to reference ad \u2014 same scene, model and composition",
+        "on_screen_text": "Price: 255 EUR"
       },
       {
-        "variation": "Bold claim",
-        "script_voiceover": "This serum replaced four products on my shelf.",
-        "shot": "Hand sweeping products off the counter",
-        "on_screen_text": "4 products, 1 bottle"
+        "variation": "Swedish",
+        "script_voiceover": "All copy translated to Swedish",
+        "shot": "Identical to reference ad \u2014 same scene, model and composition",
+        "on_screen_text": "Price: 2800 SEK"
       }
     ]
   },
-  "script_with_storyboard": [
-    {
-      "script_voiceover": "I started using it every night before bed.",
-      "shot": "Bathroom mirror, applying serum",
-      "on_screen_text": "Every night"
-    },
-    {
-      "script_voiceover": "Two weeks later my skin felt completely different.",
-      "shot": "Same framing as the opening shot, no makeup",
-      "on_screen_text": "Day 14"
-    }
-  ],
   "guidelines": [
-    "Shoot vertical 9:16, phone camera is fine",
-    "Natural light only, no ring light",
-    "Say the product name at least once",
-    "No competitor products visible"
+    "Work from the reference ad linked in the overview \u2014 do not redesign it",
+    "Only the copy language and the price differ between variations",
+    "Keep the original scene, model, product framing and layout unchanged",
+    "Match the reference ad's dimensions and safe areas",
+    "Deliver each variation as a separate file, named by language"
   ]
 }`
 
