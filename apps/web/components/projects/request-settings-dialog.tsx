@@ -7,6 +7,7 @@ import { api, ApiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/shared/toast'
+import { HomePicker, type HomeValue } from './home-picker'
 import type { VideoRequest } from './request-card'
 
 /**
@@ -31,7 +32,7 @@ export function RequestSettingsDialog({
   const toast = useToast()
   const [title, setTitle] = React.useState('')
   const [instructions, setInstructions] = React.useState('')
-  const [taxonomyPath, setTaxonomyPath] = React.useState('')
+  const [home, setHome] = React.useState<HomeValue>({ projectId: null, folderId: null })
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState('')
 
@@ -41,7 +42,10 @@ export function RequestSettingsDialog({
     if (open) {
       setTitle(request.title ?? '')
       setInstructions(request.instructions ?? '')
-      setTaxonomyPath(request.taxonomy_path ?? '')
+      setHome({
+        projectId: request.home_project_id ?? null,
+        folderId: request.home_folder_id ?? null,
+      })
       setError('')
     }
   }, [open, request])
@@ -53,13 +57,18 @@ export function RequestSettingsDialog({
       setError('Title is required.')
       return
     }
+    if (!home.projectId) {
+      setError('Pick where this request is filed.')
+      return
+    }
     setSaving(true)
     setError('')
     try {
       await api.patch(`/submission-links/${request.id}`, {
         title: trimmed,
         instructions: instructions.trim() || null,
-        taxonomy_path: taxonomyPath.trim() || null,
+        home_project_id: home.projectId,
+        home_folder_id: home.folderId,
         expires_at: request.expires_at ?? null,
       })
       onSaved?.()
@@ -115,18 +124,11 @@ export function RequestSettingsDialog({
               />
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-text-secondary">
-                Folder path <span className="font-normal text-text-tertiary">(optional)</span>
-              </label>
-              <Input
-                value={taxonomyPath}
-                onChange={(e) => setTaxonomyPath(e.target.value)}
-                placeholder="Skincare/GlowCo/Serum"
-              />
-              <p className="text-xs text-text-tertiary">
-                Niche / store / product. Files submitted work under the right product in
-                Tasks and the ad picker. Changing it does not move work already submitted.
+            <div className="border-t border-border pt-4">
+              <HomePicker value={home} onChange={setHome} />
+              <p className="mt-2 text-xs text-text-tertiary">
+                Moving a request re-files it for work submitted from now on. Files already
+                uploaded keep the path they were stamped with.
               </p>
             </div>
 

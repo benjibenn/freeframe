@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { HomePicker, type HomeValue } from '@/components/projects/home-picker'
 import Link from 'next/link'
 import { api, ApiError } from '@/lib/api'
 import { uploadReferenceVideo } from '@/lib/reference-video'
@@ -156,7 +157,7 @@ export default function SubmissionsPage() {
   // Where this request's output belongs. Stamped onto every asset submitted
   // under the link — submitted work lands in a per-submitter project and so
   // cannot be filed into the shared folder tree.
-  const [taxonomyPath, setTaxonomyPath] = useState('')
+  const [home, setHome] = useState<HomeValue>({ projectId: null, folderId: null })
   const [briefFile, setBriefFile] = useState<File | null>(null)
   const [briefJson, setBriefJson] = useState('')
   const [briefVideo, setBriefVideo] = useState<File | null>(null)
@@ -201,12 +202,17 @@ export default function SubmissionsPage() {
         return
       }
     }
+    if (!home.projectId) {
+      setError('Choose where this request is filed.')
+      return
+    }
     setCreating(true)
     try {
       const link = await api.post<SubmissionLink>('/submission-links', {
         title: title.trim(),
         instructions: instructions.trim() || null,
-        taxonomy_path: taxonomyPath.trim() || null,
+        home_project_id: home.projectId,
+        home_folder_id: home.folderId,
       })
       // Attach the optional brief PDF as a second step (the create endpoint is JSON;
       // the brief endpoint is multipart).
@@ -225,7 +231,7 @@ export default function SubmissionsPage() {
       }
       setTitle('')
       setInstructions('')
-      setTaxonomyPath('')
+      setHome({ projectId: null, folderId: null })
       setBriefFile(null)
       setBriefJson('')
       setBriefVideo(null)
@@ -304,16 +310,11 @@ export default function SubmissionsPage() {
               onChange={(e) => setInstructions(e.target.value)}
             />
           </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-text-secondary">Folder path (optional)</label>
-            <Input
-              placeholder="Phones/Store 1/iPhone 17e"
-              value={taxonomyPath}
-              onChange={(e) => setTaxonomyPath(e.target.value)}
-            />
-            <p className="text-xs text-text-tertiary">
-              Project / store / product, matching your folder tree. Everything submitted here
-              is filed under it, so it groups correctly in Tasks and the ad picker.
+          <div className="rounded-lg border border-border p-3">
+            <HomePicker value={home} onChange={setHome} />
+            <p className="mt-2 text-xs text-text-tertiary">
+              Everything submitted here is filed under this folder, so it groups correctly
+              in Tasks and the ad picker.
             </p>
           </div>
           <div className="flex flex-col gap-1.5">

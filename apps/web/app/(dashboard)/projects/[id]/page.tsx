@@ -37,6 +37,7 @@ import { useToast } from "@/components/shared/toast";
 import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/shared/avatar";
 import { AssetGrid } from "@/components/projects/asset-grid";
+import { FolderRequests } from "@/components/projects/folder-requests";
 import { CommentPanel } from "@/components/review/comment-panel";
 import { UploadZone } from "@/components/upload/upload-zone";
 import { useUploadStore } from "@/stores/upload-store";
@@ -66,6 +67,7 @@ import type {
   ProjectMember,
   User,
   Folder,
+  FolderTreeNode,
   ShareLink,
 } from "@/types";
 
@@ -219,6 +221,21 @@ export default function ProjectDetailPage() {
       path.map((f) => ({ label: f.name, href: `/projects/${projectId}?folder=${f.id}` }))
     );
   }, [currentFolderId, tree, projectId, setExtraCrumbs]);
+
+  // Label for the folder currently in view. Read off the same tree the breadcrumb
+  // walks so the two can never disagree; falls back to the project name at root.
+  const currentFolderName = React.useMemo(() => {
+    if (!currentFolderId) return project?.name ?? "Project";
+    const find = (nodes: FolderTreeNode[]): string | null => {
+      for (const n of nodes) {
+        if (n.id === currentFolderId) return n.name;
+        const hit = find(n.children);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    return find(tree ?? []) ?? (project?.name ?? "Project");
+  }, [currentFolderId, tree, project?.name]);
 
   const folderParam = currentFolderId
     ? `folder_id=${currentFolderId}`
@@ -952,6 +969,14 @@ export default function ProjectDetailPage() {
             </div>
           ) : (
             <>
+            {!filteringByTag_orLabel && (
+              <FolderRequests
+                projectId={projectId}
+                folderId={currentFolderId}
+                folderName={currentFolderName}
+                canCreate={canCreateFolder}
+              />
+            )}
             <AssetGrid
               assets={assets ?? []}
               folders={filteringByTag_orLabel ? [] : (subfolders ?? [])}

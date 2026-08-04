@@ -14,6 +14,7 @@ Two surfaces:
 import secrets
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from fastapi.responses import RedirectResponse
@@ -27,6 +28,7 @@ from ..middleware.auth import get_current_user, get_optional_user
 from ..models.user import User, UserStatus
 from ..services.auth_service import get_user_by_email
 from ..models.project import Project, ProjectMember, ProjectRole, ProjectType
+from ..models.folder import Folder
 from ..models.asset import Asset
 from ..models.submission import SubmissionLink, Submission
 from ..schemas.submission import (
@@ -50,6 +52,7 @@ from ..services.share_service import build_default_project_share_link
 from ..services import s3_service
 from ..services import brief_import_service
 from ..services.permissions import require_platform_admin, is_platform_admin
+from ..services.folder_paths import link_home_paths, resolve_link_home_path
 
 router = APIRouter(tags=["submissions"])
 
@@ -116,6 +119,58 @@ def _count_map(db: Session, link_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
     return {lid: int(c) for lid, c in rows}
 
 
+def _resolve_home(
+    db: Session,
+    user: User,
+    project_id: uuid.UUID,
+    folder_id: Optional[uuid.UUID],
+) -> tuple[Project, Optional[Folder]]:
+    """Validate where a request is being filed, and return it.
+
+    A folder is only meaningful inside its own project — `folders.project_id` is
+    NOT NULL and never crosses — so a folder from a different project is rejected
+    outright rather than quietly ignored, which would file the request somewhere
+    the user did not choose.
+    """
+    project = db.query(Project).filter(
+        Project.id == project_id, Project.deleted_at.is_(None),
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    # Filing a request into a project exposes it there, so require membership.
+    member = db.query(ProjectMember).filter(
+        ProjectMember.project_id == project_id,
+        ProjectMember.user_id == user.id,
+        ProjectMember.deleted_at.is_(None),
+    ).first()
+    if not member and not is_platform_admin(user):
+        raise HTTPException(status_code=403, detail="Not a member of that project")
+
+    folder = None
+    if folder_id:
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id, Folder.deleted_at.is_(None),
+        ).first()
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        if folder.project_id != project.id:
+            raise HTTPException(status_code=400, detail="Folder is not in that project")
+    return project, folder
+
+
+def _apply_home(db: Session, link: SubmissionLink, project: Project, folder: Optional[Folder]) -> None:
+    """Point a link at its home and re-derive the stamped path from it.
+
+    The path is written down as well as derived because it is stamped onto assets
+    at upload, and an asset must keep the path it was filed under even if the
+    request is moved later.
+    """
+    link.home_project_id = project.id
+    link.home_folder_id = folder.id if folder else None
+    db.flush()
+    link.taxonomy_path = resolve_link_home_path(db, link)
+
+
 # ── Owner-facing ─────────────────────────────────────────────────────────────
 
 @router.post("/submission-links", response_model=SubmissionLinkResponse, status_code=status.HTTP_201_CREATED)
@@ -130,20 +185,22 @@ def create_submission_link(
     title = body.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
+    project, folder = _resolve_home(db, current_user, body.home_project_id, body.home_folder_id)
     link = SubmissionLink(
         token=secrets.token_urlsafe(32),
         created_by=current_user.id,
         title=title,
         instructions=body.instructions,
         grant_role=ProjectRole.editor,
-        taxonomy_path=(body.taxonomy_path or "").strip("/ ") or None,
         expires_at=body.expires_at,
     )
     db.add(link)
+    _apply_home(db, link, project, folder)
     db.commit()
     db.refresh(link)
     resp = SubmissionLinkResponse.model_validate(link)
     resp.submission_count = 0
+    resp.home_path = link.taxonomy_path
     return resp
 
 
@@ -177,23 +234,28 @@ def create_request_from_project(
     ).first():
         raise HTTPException(status_code=400, detail="This project is already a request's shared reference")
 
+    # Filed where the caller says, defaulting to the project being converted — a
+    # request made out of a project belongs with that project unless told otherwise.
+    home_project, home_folder = _resolve_home(
+        db, current_user, body.home_project_id or project.id, body.home_folder_id,
+    )
     link = SubmissionLink(
         token=secrets.token_urlsafe(32),
         created_by=current_user.id,
         title=project.name,
         instructions=project.description,
         grant_role=ProjectRole.editor,
-        taxonomy_path=(body.taxonomy_path or "").strip("/ ") or None,
         reference_project_id=project.id if body.as_reference else None,
     )
     db.add(link)
-    db.flush()
+    _apply_home(db, link, home_project, home_folder)
     if not body.as_reference:
         project.submission_link_id = link.id
     db.commit()
     db.refresh(link)
     resp = SubmissionLinkResponse.model_validate(link)
     resp.submission_count = 0
+    resp.home_path = link.taxonomy_path
     return resp
 
 
@@ -252,10 +314,14 @@ def list_submission_links(
         query = query.filter(SubmissionLink.created_by == current_user.id)
     links = query.order_by(SubmissionLink.created_at.desc()).all()
     counts = _count_map(db, [l.id for l in links])
+    # Derived, not read off the row: a folder rename has to move every request
+    # under it without a backfill.
+    home = link_home_paths(db, links)
     out = []
     for l in links:
         resp = SubmissionLinkResponse.model_validate(l)
         resp.submission_count = counts.get(l.id, 0)
+        resp.home_path = home.get(l.id)
         resp.has_brief = bool(l.brief_pdf_s3_key)
         resp.has_brief_json = bool(l.brief_json)  # flag only; full brief_json omitted from lists
         resp.has_reference_video = bool(l.brief_reference_video_s3_key)
@@ -276,6 +342,7 @@ def get_submission_link(
     resp.has_brief_json = bool(link.brief_json)
     resp.has_reference_video = bool(link.brief_reference_video_s3_key)
     resp.brief_json = link.brief_json  # full brief for the detail/edit view
+    resp.home_path = resolve_link_home_path(db, link)
     return resp
 
 
@@ -519,9 +586,11 @@ def update_submission_link(
         raise HTTPException(status_code=400, detail="Title is required")
     link.title = title
     link.instructions = body.instructions
-    # Only affects assets submitted from here on; already-uploaded assets keep
-    # the path they were stamped with, which is what makes the stamp meaningful.
-    link.taxonomy_path = (body.taxonomy_path or "").strip("/ ") or None
+    # Re-filing only affects assets submitted from here on; already-uploaded
+    # assets keep the path they were stamped with, which is what makes the stamp
+    # meaningful — it records where the work was filed when it was made.
+    project, folder = _resolve_home(db, current_user, body.home_project_id, body.home_folder_id)
+    _apply_home(db, link, project, folder)
     link.expires_at = body.expires_at
     db.commit()
     db.refresh(link)

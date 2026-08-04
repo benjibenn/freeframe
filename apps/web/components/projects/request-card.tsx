@@ -10,7 +10,13 @@ export interface VideoRequest {
   token: string
   title: string
   instructions: string | null
-  /** Taxonomy this request's output belongs to, e.g. "Skincare/GlowCo/Serum". */
+  /** Where the request is filed. The folder is the source of truth. */
+  home_project_id?: string | null
+  home_folder_id?: string | null
+  /** Path derived from that folder, e.g. "ecom/Phones/Store 1". Recomputed on
+   *  read, so a folder rename shows up here without a backfill. */
+  home_path?: string | null
+  /** Stamped copy of home_path, carried onto every asset submitted under it. */
   taxonomy_path?: string | null
   is_enabled: boolean
   expires_at: string | null

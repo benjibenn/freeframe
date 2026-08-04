@@ -40,8 +40,19 @@ class SubmissionLink(Base):
     reference_project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True
     )
-    # Taxonomy this request's output belongs to, e.g. "Skincare/GlowCo/Serum".
-    # Stamped onto every asset submitted under the link.
+    # Where this request lives in the shared folder tree. The folder is the source
+    # of truth: the path below is derived from it, so a folder rename carries and
+    # a typo is impossible. Null folder + set project = filed at the project root.
+    home_project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True
+    )
+    home_folder_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("folders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Taxonomy this request's output belongs to, e.g. "ecom/Phones/Store 1".
+    # Stamped onto every asset submitted under the link — submitted work lands in a
+    # per-submitter project and so can never be filed into the shared tree itself.
+    # Kept in sync from home_folder_id; only hand-set on legacy links with no home.
     taxonomy_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     # A brief is a work item in its own right, so it carries a stage and an owner
     # even before anything has been uploaded against it. Same task_stages table

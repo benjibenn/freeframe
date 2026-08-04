@@ -53,6 +53,7 @@ def initiate_upload(
         from ..services import brief_import_service
         from ..services.hook_naming import next_hook_name, variation_names
         from ..models.submission import SubmissionLink
+        from ..services.folder_paths import resolve_link_home_path
         asset_type = mime_to_asset_type(body.mime_type)
         cf = brief_import_service.cf_ids_for_project(db, project)
         name = body.asset_name
@@ -68,7 +69,9 @@ def initiate_upload(
             ).first()
             # The link is what knows which product this request is for; the
             # per-submitter project cannot express it, having no folder tree.
-            taxonomy_path = link.taxonomy_path if link else None
+            # Resolved live from where the request is filed, so an upload after a
+            # folder rename is stamped with the new name rather than a stale one.
+            taxonomy_path = resolve_link_home_path(db, link) if link else None
             allowed = variation_names(link.brief_json) if link else []
             if allowed:
                 if body.asset_name not in allowed:

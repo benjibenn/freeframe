@@ -70,6 +70,51 @@ def folder_paths(db: Session, folder_ids: Optional[set] = None) -> dict:
     }
 
 
+def link_home_paths(db: Session, links) -> dict:
+    """Map submission link id -> the taxonomy path it is filed under.
+
+    Derived from `home_folder_id` rather than read off the stored string, so
+    renaming a folder moves every request beneath it at once. Legacy links filed
+    nowhere fall back to whatever was typed into them by hand.
+
+    Resolves through the same `folder_paths` map the assets use, so a request and
+    an asset in the same folder produce the identical string — otherwise a folder
+    filter would silently split them into two groups.
+    """
+    links = list(links)
+    folder_ids = {l.home_folder_id for l in links if l.home_folder_id}
+    paths = folder_paths(db, folder_ids) if folder_ids else {}
+
+    # Filed at a project root: the project name is the whole path.
+    root_project_ids = {
+        l.home_project_id for l in links if l.home_project_id and not l.home_folder_id
+    }
+    project_names = (
+        dict(
+            db.execute(
+                select(Project.id, Project.name).where(Project.id.in_(root_project_ids))
+            ).all()
+        )
+        if root_project_ids
+        else {}
+    )
+
+    out = {}
+    for link in links:
+        if link.home_folder_id and paths.get(link.home_folder_id):
+            out[link.id] = paths[link.home_folder_id]
+        elif link.home_project_id and project_names.get(link.home_project_id):
+            out[link.id] = project_names[link.home_project_id]
+        else:
+            out[link.id] = link.taxonomy_path
+    return out
+
+
+def resolve_link_home_path(db: Session, link) -> Optional[str]:
+    """Single-link form of `link_home_paths`, for the upload stamp."""
+    return link_home_paths(db, [link]).get(link.id)
+
+
 def resolve_asset_path(asset, folder_path_by_id: dict, project_name: Optional[str]) -> Optional[str]:
     """The single answer to "where does this asset belong?".
 
