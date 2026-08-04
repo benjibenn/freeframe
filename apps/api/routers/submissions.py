@@ -602,6 +602,7 @@ def update_submission_link(
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
     resp.has_reference_video = bool(link.brief_reference_video_s3_key)
+    resp.home_path = resolve_link_home_path(db, link)
     return resp
 
 
