@@ -13,6 +13,7 @@ import {
   ArrowUp,
   ArrowDown,
   Film,
+  Image as ImageIcon,
   Star,
   Megaphone,
 } from 'lucide-react'
@@ -24,6 +25,15 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { useAuthStore } from '@/stores/auth-store'
 import type { TaskStage, TaskItem } from '@/types'
+
+/** Path with the active filter's prefix removed — the breadcrumb above already
+ *  shows that part, so repeating it on every row just crowds the cell. Returns
+ *  '' when the row sits exactly at the filtered folder, which hides it. */
+function relativePath(path: string, activeFilter: string | null): string {
+  if (!activeFilter) return path
+  if (path === activeFilter) return ''
+  return path.startsWith(activeFilter + '/') ? path.slice(activeFilter.length + 1) : path
+}
 
 const STAGES_KEY = '/task-stages'
 const TASKS_KEY = '/tasks'
@@ -361,6 +371,9 @@ export default function TasksPage() {
   // Taxonomy drill-down (niche / store / product). Prefix match, so choosing a
   // niche keeps everything filed beneath it.
   const [folderFilter, setFolderFilter] = React.useState<string | null>(null)
+  // 'all' | 'video' | 'image'. The board covered video only until static ads
+  // turned out to be a deliverable in their own right.
+  const [typeFilter, setTypeFilter] = React.useState<string>('all')
   const [pageSize, setPageSize] = React.useState<number>(25)
   const [page, setPage] = React.useState<number>(1)
 
@@ -386,7 +399,7 @@ export default function TasksPage() {
   // Back to page 1 whenever the filters or page size change.
   React.useEffect(() => {
     setPage(1)
-  }, [filter, requestFilter, folderFilter, pageSize])
+  }, [filter, requestFilter, folderFilter, typeFilter, pageSize])
 
   // Distinct request groupings present in the task list (for the filter dropdown).
   const requestOptions = React.useMemo(() => {
@@ -422,6 +435,7 @@ export default function TasksPage() {
           ? !t.request_id
           : t.request_id === requestFilter,
     )
+    .filter((t) => (typeFilter === 'all' ? true : t.asset_type === typeFilter))
     .filter((t) => {
       if (folderFilter === null) return true
       // Prefix match on the path, but only on a segment boundary — otherwise
@@ -455,7 +469,7 @@ export default function TasksPage() {
         <div>
           <h1 className="text-lg font-semibold text-text-primary">Tasks</h1>
           <p className="text-sm text-text-secondary mt-0.5">
-            Every submitted video and where it sits in the review pipeline. Change a
+            Every submitted video and image, and where it sits in the review pipeline. Change an item’s
             video&rsquo;s status with the dropdown on its row.
           </p>
         </div>
@@ -487,6 +501,19 @@ export default function TasksPage() {
             active={filter === 'unassigned'}
             onClick={() => setFilter('unassigned')}
           />
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <label className="text-xs text-text-tertiary whitespace-nowrap">Type</label>
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="rounded-md border border-border bg-bg-secondary px-2.5 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus cursor-pointer"
+          >
+            <option value="all">All types</option>
+            <option value="video">Video</option>
+            <option value="image">Image</option>
+          </select>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
@@ -556,7 +583,7 @@ export default function TasksPage() {
           <table className="w-full min-w-[820px] table-fixed text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-tertiary">
-                <th className="w-56 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Video</th>
+                <th className="w-56 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Asset</th>
                 <th className="w-40 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Submitter</th>
                 <th className="w-28 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Submitted</th>
                 <th className="w-40 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Status</th>
@@ -578,6 +605,8 @@ export default function TasksPage() {
                         {t.thumbnail_url ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={t.thumbnail_url} alt="" className="h-full w-full object-cover" />
+                        ) : t.asset_type === 'image' ? (
+                          <ImageIcon className="h-4 w-4 text-text-tertiary" />
                         ) : (
                           <Film className="h-4 w-4 text-text-tertiary" />
                         )}
@@ -589,7 +618,7 @@ export default function TasksPage() {
                             <span className="text-text-tertiary font-normal"> · v{t.latest_version_number}</span>
                           )}
                         </p>
-                        {t.folder_path ? (
+                        {t.folder_path && relativePath(t.folder_path, folderFilter) ? (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -599,10 +628,10 @@ export default function TasksPage() {
                               e.stopPropagation()
                               setFolderFilter(t.folder_path)
                             }}
-                            title={`Show only ${t.folder_path}`}
-                            className="text-xs text-accent truncate text-left hover:underline"
+                            title={t.folder_path}
+                            className="block w-full truncate text-left text-xs text-accent hover:underline"
                           >
-                            {t.folder_path}
+                            {relativePath(t.folder_path, folderFilter)}
                           </button>
                         ) : (
                           t.project_name && (
