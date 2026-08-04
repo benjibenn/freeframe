@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { X, Download, MoreHorizontal, Layers, Share2, Trash2, FolderInput, FolderIcon, Check, Film, Music, Image as ImageIcon, Images, Link as LinkIcon, Pencil } from 'lucide-react'
+import { X, Download, MoreHorizontal, Layers, Share2, Trash2, FolderInput, FolderIcon, Check, Film, Music, Image as ImageIcon, Images, Link as LinkIcon, Pencil, FileText } from 'lucide-react'
 import { cn, formatRelativeTime, formatBytes } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Avatar } from '@/components/shared/avatar'
@@ -39,6 +39,11 @@ interface AssetGridProps {
   onAssetSelect?: (asset: Asset, e?: React.MouseEvent) => void
   onAssetOpen?: (asset: Asset) => void
   folders?: Folder[]
+  /** Requests filed in the folder currently in view. Rendered alongside real
+   *  folders because that is what they are to the user: a container you open to
+   *  find who submitted and what they sent. */
+  requests?: RequestFolderItem[]
+  onRequestOpen?: (requestId: string) => void
   currentFolderId?: string | null
   onFolderOpen?: (folder: Folder) => void
   onFolderRename?: (folderId: string, name: string) => Promise<void>
@@ -80,6 +85,16 @@ const aspectMap = {
   portrait: 'aspect-[3/4]',
 }
 
+/** A request shown as a folder in the grid. Not a real folder row — it has no
+ *  folder id, cannot be moved, shared or dropped into. */
+export interface RequestFolderItem {
+  id: string
+  title: string
+  submission_count: number
+  has_brief: boolean
+  created_at: string
+}
+
 export function AssetGrid({
   assets,
   projectId,
@@ -94,6 +109,8 @@ export function AssetGrid({
   onAssetSelect,
   onAssetOpen,
   folders,
+  requests,
+  onRequestOpen,
   currentFolderId,
   onFolderOpen,
   onFolderRename,
@@ -237,6 +254,9 @@ export function AssetGrid({
   )
 
   const showFolders = !flattenFolders && folders && folders.length > 0
+  // Requests hide when flattening (a flattened view is about files) and in share
+  // mode, where every row must be a shareable target and a request is not one.
+  const reqItems = !flattenFolders && !shareMode ? (requests ?? []) : []
 
   if (isLoading) {
     return (
@@ -305,6 +325,42 @@ export function AssetGrid({
             </div>
           )}
         </div>
+      )}
+
+      {/* ─── Grid view: requests as folders ──────────────────────────── */}
+      {reqItems.length > 0 && layout === 'grid' && (
+        <>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-text-tertiary font-medium uppercase tracking-wider">
+              {reqItems.length} {reqItems.length === 1 ? 'Request' : 'Requests'}
+            </span>
+          </div>
+          <div className={cn('grid gap-3', gridColsMap[cardSize])}>
+            {reqItems.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => onRequestOpen?.(r.id)}
+                className="group/req flex flex-col items-start gap-2 rounded-lg border border-border bg-bg-secondary p-3 text-left transition-colors hover:border-accent/40 hover:bg-bg-hover"
+              >
+                <div className="flex h-10 w-10 items-center justify-center rounded-md bg-bg-tertiary">
+                  <FolderIcon className="h-5 w-5 text-accent/70" />
+                </div>
+                <div className="min-w-0 w-full">
+                  <p className="truncate text-sm font-medium text-text-primary">{r.title}</p>
+                  <p className="mt-0.5 flex items-center gap-1.5 text-xs text-text-tertiary">
+                    {r.submission_count} submitter{r.submission_count === 1 ? '' : 's'}
+                    {r.has_brief && (
+                      <>
+                        <span>·</span>
+                        <FileText className="h-3 w-3" />
+                      </>
+                    )}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       {/* ─── Grid view: folders section ──────────────────────────────── */}
@@ -430,6 +486,47 @@ export function AssetGrid({
             <div className="w-8 shrink-0" />
             <div className="w-8 shrink-0" />
           </div>
+
+          {/* Request rows — same shape as a folder row, opened to reveal submitters */}
+          {reqItems.map((r) => (
+            <div
+              key={r.id}
+              onClick={() => onRequestOpen?.(r.id)}
+              onDoubleClick={() => onRequestOpen?.(r.id)}
+              className="group flex cursor-pointer items-center gap-4 border-b border-border px-3 py-2.5 transition-colors hover:bg-bg-hover"
+            >
+              <div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-bg-tertiary">
+                <FolderIcon className="h-5 w-5 text-accent/70" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium leading-snug text-text-primary">
+                  {r.title}
+                </p>
+                <p className="mt-0.5 flex items-center gap-1.5 text-xs text-text-tertiary">
+                  {r.submission_count} submitter{r.submission_count === 1 ? '' : 's'}
+                  {r.has_brief && (
+                    <>
+                      <span>·</span>
+                      <FileText className="h-3 w-3" />
+                      Brief
+                    </>
+                  )}
+                </p>
+              </div>
+              {showUploader && <div className="hidden w-32 text-xs text-text-tertiary md:block">—</div>}
+              {showFileSize && <div className="hidden w-24 text-right text-sm text-text-tertiary sm:block">—</div>}
+              <div className="hidden w-10 text-center text-xs text-text-tertiary md:block">—</div>
+              <div className="hidden w-28 shrink-0 text-xs text-text-tertiary sm:block">
+                {new Date(r.created_at).toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                })}
+              </div>
+              <div className="w-8 shrink-0" />
+              <div className="w-8 shrink-0" />
+            </div>
+          ))}
 
           {/* Folder rows */}
           {showFolders && folders!.map((folder, i) => {
