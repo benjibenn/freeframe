@@ -53,6 +53,31 @@ export function visibleSteps(ctx: TourContext): TourStep[] {
   return TOUR_STEPS.filter((s) => s.page !== 'asset')
 }
 
+/**
+ * The step to skip forward to, or -1 to stay put.
+ *
+ * Compares pathname rather than probing the DOM. With router.push on step
+ * change a DOM probe can fire mid-transition, match a different step, and push
+ * again — two steps ping-pong. A pathname is a single value and look-ahead only
+ * moves forward, so that cannot happen.
+ */
+export function lookAheadByRoute(
+  pathname: string,
+  currentIndex: number,
+  steps: TourStep[],
+  ctx: TourContext,
+): number {
+  // Already where the current step wants the user: nothing to follow. Without
+  // this, two steps sharing a page would skip the first one immediately.
+  const current = steps[currentIndex]
+  if (current?.page && stepHref(current.page, ctx) === pathname) return -1
+
+  return steps.findIndex((s, i) => {
+    if (i <= currentIndex || !s.page) return false
+    return stepHref(s.page, ctx) === pathname
+  })
+}
+
 export const TOUR_STEPS: TourStep[] = [
   {
     id: 'upload',

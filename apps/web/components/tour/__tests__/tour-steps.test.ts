@@ -12,7 +12,13 @@
  */
 import { describe, it, expect } from 'vitest'
 
-import { TOUR_STEPS, stepHref, visibleSteps, type TourContext } from '../tour-steps'
+import {
+  TOUR_STEPS,
+  lookAheadByRoute,
+  stepHref,
+  visibleSteps,
+  type TourContext,
+} from '../tour-steps'
 
 const WITH_ASSET: TourContext = { projectId: 'p1', assetId: 'a1' }
 const NO_ASSET: TourContext = { projectId: 'p1', assetId: null }
@@ -50,6 +56,42 @@ describe('visibleSteps', () => {
   it('preserves step order when filtering', () => {
     const ids = visibleSteps(NO_ASSET).map((s) => s.id)
     expect(ids).toEqual(['upload', 'grid', 'library', 'keywords', 'video-labels', 'done'])
+  })
+})
+
+describe('lookAheadByRoute', () => {
+  const steps = visibleSteps(WITH_ASSET)
+  const idx = (id: string) => steps.findIndex((s) => s.id === id)
+
+  it('stays put while the user is on the page the current step wants', () => {
+    // Regression: two steps share the 'project' page. Matching on pathname alone
+    // would skip 'upload' the instant the tour opened on the project page.
+    expect(lookAheadByRoute('/projects/p1', idx('upload'), steps, WITH_ASSET)).toBe(-1)
+  })
+
+  it('follows the user who navigated ahead to the asset page', () => {
+    expect(lookAheadByRoute('/projects/p1/assets/a1', idx('upload'), steps, WITH_ASSET)).toBe(
+      idx('new-version'),
+    )
+  })
+
+  it('follows the user from the page-less library step into the library', () => {
+    expect(lookAheadByRoute('/library', idx('library'), steps, WITH_ASSET)).toBe(idx('keywords'))
+  })
+
+  it('never looks backwards', () => {
+    expect(lookAheadByRoute('/projects/p1', idx('keywords'), steps, WITH_ASSET)).toBe(-1)
+  })
+
+  it('stays put when the pathname matches no later step', () => {
+    expect(lookAheadByRoute('/settings', idx('upload'), steps, WITH_ASSET)).toBe(-1)
+  })
+
+  it('ignores asset steps that cannot resolve a href', () => {
+    const noAssetSteps = visibleSteps(NO_ASSET)
+    expect(lookAheadByRoute('/library', 0, noAssetSteps, NO_ASSET)).toBe(
+      noAssetSteps.findIndex((s) => s.id === 'keywords'),
+    )
   })
 })
 
