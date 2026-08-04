@@ -20,6 +20,7 @@ from ..models.user import User
 from ..models.project import Project
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType
 from ..models.task_stage import TaskStage
+from ..models.submission import Submission, SubmissionLink
 from ..services.folder_paths import folder_paths, asset_path_filter, resolve_asset_path
 from ..schemas.task_stage import (
     TaskStageResponse,
@@ -30,6 +31,10 @@ from ..schemas.task_stage import (
     BulkTaskStageAssign,
     RunAsAdAssign,
     TaskItem,
+    BriefEditor,
+    BriefTaskItem,
+    BriefAssigneeAssign,
+    TaskBoardResponse,
 )
 from ..services.permissions import require_platform_admin
 from ..services.s3_service import generate_presigned_get_url
@@ -148,43 +153,12 @@ def delete_task_stage(
 
 # ── Task list ────────────────────────────────────────────────────────────────
 
-@router.get("/tasks", response_model=list[TaskItem])
-def list_tasks(
-    stage_id: Optional[str] = Query(
-        None, description="Filter by stage UUID, or 'unassigned' for videos with no stage."
-    ),
-    folder_path: Optional[str] = Query(
-        None, description="Restrict to a taxonomy path and everything under it, e.g. 'Skincare/GlowCo'."
-    ),
-    asset_type: str = Query(
-        "all", description="'all' (default), or a single AssetType such as 'video' or 'image'."
-    ),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Every video asset across all projects, with its current pipeline stage."""
-    require_platform_admin(current_user)
+def _build_task_items(db: Session, assets: list[Asset]) -> list[TaskItem]:
+    """Turn Asset rows into TaskItems, bulk-loading every relation.
 
-    query = db.query(Asset).filter(Asset.deleted_at.is_(None))
-    # The board used to be hardcoded to video. Static-image ads are a first-class
-    # deliverable here, and excluding them meant a whole workflow had no board.
-    if asset_type != "all":
-        try:
-            query = query.filter(Asset.asset_type == AssetType(asset_type))
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Unknown asset_type: {asset_type}")
-    if stage_id == "unassigned":
-        query = query.filter(Asset.task_stage_id.is_(None))
-    elif stage_id:
-        query = query.filter(Asset.task_stage_id == uuid.UUID(stage_id))
-
-    if folder_path:
-        # Covers real folders, stamped submission paths, and bare project
-        # membership — a niche filter that omitted submitted work would be worse
-        # than no filter at all.
-        query = query.filter(asset_path_filter(db, folder_path))
-
-    assets = query.order_by(Asset.created_at.desc()).all()
+    Shared by /tasks and /task-board so the two can never drift on what a row
+    means — the board is the same data grouped by brief.
+    """
     if not assets:
         return []
 
@@ -264,6 +238,130 @@ def list_tasks(
             created_at=a.created_at,
         ))
     return out
+
+
+@router.get("/tasks", response_model=list[TaskItem])
+def list_tasks(
+    stage_id: Optional[str] = Query(
+        None, description="Filter by stage UUID, or 'unassigned' for videos with no stage."
+    ),
+    folder_path: Optional[str] = Query(
+        None, description="Restrict to a taxonomy path and everything under it, e.g. 'Skincare/GlowCo'."
+    ),
+    asset_type: str = Query(
+        "all", description="'all' (default), or a single AssetType such as 'video' or 'image'."
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Every video asset across all projects, with its current pipeline stage."""
+    require_platform_admin(current_user)
+
+    query = db.query(Asset).filter(Asset.deleted_at.is_(None))
+    # The board used to be hardcoded to video. Static-image ads are a first-class
+    # deliverable here, and excluding them meant a whole workflow had no board.
+    if asset_type != "all":
+        try:
+            query = query.filter(Asset.asset_type == AssetType(asset_type))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Unknown asset_type: {asset_type}")
+    if stage_id == "unassigned":
+        query = query.filter(Asset.task_stage_id.is_(None))
+    elif stage_id:
+        query = query.filter(Asset.task_stage_id == uuid.UUID(stage_id))
+
+    if folder_path:
+        # Covers real folders, stamped submission paths, and bare project
+        # membership — a niche filter that omitted submitted work would be worse
+        # than no filter at all.
+        query = query.filter(asset_path_filter(db, folder_path))
+
+    assets = query.order_by(Asset.created_at.desc()).all()
+    return _build_task_items(db, assets)
+
+
+
+@router.get("/task-board", response_model=TaskBoardResponse)
+def get_task_board(
+    folder_path: Optional[str] = Query(
+        None, description="Restrict to a taxonomy path and everything under it."
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """The to-do view: every brief as a work item, with its delivered files nested.
+
+    Briefs come from submission_links, so one appears the moment it is created —
+    before anything has been uploaded against it. That is the row /tasks can never
+    show, because /tasks lists assets and an un-started brief has none.
+
+    Assets uploaded straight into a project (no request behind them) are returned
+    separately rather than dropped, so the board still accounts for everything.
+    """
+    require_platform_admin(current_user)
+
+    asset_q = db.query(Asset).filter(Asset.deleted_at.is_(None))
+    if folder_path:
+        asset_q = asset_q.filter(asset_path_filter(db, folder_path))
+    items = _build_task_items(db, asset_q.order_by(Asset.created_at.desc()).all())
+
+    by_request: dict = {}
+    unbriefed: list[TaskItem] = []
+    for it in items:
+        (by_request.setdefault(it.request_id, []) if it.request_id else unbriefed).append(it)
+
+    link_q = db.query(SubmissionLink).filter(SubmissionLink.deleted_at.is_(None))
+    if folder_path:
+        # A brief matches on its own path, so an un-started brief is still
+        # filterable — it has no assets to match through.
+        prefix = folder_path.strip("/")
+        link_q = link_q.filter(or_(
+            SubmissionLink.taxonomy_path == prefix,
+            SubmissionLink.taxonomy_path.like(
+                prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%",
+                escape="\\",
+            ),
+        ))
+    links = link_q.order_by(SubmissionLink.created_at.desc()).all()
+
+    owners = {
+        u.id: u for u in db.query(User)
+        .filter(User.id.in_({l.assignee_id for l in links if l.assignee_id}))
+        .all()
+    } if any(l.assignee_id for l in links) else {}
+
+    # Editors per brief: whoever accepted the link. Derived, never stored.
+    editors_by_link: dict = {}
+    if links:
+        rows = (
+            db.query(Submission.submission_link_id, User)
+            .join(User, User.id == Submission.user_id)
+            .filter(Submission.submission_link_id.in_([l.id for l in links]))
+            .all()
+        )
+        for link_id, user in rows:
+            editors_by_link.setdefault(link_id, []).append(
+                BriefEditor(id=user.id, name=user.name, email=user.email)
+            )
+
+    briefs = [
+        BriefTaskItem(
+            id=l.id,
+            title=l.title,
+            taxonomy_path=l.taxonomy_path,
+            task_stage_id=l.task_stage_id,
+            assignee_id=l.assignee_id,
+            assignee_name=(owners[l.assignee_id].name if l.assignee_id in owners else None),
+            editors=editors_by_link.get(l.id, []),
+            has_brief=bool(l.brief_pdf_s3_key),
+            has_brief_json=bool(l.brief_json),
+            created_at=l.created_at,
+            assets=by_request.get(l.id, []),
+        )
+        for l in links
+    ]
+
+    return TaskBoardResponse(briefs=briefs, unbriefed=unbriefed)
 
 
 @router.patch("/assets/{asset_id}/task-stage", response_model=TaskItem)
@@ -376,4 +474,82 @@ def set_asset_run_as_ad(
         thumbnail_url=None,
         latest_version_number=None,
         created_at=asset.created_at,
+    )
+
+
+@router.patch("/submission-links/{link_id}/task-stage", response_model=BriefTaskItem)
+def set_brief_task_stage(
+    link_id: uuid.UUID,
+    body: TaskStageAssign,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Move a brief along the pipeline.
+
+    Dedicated endpoint rather than PATCH /submission-links, which replaces the
+    whole record — a board dropdown must not need the title and expiry in hand
+    just to change a stage.
+    """
+    require_platform_admin(current_user)
+    link = db.query(SubmissionLink).filter(
+        SubmissionLink.id == link_id, SubmissionLink.deleted_at.is_(None)
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if body.task_stage_id is not None:
+        _get_stage(db, body.task_stage_id)
+    link.task_stage_id = body.task_stage_id
+    db.commit()
+    db.refresh(link)
+    return _brief_item(db, link)
+
+
+@router.patch("/submission-links/{link_id}/assignee", response_model=BriefTaskItem)
+def set_brief_assignee(
+    link_id: uuid.UUID,
+    body: BriefAssigneeAssign,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Set the internal owner — whose desk the brief sits on. Distinct from the
+    editors who accepted the link, which is derived and not settable here."""
+    require_platform_admin(current_user)
+    link = db.query(SubmissionLink).filter(
+        SubmissionLink.id == link_id, SubmissionLink.deleted_at.is_(None)
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if body.assignee_id is not None:
+        owner = db.query(User).filter(User.id == body.assignee_id).first()
+        if not owner:
+            raise HTTPException(status_code=404, detail="User not found")
+    link.assignee_id = body.assignee_id
+    db.commit()
+    db.refresh(link)
+    return _brief_item(db, link)
+
+
+def _brief_item(db: Session, link: SubmissionLink) -> BriefTaskItem:
+    """One brief, without its assets — the PATCH endpoints return the row the
+    board just changed, and the board already holds the nested files."""
+    owner = db.query(User).filter(User.id == link.assignee_id).first() if link.assignee_id else None
+    editors = [
+        BriefEditor(id=u.id, name=u.name, email=u.email)
+        for _, u in db.query(Submission.submission_link_id, User)
+        .join(User, User.id == Submission.user_id)
+        .filter(Submission.submission_link_id == link.id)
+        .all()
+    ]
+    return BriefTaskItem(
+        id=link.id,
+        title=link.title,
+        taxonomy_path=link.taxonomy_path,
+        task_stage_id=link.task_stage_id,
+        assignee_id=link.assignee_id,
+        assignee_name=owner.name if owner else None,
+        editors=editors,
+        has_brief=bool(link.brief_pdf_s3_key),
+        has_brief_json=bool(link.brief_json),
+        created_at=link.created_at,
+        assets=[],
     )

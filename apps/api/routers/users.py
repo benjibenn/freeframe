@@ -46,6 +46,25 @@ def search_users(
     return users
 
 
+@router.get("/assignable", response_model=list[UserResponse])
+def list_assignable_users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Staff who can own a brief. /search needs a query string, which forces a
+    typeahead; a brief owner is picked from a handful of internal people, so a
+    plain list makes it a dropdown instead."""
+    return (
+        db.query(User)
+        .filter(
+            User.deleted_at.is_(None),
+            (User.is_superadmin.is_(True)) | (User.is_subadmin.is_(True)),
+        )
+        .order_by(User.name)
+        .all()
+    )
+
+
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
     if not current_user.is_superadmin:
         raise HTTPException(status_code=403, detail="Admin access required")

@@ -70,6 +70,36 @@ export interface TaskItem {
   created_at: string;
 }
 
+export interface BriefEditor {
+  id: string;
+  name: string | null;
+  email: string | null;
+}
+
+/** A brief as a work item. Present from creation, so it appears on the board
+ *  before anything has been uploaded against it. */
+export interface BriefTaskItem {
+  id: string;
+  title: string;
+  taxonomy_path: string | null;
+  task_stage_id: string | null;
+  /** Internal owner — whose desk this is on. */
+  assignee_id: string | null;
+  assignee_name: string | null;
+  /** Who is making it. Derived from acceptances, so blank until someone accepts. */
+  editors: BriefEditor[];
+  has_brief: boolean;
+  has_brief_json: boolean;
+  created_at: string;
+  assets: TaskItem[];
+}
+
+export interface TaskBoardResponse {
+  briefs: BriefTaskItem[];
+  /** Uploaded straight into a project, with no request behind them. */
+  unbriefed: TaskItem[];
+}
+
 // ─── Core Entities ────────────────────────────────────────────────────────────
 
 export interface User {

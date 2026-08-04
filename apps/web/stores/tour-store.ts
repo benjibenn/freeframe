@@ -46,7 +46,11 @@ export const useTourStore = create<TourStore>()(
       finish: () => set({ active: false, seen: true }),
     }),
     {
-      name: 'ff-tour',
+      // Versioned key. `seen` lives in each browser's localStorage, so the only
+      // way to re-show the tour to people who already dismissed it is to change
+      // the key — old state becomes unreadable and everyone is new again, once.
+      // Bumped when the tour was fixed from opening on the library step.
+      name: 'ff-tour-v2',
       partialize: (state: TourStore) => ({ seen: state.seen }),
     },
   ),

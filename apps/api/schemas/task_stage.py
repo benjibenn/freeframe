@@ -70,3 +70,41 @@ class TaskItem(BaseModel):
     thumbnail_url: Optional[str] = None
     latest_version_number: Optional[int] = None
     created_at: datetime
+
+
+class BriefEditor(BaseModel):
+    """An editor who accepted the request — derived from `submissions`, not stored."""
+    id: uuid.UUID
+    name: Optional[str] = None
+    email: Optional[str] = None
+
+
+class BriefTaskItem(BaseModel):
+    """A brief as a work item. Exists from creation, so it appears on the board
+    before anything has been uploaded against it — the row a to-do list is for."""
+    id: uuid.UUID
+    title: str
+    taxonomy_path: Optional[str] = None
+    task_stage_id: Optional[uuid.UUID] = None
+    # Internal owner: whose desk this is on.
+    assignee_id: Optional[uuid.UUID] = None
+    assignee_name: Optional[str] = None
+    # Who is actually making it. Blank until someone accepts the link, which is
+    # why it does not replace the owner.
+    editors: list[BriefEditor] = []
+    has_brief: bool = False
+    has_brief_json: bool = False
+    created_at: datetime
+    assets: list[TaskItem] = []
+
+
+class TaskBoardResponse(BaseModel):
+    briefs: list[BriefTaskItem]
+    # Assets uploaded straight into a project rather than against a request.
+    # They still need somewhere to live or the board silently loses them.
+    unbriefed: list[TaskItem] = []
+
+
+class BriefAssigneeAssign(BaseModel):
+    """Null clears the owner — an unowned brief is a real state, not an error."""
+    assignee_id: Optional[uuid.UUID] = None
