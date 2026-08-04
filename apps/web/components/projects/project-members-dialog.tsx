@@ -462,7 +462,11 @@ export function ProjectMembersDialog({
     }
   }, [open, fetchMembers])
 
-  const isOwner = members.some((m) => m.user_id === user?.id && m.role === 'owner')
+  // Platform admins manage members on every project without holding a membership
+  // row — the API's owner check bypasses for them, so the dialog must match.
+  const isOwner =
+    !!(user?.is_superadmin || user?.is_subadmin) ||
+    members.some((m) => m.user_id === user?.id && m.role === 'owner')
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>

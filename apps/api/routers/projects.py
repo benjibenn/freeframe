@@ -28,7 +28,12 @@ def _resolve_poster_url(project: Project) -> str | None:
         return generate_presigned_get_url(project.poster_s3_key)
     return None
 
-def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> ProjectMember:
+def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> ProjectMember | None:
+    # Platform admins (superadmin / subadmin) manage every project without a membership
+    # row — mirroring require_project_role — so all admins share the same project tree.
+    from ..services.permissions import is_platform_admin
+    if is_platform_admin(user):
+        return None
     member = db.query(ProjectMember).filter(
         ProjectMember.project_id == project_id,
         ProjectMember.user_id == user.id,

@@ -427,7 +427,10 @@ export default function ProjectDetailPage() {
 
   // ─── Role-based permissions ───────────────────────────────────────────────
   const currentMember = members?.find((m) => m.user_id === user?.id);
-  const currentRole = currentMember?.role ?? "viewer";
+  // Platform admins act as owner everywhere — the API grants them owner-level access
+  // on every project, so the UI must not demote them to viewer for lack of a
+  // membership row. This is what makes the folder tree shared between all admins.
+  const currentRole = isPlatformAdmin ? "owner" : (currentMember?.role ?? "viewer");
   // owner → Full Access, editor → Edit & Share, reviewer → Comment Only, viewer → View Only
   const canUpload = currentRole === "owner" || currentRole === "editor";
   const canCreateFolder = currentRole === "owner" || currentRole === "editor";
