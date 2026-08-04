@@ -229,7 +229,7 @@ export default function TasksPage() {
               ? `No briefs or files under ${folderFilter}.`
               : isPlatformAdmin
                 ? 'Create a request to start tracking work.'
-                : 'Nothing is assigned to you yet. An admin puts a brief on your desk by setting you as its owner.'
+                : 'Nothing is assigned to you yet.'
           }
         />
       ) : view === 'pipeline' ? (
@@ -239,12 +239,11 @@ export default function TasksPage() {
           <table className="w-full min-w-[52rem]">
             <thead className="bg-bg-secondary">
               <tr className="text-left text-xs font-medium text-text-tertiary">
-                <th className="w-[26%] px-3 py-2.5">Brief</th>
-                <th className="w-[18%] px-3 py-2.5">Category</th>
-                <th className="w-[15%] px-3 py-2.5">Owner</th>
-                <th className="w-[18%] px-3 py-2.5">Editor</th>
+                <th className="w-[30%] px-3 py-2.5">Brief</th>
+                <th className="w-[22%] px-3 py-2.5">Category</th>
+                <th className="w-[20%] px-3 py-2.5">Assigned to</th>
                 <th className="w-[8%] px-3 py-2.5 text-center">Files</th>
-                <th className="w-[15%] px-3 py-2.5">Status</th>
+                <th className="w-[20%] px-3 py-2.5">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -264,7 +263,7 @@ export default function TasksPage() {
               {unbriefed.length > 0 && (
                 <>
                   <tr className="border-t border-border bg-bg-secondary/60">
-                    <td colSpan={6} className="px-3 py-2 text-xs font-medium text-text-tertiary">
+                    <td colSpan={5} className="px-3 py-2 text-xs font-medium text-text-tertiary">
                       Uploaded directly — no brief ({unbriefed.length})
                     </td>
                   </tr>

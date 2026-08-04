@@ -3,7 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { mutate } from 'swr'
-import { FileText, FolderOpen, Users } from 'lucide-react'
+import { FileText, FolderOpen } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { relativePath } from './brief-row'
@@ -66,14 +66,8 @@ function BriefCard({
               : 'bg-bg-tertiary text-text-tertiary',
           )}
         >
-          {brief.assignee_name || 'Unowned'}
+          {brief.assignee_name || 'Unassigned'}
         </span>
-        {brief.editors.length > 0 && (
-          <span className="flex items-center gap-1">
-            <Users className="h-3 w-3" />
-            {brief.editors.map((e) => e.name || e.email).join(', ')}
-          </span>
-        )}
         <span className="ml-auto flex items-center gap-1.5">
           {(brief.has_brief || brief.has_brief_json) && <FileText className="h-3 w-3" />}
           {brief.assets.length > 0 && <span>{brief.assets.length} file{brief.assets.length === 1 ? '' : 's'}</span>}
