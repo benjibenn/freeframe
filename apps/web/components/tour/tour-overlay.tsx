@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { TOUR_STEPS } from '@/components/tour/tour-steps'
+import { TOUR_STEPS, lookAheadIndex } from '@/components/tour/tour-steps'
 import { useTourStore } from '@/stores/tour-store'
 import { cn } from '@/lib/utils'
 
@@ -64,8 +64,9 @@ export function TourOverlay() {
   }, [pathname])
 
   // Track the spotlight target. When the current step's element isn't on this
-  // page, look ahead: if a later step's element is present the user has already
-  // navigated there, so follow them instead of stranding them on a dead step.
+  // page, look ahead: if a later step's page-scoped element is present the user
+  // has already navigated there, so follow them instead of stranding them on a
+  // dead step. Steps targeting layout chrome are excluded — see lookAheadIndex.
   React.useEffect(() => {
     if (!active) return
 
@@ -78,9 +79,7 @@ export function TourOverlay() {
       }
       setRect(null)
       if (!current.target) return
-      const ahead = TOUR_STEPS.findIndex(
-        (s, i) => i > useTourStore.getState().stepIndex && s.target && findTarget(s.target),
-      )
+      const ahead = lookAheadIndex(useTourStore.getState().stepIndex, (t) => !!findTarget(t))
       if (ahead !== -1) jumpTo(ahead)
     }
 

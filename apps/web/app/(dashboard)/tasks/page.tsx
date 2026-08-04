@@ -1,718 +1,22 @@
 'use client'
 
 import * as React from 'react'
-import Link from 'next/link'
-import useSWR, { mutate } from 'swr'
-import * as Dialog from '@radix-ui/react-dialog'
-import {
-  ListChecks,
-  Settings2,
-  Plus,
-  X,
-  Trash2,
-  ArrowUp,
-  ArrowDown,
-  Film,
-  Image as ImageIcon,
-  Star,
-  Megaphone,
-} from 'lucide-react'
+import useSWR from 'swr'
+import { ListChecks } from 'lucide-react'
 import { api } from '@/lib/api'
-import { cn, formatRelativeTime } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
 import { EmptyState } from '@/components/shared/empty-state'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { useAuthStore } from '@/stores/auth-store'
-import type { TaskStage, TaskItem } from '@/types'
-
-/** Path with the active filter's prefix removed — the breadcrumb above already
- *  shows that part, so repeating it on every row just crowds the cell. Returns
- *  '' when the row sits exactly at the filtered folder, which hides it. */
-function relativePath(path: string, activeFilter: string | null): string {
-  if (!activeFilter) return path
-  if (path === activeFilter) return ''
-  return path.startsWith(activeFilter + '/') ? path.slice(activeFilter.length + 1) : path
-}
+import { ManageStagesDialog } from '@/components/tasks/manage-stages-dialog'
+import { BriefRow, AssetSubRow, relativePath } from '@/components/tasks/brief-row'
+import type { TaskStage, TaskBoardResponse, User } from '@/types'
 
 const STAGES_KEY = '/task-stages'
-const TASKS_KEY = '/tasks'
+const BOARD_KEY = '/task-board'
+const OWNERS_KEY = '/users/assignable'
 
-function StageDot({ color }: { color: string | null }) {
-  return (
-    <span
-      className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-      style={{ backgroundColor: color || 'var(--text-tertiary, #6b7280)' }}
-    />
-  )
-}
-
-/** Per-row status dropdown. Optimistically updates the cached task list. */
-function StageSelect({
-  task,
-  stages,
-}: {
-  task: TaskItem
-  stages: TaskStage[]
-}) {
-  const [saving, setSaving] = React.useState(false)
-
-  const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value
-    const task_stage_id = value === '' ? null : value
-    setSaving(true)
-    // Optimistic update
-    mutate(
-      TASKS_KEY,
-      (current: TaskItem[] | undefined) =>
-        current?.map((t) =>
-          t.asset_id === task.asset_id ? { ...t, task_stage_id } : t,
-        ),
-      false,
-    )
-    try {
-      await api.patch(`/assets/${task.asset_id}/task-stage`, { task_stage_id })
-    } catch (err) {
-      // Roll back on failure
-      mutate(TASKS_KEY)
-      alert(err instanceof Error ? err.message : 'Failed to update status')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <select
-      value={task.task_stage_id ?? ''}
-      onChange={handleChange}
-      disabled={saving}
-      className={cn(
-        'rounded-md border border-border bg-bg-secondary px-2.5 py-1.5 text-[13px] text-text-primary',
-        'transition-colors focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus',
-        'disabled:opacity-60 cursor-pointer',
-      )}
-    >
-      <option value="">Unassigned</option>
-      {stages.map((s) => (
-        <option key={s.id} value={s.id}>
-          {s.name}
-        </option>
-      ))}
-    </select>
-  )
-}
-
-/** Per-row "Run as ad" toggle. Optimistically flips the cached flag, then
- *  persists; rolls back on failure. The flag is what the external integration
- *  API filters ad-ready videos by. */
-function RunAsAdToggle({ task }: { task: TaskItem }) {
-  const [saving, setSaving] = React.useState(false)
-  const active = task.run_as_ad
-
-  const handleToggle = async () => {
-    const next = !active
-    setSaving(true)
-    // Optimistic update
-    mutate(
-      TASKS_KEY,
-      (current: TaskItem[] | undefined) =>
-        current?.map((t) =>
-          t.asset_id === task.asset_id ? { ...t, run_as_ad: next } : t,
-        ),
-      false,
-    )
-    try {
-      await api.patch(`/assets/${task.asset_id}/run-as-ad`, { run_as_ad: next })
-    } catch (err) {
-      // Roll back on failure
-      mutate(TASKS_KEY)
-      alert(err instanceof Error ? err.message : 'Failed to update "run as ad"')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <button
-      onClick={handleToggle}
-      disabled={saving}
-      aria-pressed={active}
-      title={active ? 'Cleared to run as ad — click to clear' : 'Mark as run as ad'}
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[13px] font-medium transition-colors disabled:opacity-60',
-        active
-          ? 'border-accent/40 bg-accent/10 text-accent'
-          : 'border-border bg-bg-secondary text-text-secondary hover:text-text-primary hover:border-border-focus',
-      )}
-    >
-      <Megaphone className="h-3.5 w-3.5" />
-      {active ? 'Running as ad' : 'Run as ad'}
-    </button>
-  )
-}
-
-/** Add / rename / recolour / reorder / remove stages. */
-function ManageStagesDialog({ stages }: { stages: TaskStage[] }) {
-  const [open, setOpen] = React.useState(false)
-  const [newName, setNewName] = React.useState('')
-  const [newColor, setNewColor] = React.useState('#3b82f6')
-  const [busy, setBusy] = React.useState(false)
-
-  const refresh = () => {
-    mutate(STAGES_KEY)
-    mutate(TASKS_KEY)
-  }
-
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const name = newName.trim()
-    if (!name) return
-    setBusy(true)
-    try {
-      await api.post('/task-stages', { name, color: newColor })
-      setNewName('')
-      refresh()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to add stage')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const handleRename = async (stage: TaskStage, name: string) => {
-    if (name.trim() === stage.name || !name.trim()) return
-    try {
-      await api.patch(`/task-stages/${stage.id}`, { name: name.trim() })
-      refresh()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to rename stage')
-    }
-  }
-
-  const handleRecolor = async (stage: TaskStage, color: string) => {
-    try {
-      await api.patch(`/task-stages/${stage.id}`, { color })
-      refresh()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to update colour')
-    }
-  }
-
-  const handleSetDefault = async (stage: TaskStage) => {
-    if (stage.is_default) return
-    try {
-      await api.patch(`/task-stages/${stage.id}`, { is_default: true })
-      refresh()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to set default stage')
-    }
-  }
-
-  const handleDelete = async (stage: TaskStage) => {
-    if (
-      !window.confirm(
-        `Delete the "${stage.name}" stage? Videos in this stage become Unassigned.`,
-      )
-    )
-      return
-    try {
-      await api.delete(`/task-stages/${stage.id}`)
-      refresh()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to delete stage')
-    }
-  }
-
-  const handleMove = async (index: number, direction: -1 | 1) => {
-    const target = index + direction
-    if (target < 0 || target >= stages.length) return
-    const reordered = [...stages]
-    const [moved] = reordered.splice(index, 1)
-    reordered.splice(target, 0, moved)
-    const ordered_ids = reordered.map((s) => s.id)
-    // Optimistic
-    mutate(
-      STAGES_KEY,
-      reordered.map((s, i) => ({ ...s, position: i + 1 })),
-      false,
-    )
-    try {
-      await api.post('/task-stages/reorder', { ordered_ids })
-      refresh()
-    } catch (err) {
-      mutate(STAGES_KEY)
-      alert(err instanceof Error ? err.message : 'Failed to reorder stages')
-    }
-  }
-
-  return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger asChild>
-        <Button variant="secondary" size="sm">
-          <Settings2 className="h-4 w-4" />
-          Manage stages
-        </Button>
-      </Dialog.Trigger>
-
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-lg max-h-[85vh] overflow-y-auto -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-secondary p-6 shadow-xl data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95">
-          <Dialog.Close className="absolute right-4 top-4 text-text-tertiary hover:text-text-primary transition-colors">
-            <X className="h-4 w-4" />
-          </Dialog.Close>
-
-          <Dialog.Title className="text-base font-semibold text-text-primary">
-            Pipeline stages
-          </Dialog.Title>
-          <Dialog.Description className="mt-1 text-sm text-text-secondary">
-            Define the flow each video moves through. Reorder with the arrows. The
-            starred stage is where newly uploaded videos start.
-          </Dialog.Description>
-
-          <div className="mt-4 space-y-2">
-            {stages.map((stage, index) => (
-              <div
-                key={stage.id}
-                className="flex items-center gap-2 rounded-md border border-border bg-bg-primary px-2.5 py-2"
-              >
-                <div className="flex flex-col">
-                  <button
-                    onClick={() => handleMove(index, -1)}
-                    disabled={index === 0}
-                    className="text-text-tertiary hover:text-text-primary disabled:opacity-30"
-                    title="Move up"
-                  >
-                    <ArrowUp className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onClick={() => handleMove(index, 1)}
-                    disabled={index === stages.length - 1}
-                    className="text-text-tertiary hover:text-text-primary disabled:opacity-30"
-                    title="Move down"
-                  >
-                    <ArrowDown className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <input
-                  type="color"
-                  value={stage.color || '#6b7280'}
-                  onChange={(e) => handleRecolor(stage, e.target.value)}
-                  className="h-7 w-7 shrink-0 cursor-pointer rounded border border-border bg-transparent"
-                  title="Stage colour"
-                />
-                <input
-                  defaultValue={stage.name}
-                  onBlur={(e) => handleRename(stage, e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                  }}
-                  className="flex-1 rounded-md border border-transparent bg-transparent px-2 py-1 text-sm text-text-primary hover:border-border focus:border-border-focus focus:outline-none"
-                />
-                <button
-                  onClick={() => handleSetDefault(stage)}
-                  className={cn(
-                    'transition-colors',
-                    stage.is_default
-                      ? 'text-amber-400'
-                      : 'text-text-tertiary hover:text-amber-400',
-                  )}
-                  title={stage.is_default ? 'Default stage for new uploads' : 'Make default for new uploads'}
-                >
-                  <Star className={cn('h-4 w-4', stage.is_default && 'fill-amber-400')} />
-                </button>
-                <button
-                  onClick={() => handleDelete(stage)}
-                  className="text-text-tertiary hover:text-status-error transition-colors"
-                  title="Delete stage"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-            {stages.length === 0 && (
-              <p className="text-sm text-text-tertiary py-2">
-                No stages yet — add the first one below.
-              </p>
-            )}
-          </div>
-
-          <form onSubmit={handleAdd} className="mt-4 flex items-center gap-2 border-t border-border pt-4">
-            <input
-              type="color"
-              value={newColor}
-              onChange={(e) => setNewColor(e.target.value)}
-              className="h-9 w-9 shrink-0 cursor-pointer rounded border border-border bg-transparent"
-              title="New stage colour"
-            />
-            <div className="flex-1">
-              <Input
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="New stage name…"
-              />
-            </div>
-            <Button type="submit" size="sm" loading={busy} disabled={!newName.trim()}>
-              <Plus className="h-4 w-4" />
-              Add
-            </Button>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  )
-}
-
-export default function TasksPage() {
-  usePageTitle('Tasks')
-  const { user } = useAuthStore()
-  const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
-  const [filter, setFilter] = React.useState<string | null>(null)
-  const [requestFilter, setRequestFilter] = React.useState<string | null>(null)
-  // Taxonomy drill-down (niche / store / product). Prefix match, so choosing a
-  // niche keeps everything filed beneath it.
-  const [folderFilter, setFolderFilter] = React.useState<string | null>(null)
-  // 'all' | 'video' | 'image'. The board covered video only until static ads
-  // turned out to be a deliverable in their own right.
-  const [typeFilter, setTypeFilter] = React.useState<string>('all')
-  const [pageSize, setPageSize] = React.useState<number>(25)
-  const [page, setPage] = React.useState<number>(1)
-
-  const { data: stages } = useSWR<TaskStage[]>(
-    isPlatformAdmin ? STAGES_KEY : null,
-    () => api.get<TaskStage[]>(STAGES_KEY),
-  )
-  const { data: tasks, isLoading } = useSWR<TaskItem[]>(
-    isPlatformAdmin ? TASKS_KEY : null,
-    () => api.get<TaskItem[]>(TASKS_KEY),
-  )
-
-  // Remember the chosen page size across visits.
-  React.useEffect(() => {
-    const saved =
-      typeof window !== 'undefined' ? window.localStorage.getItem('tasksPageSize') : null
-    if (saved) setPageSize(Number(saved) || 25)
-  }, [])
-  React.useEffect(() => {
-    if (typeof window !== 'undefined')
-      window.localStorage.setItem('tasksPageSize', String(pageSize))
-  }, [pageSize])
-  // Back to page 1 whenever the filters or page size change.
-  React.useEffect(() => {
-    setPage(1)
-  }, [filter, requestFilter, folderFilter, typeFilter, pageSize])
-
-  // Distinct request groupings present in the task list (for the filter dropdown).
-  const requestOptions = React.useMemo(() => {
-    const m = new Map<string, string>()
-    for (const t of tasks ?? []) {
-      if (t.request_id) m.set(t.request_id, t.request_title || 'Untitled request')
-    }
-    return Array.from(m, ([id, title]) => ({ id, title })).sort((a, b) =>
-      a.title.localeCompare(b.title),
-    )
-  }, [tasks])
-
-  if (!isPlatformAdmin) {
-    return (
-      <div className="p-4 sm:p-6 max-w-3xl">
-        <EmptyState
-          icon={ListChecks}
-          title="Admins only"
-          description="The task list is available to admins and sub-admins."
-        />
-      </div>
-    )
-  }
-
-  const stageList = stages ?? []
-
-  // Tasks within the chosen request grouping — also drives the stage chip counts.
-  const requestScoped = (tasks ?? [])
-    .filter((t) =>
-      requestFilter === null
-        ? true
-        : requestFilter === 'none'
-          ? !t.request_id
-          : t.request_id === requestFilter,
-    )
-    .filter((t) => (typeFilter === 'all' ? true : t.asset_type === typeFilter))
-    .filter((t) => {
-      if (folderFilter === null) return true
-      // Prefix match on the path, but only on a segment boundary — otherwise
-      // "Skincare" would also select a sibling folder named "SkincarePro".
-      const path = t.folder_path ?? ''
-      return path === folderFilter || path.startsWith(folderFilter + '/')
-    })
-
-  // Breadcrumb segments for the active path, each carrying the prefix it selects.
-  const folderCrumbs = folderFilter
-    ? folderFilter.split('/').map((seg, i, all) => ({ label: seg, path: all.slice(0, i + 1).join('/') }))
-    : []
-  const countByStage = (id: string | null) =>
-    requestScoped.filter((t) => (t.task_stage_id ?? null) === id).length
-
-  const filtered = requestScoped.filter((t) => {
-    if (filter === null) return true
-    if (filter === 'unassigned') return t.task_stage_id === null
-    return t.task_stage_id === filter
-  })
-
-  const total = filtered.length
-  const totalPages = Math.max(1, Math.ceil(total / pageSize))
-  const currentPage = Math.min(page, totalPages)
-  const startIndex = (currentPage - 1) * pageSize
-  const paginated = filtered.slice(startIndex, startIndex + pageSize)
-
-  return (
-    <div className="p-4 sm:p-6 max-w-5xl space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-        <div>
-          <h1 className="text-lg font-semibold text-text-primary">Tasks</h1>
-          <p className="text-sm text-text-secondary mt-0.5">
-            Every submitted video and image, and where it sits in the review pipeline. Change an item’s
-            video&rsquo;s status with the dropdown on its row.
-          </p>
-        </div>
-        <ManageStagesDialog stages={stageList} />
-      </div>
-
-      {/* Filters: stage chips + request grouping */}
-      <div className="flex flex-col gap-3 border-b border-border pb-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap items-center gap-1">
-          <FilterChip
-            label="All"
-            count={requestScoped.length}
-            active={filter === null}
-            onClick={() => setFilter(null)}
-          />
-          {stageList.map((s) => (
-            <FilterChip
-              key={s.id}
-              label={s.name}
-              color={s.color}
-              count={countByStage(s.id)}
-              active={filter === s.id}
-              onClick={() => setFilter(s.id)}
-            />
-          ))}
-          <FilterChip
-            label="Unassigned"
-            count={countByStage(null)}
-            active={filter === 'unassigned'}
-            onClick={() => setFilter('unassigned')}
-          />
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <label className="text-xs text-text-tertiary whitespace-nowrap">Type</label>
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="rounded-md border border-border bg-bg-secondary px-2.5 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus cursor-pointer"
-          >
-            <option value="all">All types</option>
-            <option value="video">Video</option>
-            <option value="image">Image</option>
-          </select>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <label className="text-xs text-text-tertiary whitespace-nowrap">Request</label>
-          <select
-            value={requestFilter ?? ''}
-            onChange={(e) =>
-              setRequestFilter(e.target.value === '' ? null : e.target.value)
-            }
-            className="rounded-md border border-border bg-bg-secondary px-2.5 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus cursor-pointer max-w-[16rem]"
-          >
-            <option value="">All requests</option>
-            {requestOptions.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.title}
-              </option>
-            ))}
-            <option value="none">No request</option>
-          </select>
-        </div>
-      </div>
-
-      {folderCrumbs.length > 0 && (
-        <nav className="flex items-center flex-wrap gap-1 mb-3 text-xs" aria-label="Taxonomy filter">
-          <button
-            type="button"
-            onClick={() => setFolderFilter(null)}
-            className="text-accent hover:underline"
-          >
-            All folders
-          </button>
-          {folderCrumbs.map((c, i) => (
-            <span key={c.path} className="flex items-center gap-1">
-              <span className="text-text-tertiary">/</span>
-              <button
-                type="button"
-                onClick={() => setFolderFilter(c.path)}
-                className={
-                  i === folderCrumbs.length - 1
-                    ? 'text-text-primary font-medium'
-                    : 'text-accent hover:underline'
-                }
-              >
-                {c.label}
-              </button>
-            </span>
-          ))}
-        </nav>
-      )}
-
-      {isLoading ? (
-        <div className="space-y-2">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-16 animate-pulse rounded-lg bg-bg-secondary" />
-          ))}
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={ListChecks}
-          title="No videos here"
-          description="Submitted videos will appear here so you can move them through the pipeline."
-        />
-      ) : (
-        <div className="space-y-3">
-        <div className="rounded-lg border border-border bg-bg-secondary overflow-hidden">
-          <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] table-fixed text-sm">
-            <thead>
-              <tr className="border-b border-border bg-bg-tertiary">
-                <th className="w-56 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Asset</th>
-                <th className="w-40 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Submitter</th>
-                <th className="w-28 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Submitted</th>
-                <th className="w-40 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Status</th>
-                <th className="w-40 px-4 py-2.5 text-left text-xs font-medium text-text-tertiary">Run as ad</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginated.map((t) => (
-                <tr
-                  key={t.asset_id}
-                  className="border-b border-border last:border-0 hover:bg-bg-tertiary transition-colors"
-                >
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/projects/${t.project_id}/assets/${t.asset_id}?from=/tasks`}
-                      className="flex items-center gap-3 group"
-                    >
-                      <div className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-bg-tertiary">
-                        {t.thumbnail_url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={t.thumbnail_url} alt="" className="h-full w-full object-cover" />
-                        ) : t.asset_type === 'image' ? (
-                          <ImageIcon className="h-4 w-4 text-text-tertiary" />
-                        ) : (
-                          <Film className="h-4 w-4 text-text-tertiary" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-text-primary truncate group-hover:text-accent">
-                          {t.name}
-                          {t.latest_version_number && t.latest_version_number > 1 && (
-                            <span className="text-text-tertiary font-normal"> · v{t.latest_version_number}</span>
-                          )}
-                        </p>
-                        {t.folder_path && relativePath(t.folder_path, folderFilter) ? (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              // The row is a Link; without this the click navigates
-                              // to the asset instead of drilling into the folder.
-                              e.preventDefault()
-                              e.stopPropagation()
-                              setFolderFilter(t.folder_path)
-                            }}
-                            title={t.folder_path}
-                            className="block w-full truncate text-left text-xs text-accent hover:underline"
-                          >
-                            {relativePath(t.folder_path, folderFilter)}
-                          </button>
-                        ) : (
-                          t.project_name && (
-                            <p className="text-xs text-text-tertiary truncate">{t.project_name}</p>
-                          )
-                        )}
-                      </div>
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    <p className="text-sm text-text-primary truncate">{t.submitter_name || '—'}</p>
-                    {t.submitter_email && (
-                      <p className="text-xs text-text-tertiary truncate">{t.submitter_email}</p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-text-tertiary whitespace-nowrap">
-                    {formatRelativeTime(t.created_at)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StageSelect task={t} stages={stageList} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <RunAsAdToggle task={t} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        </div>
-
-        {/* Pagination */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-text-tertiary">
-            Showing {total === 0 ? 0 : startIndex + 1}–{Math.min(startIndex + pageSize, total)} of {total}
-          </p>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-text-tertiary whitespace-nowrap">Per page</label>
-              <select
-                value={pageSize}
-                onChange={(e) => setPageSize(Number(e.target.value))}
-                className="rounded-md border border-border bg-bg-secondary px-2 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus cursor-pointer"
-              >
-                {[10, 25, 50, 100].map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={currentPage <= 1}
-                onClick={() => setPage(currentPage - 1)}
-              >
-                Prev
-              </Button>
-              <span className="px-1 text-xs text-text-tertiary whitespace-nowrap">
-                Page {currentPage} / {totalPages}
-              </span>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={currentPage >= totalPages}
-                onClick={() => setPage(currentPage + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-        </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function FilterChip({
+function StageChip({
   label,
   count,
   active,
@@ -729,15 +33,219 @@ function FilterChip({
     <button
       onClick={onClick}
       className={cn(
-        'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
+        'inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors',
         active
-          ? 'bg-bg-hover text-text-primary'
-          : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
+          ? 'border-border-focus bg-bg-secondary text-text-primary'
+          : 'border-transparent text-text-secondary hover:text-text-primary hover:bg-bg-hover',
       )}
     >
-      {color !== undefined && <StageDot color={color ?? null} />}
+      {color !== undefined && (
+        <span
+          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: color || 'var(--text-tertiary, #6b7280)' }}
+        />
+      )}
       {label}
       <span className="text-text-tertiary">{count}</span>
     </button>
+  )
+}
+
+export default function TasksPage() {
+  usePageTitle('Tasks')
+  const { user } = useAuthStore()
+  const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
+
+  const [stageFilter, setStageFilter] = React.useState<string | null>(null)
+  const [folderFilter, setFolderFilter] = React.useState<string | null>(null)
+  const [typeFilter, setTypeFilter] = React.useState<string>('all')
+
+  const { data: stages } = useSWR<TaskStage[]>(
+    isPlatformAdmin ? STAGES_KEY : null,
+    () => api.get<TaskStage[]>(STAGES_KEY),
+  )
+  const { data: board, isLoading } = useSWR<TaskBoardResponse>(
+    isPlatformAdmin ? BOARD_KEY : null,
+    () => api.get<TaskBoardResponse>(BOARD_KEY),
+  )
+  const { data: owners } = useSWR<User[]>(
+    isPlatformAdmin ? OWNERS_KEY : null,
+    () => api.get<User[]>(OWNERS_KEY),
+  )
+
+  if (!isPlatformAdmin) {
+    return (
+      <div className="p-4 sm:p-6 max-w-3xl">
+        <EmptyState
+          icon={ListChecks}
+          title="Admins only"
+          description="The task list is available to admins and sub-admins."
+        />
+      </div>
+    )
+  }
+
+  const stageList = stages ?? []
+  const allBriefs = board?.briefs ?? []
+  const allUnbriefed = board?.unbriefed ?? []
+
+  // Folder filter applies to a brief's own path — an un-started brief has no
+  // assets to match through, and it is the row most worth keeping visible.
+  const inFolder = (path: string | null) =>
+    folderFilter === null ||
+    (path !== null && (path === folderFilter || path.startsWith(folderFilter + '/')))
+
+  const folderBriefs = allBriefs.filter((b) => inFolder(b.taxonomy_path))
+  const countByStage = (id: string | null) =>
+    folderBriefs.filter((b) => (b.task_stage_id ?? null) === id).length
+
+  const briefs = folderBriefs.filter((b) => {
+    if (stageFilter === null) return true
+    if (stageFilter === 'unassigned') return b.task_stage_id === null
+    return b.task_stage_id === stageFilter
+  })
+
+  const unbriefed = allUnbriefed
+    .filter((a) => inFolder(a.folder_path))
+    .filter((a) => typeFilter === 'all' || a.asset_type === typeFilter)
+
+  const crumbs = folderFilter
+    ? folderFilter.split('/').map((seg, i, all) => ({ label: seg, path: all.slice(0, i + 1).join('/') }))
+    : []
+
+  return (
+    <div className="p-4 sm:p-6 max-w-6xl space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div>
+          <h1 className="text-lg font-semibold text-text-primary">Tasks</h1>
+          <p className="mt-1 text-sm text-text-secondary">
+            Every brief and what has been delivered against it. A brief appears here from
+            the moment you create it, so an empty one is visible rather than forgotten.
+          </p>
+        </div>
+        <ManageStagesDialog stages={stageList} />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1">
+          <StageChip
+            label="All"
+            count={folderBriefs.length}
+            active={stageFilter === null}
+            onClick={() => setStageFilter(null)}
+          />
+          {stageList.map((s) => (
+            <StageChip
+              key={s.id}
+              label={s.name}
+              color={s.color}
+              count={countByStage(s.id)}
+              active={stageFilter === s.id}
+              onClick={() => setStageFilter(s.id)}
+            />
+          ))}
+          <StageChip
+            label="Unassigned"
+            count={countByStage(null)}
+            active={stageFilter === 'unassigned'}
+            onClick={() => setStageFilter('unassigned')}
+          />
+        </div>
+
+        <div className="ml-auto flex items-center gap-2 shrink-0">
+          <label className="text-xs text-text-tertiary whitespace-nowrap">Files</label>
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="rounded-md border border-border bg-bg-secondary px-2.5 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-border-focus cursor-pointer"
+          >
+            <option value="all">All types</option>
+            <option value="video">Video</option>
+            <option value="image">Image</option>
+          </select>
+        </div>
+      </div>
+
+      {crumbs.length > 0 && (
+        <nav className="flex items-center flex-wrap gap-1 text-xs" aria-label="Taxonomy filter">
+          <button onClick={() => setFolderFilter(null)} className="text-accent hover:underline">
+            All folders
+          </button>
+          {crumbs.map((c, i) => (
+            <span key={c.path} className="flex items-center gap-1">
+              <span className="text-text-tertiary">/</span>
+              <button
+                onClick={() => setFolderFilter(c.path)}
+                className={
+                  i === crumbs.length - 1
+                    ? 'text-text-primary font-medium'
+                    : 'text-accent hover:underline'
+                }
+              >
+                {c.label}
+              </button>
+            </span>
+          ))}
+        </nav>
+      )}
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="h-14 animate-pulse rounded-lg bg-bg-secondary" />
+          ))}
+        </div>
+      ) : briefs.length === 0 && unbriefed.length === 0 ? (
+        <EmptyState
+          icon={ListChecks}
+          title="Nothing here"
+          description={
+            folderFilter
+              ? `No briefs or files under ${folderFilter}.`
+              : 'Create a request to start tracking work.'
+          }
+        />
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-border">
+          <table className="w-full min-w-[52rem]">
+            <thead className="bg-bg-secondary">
+              <tr className="text-left text-xs font-medium text-text-tertiary">
+                <th className="w-[32%] px-3 py-2.5">Brief</th>
+                <th className="w-[16%] px-3 py-2.5">Owner</th>
+                <th className="w-[20%] px-3 py-2.5">Editor</th>
+                <th className="w-[8%] px-3 py-2.5 text-center">Files</th>
+                <th className="w-[14%] px-3 py-2.5">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {briefs.map((b) => (
+                <BriefRow
+                  key={b.id}
+                  brief={b}
+                  stages={stageList}
+                  owners={owners ?? []}
+                  folderFilter={folderFilter}
+                  typeFilter={typeFilter}
+                  onDrillTo={setFolderFilter}
+                />
+              ))}
+
+              {unbriefed.length > 0 && (
+                <>
+                  <tr className="border-t border-border bg-bg-secondary/60">
+                    <td colSpan={5} className="px-3 py-2 text-xs font-medium text-text-tertiary">
+                      Uploaded directly — no brief ({unbriefed.length})
+                    </td>
+                  </tr>
+                  {unbriefed.map((a) => (
+                    <AssetSubRow key={a.asset_id} asset={a} stages={stageList} />
+                  ))}
+                </>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   )
 }

@@ -20,6 +20,30 @@ export interface TourStep {
   body: string
   /** Shown when the target isn't on this page — tells the user how to get there. */
   waitingFor?: string
+  /**
+   * True when the target lives in persistent layout chrome rather than page
+   * content. The dashboard layout renders the sidebar outside `{children}`, so
+   * such a target is in the DOM on every page and its presence says nothing
+   * about where the user is. Look-ahead must skip these or the tour lands on
+   * them immediately and can never be rewound.
+   */
+  alwaysMounted?: boolean
+}
+
+/**
+ * The step to skip forward to, or -1 to stay put.
+ *
+ * Only ever looks forward, and only at page-scoped targets: a step is evidence
+ * the user navigated somewhere only if its target appears and disappears with
+ * the page. `isPresent` is injected so this stays pure and testable.
+ */
+export function lookAheadIndex(
+  currentIndex: number,
+  isPresent: (target: string) => boolean,
+): number {
+  return TOUR_STEPS.findIndex(
+    (s, i) => i > currentIndex && s.target && !s.alwaysMounted && isPresent(s.target),
+  )
 }
 
 export const TOUR_STEPS: TourStep[] = [
@@ -54,6 +78,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'library',
     target: 'sidebar-library',
+    alwaysMounted: true,
     title: 'Open the footage library',
     body: 'The Library is every clip you have access to, across all projects, in one grid — useful for finding footage you or your team already shot.',
     waitingFor: 'Look for Library in the left sidebar.',

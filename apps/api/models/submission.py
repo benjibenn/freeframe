@@ -43,6 +43,17 @@ class SubmissionLink(Base):
     # Taxonomy this request's output belongs to, e.g. "Skincare/GlowCo/Serum".
     # Stamped onto every asset submitted under the link.
     taxonomy_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    # A brief is a work item in its own right, so it carries a stage and an owner
+    # even before anything has been uploaded against it. Same task_stages table
+    # as the assets use — one pipeline, so a stage name means one thing.
+    task_stage_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("task_stages.id"), nullable=True, index=True
+    )
+    # Internal owner: whose desk this sits on. Distinct from the editors who
+    # accepted the link, which is derived from the submissions table.
+    assignee_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
+    )
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     # Provenance for requests auto-created from an external source (the data
     # spine). NULL for normal hand-made requests. unique among ACTIVE rows
