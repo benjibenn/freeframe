@@ -105,6 +105,51 @@ function MySubmissionsView() {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+// Every path here is one the brief template actually renders
+// (GET /brief-template): overview, final_deliverable.label,
+// final_deliverable.hook_variations, script_with_storyboard, guidelines.
+// Keys outside those are stored but never shown, so a brief that "saves fine"
+// yet appears blank is almost always a path that does not match.
+const SAMPLE_BRIEF_JSON = `{
+  "title": "GlowCo Serum — UGC hooks",
+  "overview": "Three 20-30s UGC videos for the Serum launch. Casual, phone-shot, no studio lighting.",
+  "final_deliverable": {
+    "label": "3 x 9:16 videos, 20-30s, 1080x1920",
+    "hook_variations": [
+      {
+        "variation": "Problem-first",
+        "script_voiceover": "My skin was so dry I stopped wearing makeup.",
+        "shot": "Close-up, bare face, morning light",
+        "on_screen_text": "Day 1"
+      },
+      {
+        "variation": "Bold claim",
+        "script_voiceover": "This serum replaced four products on my shelf.",
+        "shot": "Hand sweeping products off the counter",
+        "on_screen_text": "4 products, 1 bottle"
+      }
+    ]
+  },
+  "script_with_storyboard": [
+    {
+      "script_voiceover": "I started using it every night before bed.",
+      "shot": "Bathroom mirror, applying serum",
+      "on_screen_text": "Every night"
+    },
+    {
+      "script_voiceover": "Two weeks later my skin felt completely different.",
+      "shot": "Same framing as the opening shot, no makeup",
+      "on_screen_text": "Day 14"
+    }
+  ],
+  "guidelines": [
+    "Shoot vertical 9:16, phone camera is fine",
+    "Natural light only, no ring light",
+    "Say the product name at least once",
+    "No competitor products visible"
+  ]
+}`
+
 export default function SubmissionsPage() {
   const { user } = useAuthStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
@@ -283,14 +328,34 @@ export default function SubmissionsPage() {
             </p>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-text-secondary">Structured brief (JSON, optional)</label>
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-sm font-medium text-text-secondary">Structured brief (JSON, optional)</label>
+              <button
+                type="button"
+                onClick={() => setBriefJson(SAMPLE_BRIEF_JSON)}
+                disabled={briefJson.trim().length > 0}
+                title={
+                  briefJson.trim()
+                    ? 'Clear the field first — this will not overwrite what you have typed'
+                    : 'Fill the field with a sample brief'
+                }
+                className="text-xs text-accent hover:underline disabled:cursor-not-allowed disabled:text-text-tertiary disabled:no-underline"
+              >
+                Insert sample
+              </button>
+            </div>
             <textarea
               className="flex min-h-[120px] w-full rounded-md border border-border bg-bg-secondary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-              placeholder='{ "title": "…", "overview": "…", "script_with_storyboard": [ … ] }'
+              placeholder={SAMPLE_BRIEF_JSON}
               value={briefJson}
               onChange={(e) => setBriefJson(e.target.value)}
             />
-            <p className="text-xs text-text-tertiary">Paste a brief object. It renders on the submission and project pages.</p>
+            <p className="text-xs text-text-tertiary">
+              Paste a brief object. It renders on the submission and project pages. Only
+              these keys are displayed: <code>overview</code>, <code>final_deliverable.label</code>,{' '}
+              <code>final_deliverable.hook_variations</code>, <code>script_with_storyboard</code>,{' '}
+              <code>guidelines</code>.
+            </p>
           </div>
           <div className="flex gap-2">
             <Button type="submit" loading={creating}>Create link</Button>
@@ -343,6 +408,9 @@ function LinkCard({
   const [briefError, setBriefError] = useState('')
   const [saving, setSaving] = useState(false)
   const [preAssignOpen, setPreAssignOpen] = useState(false)
+  // Instructions are clamped to two lines in the row, so anything longer is
+  // unreadable without this.
+  const [instructionsOpen, setInstructionsOpen] = useState(false)
   const editFileRef = useRef<HTMLInputElement>(null)
   const editVideoRef = useRef<HTMLInputElement>(null)
 
@@ -550,19 +618,31 @@ function LinkCard({
             {link.instructions && (
               <p className="mt-0.5 line-clamp-2 text-sm text-text-secondary">{link.instructions}</p>
             )}
-            {(link.has_brief || link.has_brief_json || link.has_reference_video) && (
-              <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-text-tertiary">
-                <FileText className="h-3 w-3" />
-                {[
-                  link.has_brief && 'Brief PDF',
-                  link.has_brief_json && 'structured brief',
-                  link.has_reference_video && 'reference video',
-                ]
-                  .filter(Boolean)
-                  .join(' + ')}{' '}
-                attached
-              </p>
-            )}
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {(link.has_brief || link.has_brief_json || link.has_reference_video) && (
+                <p className="inline-flex items-center gap-1 text-xs text-text-tertiary">
+                  <FileText className="h-3 w-3" />
+                  {[
+                    link.has_brief && 'Brief PDF',
+                    link.has_brief_json && 'structured brief',
+                    link.has_reference_video && 'reference video',
+                  ]
+                    .filter(Boolean)
+                    .join(' + ')}{' '}
+                  attached
+                </p>
+              )}
+              {link.instructions && (
+                <button
+                  type="button"
+                  onClick={() => setInstructionsOpen(true)}
+                  className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+                >
+                  <FileText className="h-3 w-3" />
+                  View instructions
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <Button variant="ghost" size="sm" onClick={startEdit} title="Edit name">
@@ -663,6 +743,38 @@ function LinkCard({
             <FolderPlus className="h-3.5 w-3.5" />
             Pre-assign folder to email…
           </button>
+        </div>
+      )}
+
+      {instructionsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Request instructions"
+          onClick={() => setInstructionsOpen(false)}
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg border border-border bg-bg-primary p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <h3 className="text-base font-semibold text-text-primary">{link.title}</h3>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setInstructionsOpen(false)}
+                className="rounded-md p-1 text-text-tertiary hover:bg-bg-secondary hover:text-text-primary"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {/* whitespace-pre-wrap: instructions are typed as prose with real line
+                breaks, which collapse to one paragraph without it. */}
+            <p className="mt-3 whitespace-pre-wrap text-sm text-text-secondary">
+              {link.instructions}
+            </p>
+          </div>
         </div>
       )}
 
