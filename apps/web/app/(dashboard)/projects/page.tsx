@@ -156,6 +156,7 @@ function ProjectSection({
   showNewButton,
   showRole,
   userId,
+  isAdmin,
   onMutate,
   renderLimit,
 }: {
@@ -168,6 +169,8 @@ function ProjectSection({
   showNewButton?: boolean;
   showRole?: boolean;
   userId?: string;
+  /** Platform admins get the owner context menu on every card. */
+  isAdmin?: boolean;
   onMutate?: () => void;
   /** Cap how many cards are mounted (header still shows the true total). */
   renderLimit?: number;
@@ -213,7 +216,7 @@ function ProjectSection({
               key={project.id}
               project={project}
               showRole={showRole}
-              isOwner={!!userId && project.created_by === userId}
+              isOwner={isAdmin || (!!userId && project.created_by === userId)}
               onMutate={onMutate}
             />
           ))}
@@ -324,8 +327,18 @@ export default function ProjectsPage() {
   );
 
   const sharedProjects = React.useMemo(
-    () => (projects ?? []).filter((p) => p.created_by !== user?.id && p.role && !isNested(p)),
-    [projects, user?.id, isNested],
+    // Admins get every project back from the API even without a membership row —
+    // those arrive with role null and must still land in a section, or another
+    // admin's project silently disappears from this page. Public no-role projects
+    // stay in their own section below.
+    () =>
+      (projects ?? []).filter(
+        (p) =>
+          p.created_by !== user?.id &&
+          (p.role || (canCreate && !p.is_public)) &&
+          !isNested(p),
+      ),
+    [projects, user?.id, isNested, canCreate],
   );
 
   const handleDeleteRequest = async (id: string) => {
@@ -739,6 +752,7 @@ export default function ProjectsPage() {
               emptyMessage=""
               showRole
               userId={user?.id}
+              isAdmin={canCreate}
               onMutate={() => mutate()}
               renderLimit={sharedBudget}
             />
@@ -751,6 +765,7 @@ export default function ProjectsPage() {
               viewMode={viewMode}
               emptyMessage=""
               userId={user?.id}
+              isAdmin={canCreate}
               onMutate={() => mutate()}
               renderLimit={publicBudget}
             />
