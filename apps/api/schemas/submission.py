@@ -105,6 +105,25 @@ class AttachProjectRequest(BaseModel):
     home_folder_id: Optional[uuid.UUID] = None
 
 
+class BulkRefileRequest(BaseModel):
+    """Move many requests into one folder at once."""
+    link_ids: list[uuid.UUID]
+    home_project_id: uuid.UUID
+    # Null files them at the project root.
+    home_folder_id: Optional[uuid.UUID] = None
+
+
+class BulkDeleteRequest(BaseModel):
+    link_ids: list[uuid.UUID]
+
+
+class BulkResult(BaseModel):
+    # How many rows the call actually changed. Reported rather than assumed: a
+    # caller can pass ids it no longer owns, and silently doing nothing would
+    # look identical to success.
+    updated: int
+
+
 class ChildProjectItem(BaseModel):
     project_id: uuid.UUID
     name: str

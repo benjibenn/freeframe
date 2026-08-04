@@ -55,8 +55,13 @@ interface AssetGridProps {
   onShareModeChange?: (active: boolean) => void
   onCreateShareLink?: (selectedAssetIds: string[], selectedFolderIds: string[]) => void
   /** Bulk actions */
-  onBulkDelete?: (assetIds: string[], folderIds: string[]) => void
-  onBulkMove?: (assetIds: string[], folderIds: string[], targetFolderId: string | null) => void
+  onBulkDelete?: (assetIds: string[], folderIds: string[], requestIds: string[]) => void
+  onBulkMove?: (
+    assetIds: string[],
+    folderIds: string[],
+    targetFolderId: string | null,
+    requestIds: string[],
+  ) => void
   onBulkDownload?: (assetIds: string[], folderIds: string[]) => void
   /** Bulk pipeline-stage change (admin only). Shows the "Set status" menu. */
   onBulkStage?: (assetIds: string[], stageId: string | null) => void
@@ -135,6 +140,7 @@ export function AssetGrid({
 }: AssetGridProps) {
   const [selectedAssetIds, setSelectedAssetIds] = React.useState<Set<string>>(new Set())
   const [selectedFolderIds, setSelectedFolderIds] = React.useState<Set<string>>(new Set())
+  const [selectedRequestIds, setSelectedRequestIds] = React.useState<Set<string>>(new Set())
   const [moveDialogOpen, setMoveDialogOpen] = React.useState(false)
   const lastClickedRef = React.useRef<SelectableItem | null>(null)
 
@@ -146,6 +152,7 @@ export function AssetGrid({
     if (!shareMode) return
     setSelectedAssetIds(new Set())
     setSelectedFolderIds(new Set())
+    setSelectedRequestIds(new Set())
   }, [shareMode])
 
   const {
@@ -193,6 +200,16 @@ export function AssetGrid({
     lastClickedRef.current = { kind: 'asset', id: assetId }
   }
 
+  const toggleRequestSelect = (requestId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    setSelectedRequestIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(requestId)) next.delete(requestId)
+      else next.add(requestId)
+      return next
+    })
+  }
+
   const toggleFolderSelect = (folderId: string, e?: React.MouseEvent) => {
     if (e?.shiftKey) {
       e.preventDefault()
@@ -211,10 +228,12 @@ export function AssetGrid({
   const clearSelection = () => {
     setSelectedAssetIds(new Set())
     setSelectedFolderIds(new Set())
+    setSelectedRequestIds(new Set())
     lastClickedRef.current = null
   }
 
-  const totalSelected = selectedAssetIds.size + selectedFolderIds.size
+  const totalSelected =
+    selectedAssetIds.size + selectedFolderIds.size + selectedRequestIds.size
   const selectedTotalSize = Array.from(selectedAssetIds).reduce((sum, id) => sum + (fileSizes[id] ?? 0), 0)
 
   const { available: stagesAvailable, positionOf: stagePosition } = useTaskStageOrder()
@@ -337,11 +356,26 @@ export function AssetGrid({
           </div>
           <div className={cn('grid gap-3', gridColsMap[cardSize])}>
             {reqItems.map((r) => (
-              <button
+              <div
                 key={r.id}
                 onClick={() => onRequestOpen?.(r.id)}
-                className="group/req flex flex-col items-start gap-2 rounded-lg border border-border bg-bg-secondary p-3 text-left transition-colors hover:border-accent/40 hover:bg-bg-hover"
+                className={cn(
+                  'group/req relative flex cursor-pointer flex-col items-start gap-2 rounded-lg border border-border bg-bg-secondary p-3 text-left transition-colors hover:border-accent/40 hover:bg-bg-hover',
+                  selectedRequestIds.has(r.id) && 'ring-2 ring-accent',
+                )}
               >
+                <button
+                  className={cn(
+                    'absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded border transition-all',
+                    selectedRequestIds.has(r.id)
+                      ? 'border-accent bg-accent text-white opacity-100'
+                      : 'border-white/30 bg-black/40 text-transparent opacity-0 group-hover/req:opacity-100',
+                  )}
+                  onClick={(e) => toggleRequestSelect(r.id, e)}
+                  aria-label={selectedRequestIds.has(r.id) ? 'Deselect' : 'Select'}
+                >
+                  {selectedRequestIds.has(r.id) && <Check className="h-3 w-3" />}
+                </button>
                 <div className="flex h-10 w-10 items-center justify-center rounded-md bg-bg-tertiary">
                   <FolderIcon className="h-5 w-5 text-accent/70" />
                 </div>
@@ -357,7 +391,7 @@ export function AssetGrid({
                     )}
                   </p>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         </>
@@ -493,10 +527,34 @@ export function AssetGrid({
               key={r.id}
               onClick={() => onRequestOpen?.(r.id)}
               onDoubleClick={() => onRequestOpen?.(r.id)}
-              className="group flex cursor-pointer items-center gap-4 border-b border-border px-3 py-2.5 transition-colors hover:bg-bg-hover"
+              className={cn(
+                'group flex cursor-pointer items-center gap-4 border-b border-border px-3 py-2.5 transition-colors hover:bg-bg-hover',
+                selectedRequestIds.has(r.id) && 'bg-accent/5',
+              )}
             >
               <div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-bg-tertiary">
                 <FolderIcon className="h-5 w-5 text-accent/70" />
+                <button
+                  className={cn(
+                    'absolute inset-0 flex items-center justify-center transition-all',
+                    selectedRequestIds.has(r.id)
+                      ? 'opacity-100'
+                      : 'opacity-0 group-hover:opacity-100',
+                  )}
+                  onClick={(e) => toggleRequestSelect(r.id, e)}
+                  aria-label={selectedRequestIds.has(r.id) ? 'Deselect' : 'Select'}
+                >
+                  <div
+                    className={cn(
+                      'flex h-4 w-4 items-center justify-center rounded border transition-all',
+                      selectedRequestIds.has(r.id)
+                        ? 'border-accent bg-accent text-white'
+                        : 'border-white/40 bg-black/40 text-transparent',
+                    )}
+                  >
+                    {selectedRequestIds.has(r.id) && <Check className="h-2.5 w-2.5" />}
+                  </div>
+                </button>
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium leading-snug text-text-primary">
@@ -796,7 +854,13 @@ export function AssetGrid({
             variant="ghost"
             size="sm"
             className="gap-1.5"
-            onClick={() => onBulkDelete?.(Array.from(selectedAssetIds), Array.from(selectedFolderIds))}
+            onClick={() =>
+              onBulkDelete?.(
+                Array.from(selectedAssetIds),
+                Array.from(selectedFolderIds),
+                Array.from(selectedRequestIds),
+              )
+            }
           >
             <Trash2 className="h-4 w-4" /> Delete
           </Button>
@@ -821,7 +885,7 @@ export function AssetGrid({
               }
             />
           )}
-          {onCreateShareLink && (
+          {onCreateShareLink && (selectedAssetIds.size > 0 || selectedFolderIds.size > 0) && (
             <Button
               variant="ghost"
               size="sm"
@@ -855,7 +919,12 @@ export function AssetGrid({
         currentFolderId={currentFolderId ?? null}
         movingFolderIds={Array.from(selectedFolderIds)}
         onMove={(targetFolderId) => {
-          onBulkMove?.(Array.from(selectedAssetIds), Array.from(selectedFolderIds), targetFolderId)
+          onBulkMove?.(
+            Array.from(selectedAssetIds),
+            Array.from(selectedFolderIds),
+            targetFolderId,
+            Array.from(selectedRequestIds),
+          )
           clearSelection()
         }}
       />
