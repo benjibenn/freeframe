@@ -71,6 +71,7 @@ export function BriefRow({
   owners,
   folderFilter,
   typeFilter,
+  canAssign = true,
   onDrillTo,
 }: {
   brief: BriefTaskItem
@@ -78,6 +79,8 @@ export function BriefRow({
   owners: User[]
   folderFilter: string | null
   typeFilter: string
+  /** Only admins hand a brief to someone. An editor sees who owns it, read-only. */
+  canAssign?: boolean
   onDrillTo: (path: string) => void
 }) {
   const [expanded, setExpanded] = React.useState(false)
@@ -151,6 +154,11 @@ export function BriefRow({
         </td>
 
         <td className="px-3 py-2.5">
+          {!canAssign ? (
+            <span className="text-xs text-text-secondary">
+              {brief.assignee_name || 'Unowned'}
+            </span>
+          ) : (
           <select
             value={brief.assignee_id ?? ''}
             disabled={savingOwner}
@@ -164,6 +172,7 @@ export function BriefRow({
               </option>
             ))}
           </select>
+          )}
         </td>
 
         <td className="px-3 py-2.5">

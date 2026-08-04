@@ -42,7 +42,7 @@ from ..schemas.task_stage import (
     BriefAssigneeAssign,
     TaskBoardResponse,
 )
-from ..services.permissions import require_platform_admin
+from ..services.permissions import require_platform_admin, is_platform_admin
 from ..services.s3_service import generate_presigned_get_url
 
 router = APIRouter(tags=["tasks"])
@@ -65,7 +65,9 @@ def list_task_stages(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_platform_admin(current_user)
+    # Readable by anyone signed in: an editor needs the stage names to render the
+    # status dropdown for their own briefs. Every write below stays admin-only,
+    # and a stage name carries nothing about who is working on what.
     return db.query(TaskStage).filter(
         TaskStage.deleted_at.is_(None),
     ).order_by(TaskStage.position.asc(), TaskStage.created_at.asc()).all()
@@ -287,6 +289,24 @@ def list_tasks(
 
 
 
+def _owned_brief_or_403(db: Session, link_id: uuid.UUID, user: User) -> SubmissionLink:
+    """Fetch a brief the caller is allowed to move along the pipeline.
+
+    Admins may move any brief. Anyone else may move only briefs they own — being
+    the editor who accepted the link is deliberately NOT enough, because ownership
+    is what an admin hands out on purpose and acceptance is self-service.
+    """
+    link = db.query(SubmissionLink).filter(
+        SubmissionLink.id == link_id, SubmissionLink.deleted_at.is_(None)
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if not is_platform_admin(user) and link.assignee_id != user.id:
+        # 404, not 403: a non-owner should not learn that this brief exists.
+        raise HTTPException(status_code=404, detail="Request not found")
+    return link
+
+
 @router.get("/task-board", response_model=TaskBoardResponse)
 def get_task_board(
     folder_path: Optional[str] = Query(
@@ -304,12 +324,28 @@ def get_task_board(
     Assets uploaded straight into a project (no request behind them) are returned
     separately rather than dropped, so the board still accounts for everything.
     """
-    require_platform_admin(current_user)
+    admin = is_platform_admin(current_user)
+
+    # Non-admins see only briefs they own. Scoped here rather than in the UI: the
+    # response body would otherwise carry every other editor's brief titles and
+    # file names, which is exactly the isolation submission links exist to provide.
+    owned_link_ids = None
+    if not admin:
+        owned_link_ids = {
+            lid for (lid,) in db.query(SubmissionLink.id).filter(
+                SubmissionLink.assignee_id == current_user.id,
+                SubmissionLink.deleted_at.is_(None),
+            ).all()
+        }
+        if not owned_link_ids:
+            return TaskBoardResponse(briefs=[], unbriefed=[])
 
     asset_q = db.query(Asset).filter(Asset.deleted_at.is_(None))
     if folder_path:
         asset_q = asset_q.filter(asset_path_filter(db, folder_path))
     items = _build_task_items(db, asset_q.order_by(Asset.created_at.desc()).all())
+    if owned_link_ids is not None:
+        items = [it for it in items if it.request_id in owned_link_ids]
 
     by_request: dict = {}
     unbriefed: list[TaskItem] = []
@@ -326,6 +362,8 @@ def get_task_board(
     # renamed folder is reflected immediately. Filtering therefore happens here in
     # Python instead of in SQL — briefs number in the dozens, not the millions, and
     # a filter that disagreed with the path on screen would be worse than slower.
+    if owned_link_ids is not None:
+        links = [l for l in links if l.id in owned_link_ids]
     link_path = link_home_paths(db, links)
     if folder_path:
         # A brief matches on its own path, so an un-started brief is still
@@ -373,7 +411,9 @@ def get_task_board(
         for l in links
     ]
 
-    return TaskBoardResponse(briefs=briefs, unbriefed=unbriefed)
+    # Assets uploaded straight into a project have no owner, so there is no
+    # version of them that belongs to a given editor.
+    return TaskBoardResponse(briefs=briefs, unbriefed=unbriefed if admin else [])
 
 
 @router.patch("/assets/{asset_id}/task-stage", response_model=TaskItem)
@@ -383,11 +423,26 @@ def set_asset_task_stage(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Move a video to a pipeline stage (or back to unassigned)."""
-    require_platform_admin(current_user)
+    """Move a video to a pipeline stage (or back to unassigned).
+
+    An editor may stage the files delivered against a brief they own — those
+    sub-rows are visible to them, so a dropdown that always 403s would be worse
+    than no dropdown. Any other asset stays admin-only.
+    """
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
+    if not is_platform_admin(current_user):
+        from ..models.submission import SubmissionLink as _Link
+        owns = db.query(_Link.id).join(
+            Project, Project.submission_link_id == _Link.id
+        ).filter(
+            Project.id == asset.project_id,
+            _Link.assignee_id == current_user.id,
+            _Link.deleted_at.is_(None),
+        ).first()
+        if not owns:
+            raise HTTPException(status_code=404, detail="Asset not found")
 
     if body.task_stage_id is not None:
         _get_stage(db, body.task_stage_id)  # validate it exists / not deleted
@@ -502,12 +557,7 @@ def set_brief_task_stage(
     whole record — a board dropdown must not need the title and expiry in hand
     just to change a stage.
     """
-    require_platform_admin(current_user)
-    link = db.query(SubmissionLink).filter(
-        SubmissionLink.id == link_id, SubmissionLink.deleted_at.is_(None)
-    ).first()
-    if not link:
-        raise HTTPException(status_code=404, detail="Request not found")
+    link = _owned_brief_or_403(db, link_id, current_user)
     if body.task_stage_id is not None:
         _get_stage(db, body.task_stage_id)
     link.task_stage_id = body.task_stage_id

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import false
 from sqlalchemy.orm import Session
 import uuid
 import secrets
@@ -51,14 +52,26 @@ def list_assignable_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Staff who can own a brief. /search needs a query string, which forces a
-    typeahead; a brief owner is picked from a handful of internal people, so a
-    plain list makes it a dropdown instead."""
+    """Everyone who can own a brief. /search needs a query string, which forces a
+    typeahead; an owner is picked from a handful of people, so a plain list makes
+    it a dropdown instead.
+
+    Admins plus anyone who has accepted a submission link. Editors belong here
+    because ownership is what grants an editor sight of a brief on the task board —
+    a dropdown that could not name them would make that unreachable. Accepting a
+    link is the bar rather than "any account", so the list stays the working team
+    instead of every user who ever signed up.
+    """
+    from ..models.submission import Submission
+
+    editor_ids = {uid for (uid,) in db.query(Submission.user_id).distinct().all()}
     return (
         db.query(User)
         .filter(
             User.deleted_at.is_(None),
-            (User.is_superadmin.is_(True)) | (User.is_subadmin.is_(True)),
+            (User.is_superadmin.is_(True))
+            | (User.is_subadmin.is_(True))
+            | (User.id.in_(editor_ids) if editor_ids else false()),
         )
         .order_by(User.name)
         .all()
