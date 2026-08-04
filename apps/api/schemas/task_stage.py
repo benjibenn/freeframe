@@ -3,6 +3,8 @@ from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel
 
+from ..models.asset import AssetType
+
 
 class TaskStageResponse(BaseModel):
     id: uuid.UUID
@@ -50,6 +52,9 @@ class TaskItem(BaseModel):
     name: str
     project_id: uuid.UUID
     project_name: Optional[str] = None
+    # video / image / audio — the board is no longer video-only, so a row has to
+    # say what it is.
+    asset_type: AssetType
     # Where the asset sits in the taxonomy, e.g. "Skincare/GlowCo/Serum".
     # Rooted at the project name, so submitted work — which lands in a
     # per-submitter project with no folder — still resolves to something.

@@ -89,9 +89,11 @@ def initiate_upload(
             taxonomy_path=taxonomy_path,
             **cf,
         )
-        # New videos land in the configured default task stage (e.g. "Pending")
-        # so they show up triaged in the admin task list right away.
-        if asset_type == AssetType.video:
+        # New media lands in the configured default task stage (e.g. "Pending")
+        # so it shows up triaged in the admin task list right away. Images are
+        # included: static ads are a deliverable in their own right, and skipping
+        # them left every one of them permanently unassigned on the board.
+        if asset_type in (AssetType.video, AssetType.image):
             from ..models.task_stage import TaskStage
             default_stage = db.query(TaskStage).filter(
                 TaskStage.is_default.is_(True),

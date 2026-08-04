@@ -54,6 +54,8 @@ export interface TaskItem {
   name: string;
   project_id: string;
   project_name: string | null;
+  /** video / image / audio — the board is no longer video-only. */
+  asset_type: string;
   folder_id: string | null;
   /** Taxonomy path, e.g. "Skincare/GlowCo/Serum". Rooted at the project name. */
   folder_path: string | null;

@@ -156,16 +156,23 @@ def list_tasks(
     folder_path: Optional[str] = Query(
         None, description="Restrict to a taxonomy path and everything under it, e.g. 'Skincare/GlowCo'."
     ),
+    asset_type: str = Query(
+        "all", description="'all' (default), or a single AssetType such as 'video' or 'image'."
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Every video asset across all projects, with its current pipeline stage."""
     require_platform_admin(current_user)
 
-    query = db.query(Asset).filter(
-        Asset.asset_type == AssetType.video,
-        Asset.deleted_at.is_(None),
-    )
+    query = db.query(Asset).filter(Asset.deleted_at.is_(None))
+    # The board used to be hardcoded to video. Static-image ads are a first-class
+    # deliverable here, and excluding them meant a whole workflow had no board.
+    if asset_type != "all":
+        try:
+            query = query.filter(Asset.asset_type == AssetType(asset_type))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Unknown asset_type: {asset_type}")
     if stage_id == "unassigned":
         query = query.filter(Asset.task_stage_id.is_(None))
     elif stage_id:
@@ -242,6 +249,7 @@ def list_tasks(
             name=a.name,
             project_id=a.project_id,
             project_name=project.name if project else None,
+            asset_type=a.asset_type,
             folder_id=a.folder_id,
             # Unfiled assets still get a path — the project name alone.
             folder_path=resolve_asset_path(a, folder_path_by_id, project.name if project else None),
