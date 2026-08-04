@@ -3,7 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { mutate } from 'swr'
-import { ChevronDown, ChevronRight, FileText, Film, Image as ImageIcon, FolderOpen } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileText, Film, Image as ImageIcon } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn, formatRelativeTime } from '@/lib/utils'
 import type { BriefTaskItem, TaskItem, TaskStage, User } from '@/types'
@@ -125,29 +125,29 @@ export function BriefRow({
               >
                 {brief.title}
               </Link>
-              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                {rel ? (
-                  <button
-                    type="button"
-                    onClick={() => brief.taxonomy_path && onDrillTo(brief.taxonomy_path)}
-                    title={brief.taxonomy_path ?? ''}
-                    className="inline-flex max-w-full items-center gap-1 truncate text-xs text-accent hover:underline"
-                  >
-                    <FolderOpen className="h-3 w-3 shrink-0" />
-                    {rel}
-                  </button>
-                ) : !brief.taxonomy_path ? (
-                  <span className="text-xs text-text-tertiary">No folder</span>
-                ) : null}
-                {(brief.has_brief || brief.has_brief_json) && (
-                  <span className="inline-flex items-center gap-1 text-xs text-text-tertiary">
-                    <FileText className="h-3 w-3" />
-                    Brief
-                  </span>
-                )}
-              </div>
+              {(brief.has_brief || brief.has_brief_json) && (
+                <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-text-tertiary">
+                  <FileText className="h-3 w-3" />
+                  Brief
+                </span>
+              )}
             </div>
           </div>
+        </td>
+
+        <td className="px-3 py-2.5">
+          {brief.taxonomy_path ? (
+            <button
+              type="button"
+              onClick={() => onDrillTo(brief.taxonomy_path!)}
+              title={brief.taxonomy_path}
+              className="block w-full truncate text-left text-xs text-accent hover:underline"
+            >
+              {rel || brief.taxonomy_path}
+            </button>
+          ) : (
+            <span className="text-xs text-text-tertiary">Not filed</span>
+          )}
         </td>
 
         <td className="px-3 py-2.5">
@@ -190,7 +190,7 @@ export function BriefRow({
       {expanded &&
         (assets.length === 0 ? (
           <tr className="border-t border-border/50 bg-bg-secondary/30">
-            <td colSpan={5} className="px-3 py-2 pl-12 text-xs text-text-tertiary">
+            <td colSpan={6} className="px-3 py-2 pl-12 text-xs text-text-tertiary">
               Nothing submitted yet.
             </td>
           </tr>
@@ -232,6 +232,7 @@ export function AssetSubRow({ asset, stages }: { asset: TaskItem; stages: TaskSt
           </span>
         </Link>
       </td>
+      <td className="px-3 py-2 text-xs text-text-tertiary">—</td>
       <td className="px-3 py-2 text-xs text-text-tertiary">
         {asset.submitter_name || asset.submitter_email || '—'}
       </td>
