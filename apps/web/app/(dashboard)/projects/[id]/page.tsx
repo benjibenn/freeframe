@@ -37,7 +37,8 @@ import { useToast } from "@/components/shared/toast";
 import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/shared/avatar";
 import { AssetGrid } from "@/components/projects/asset-grid";
-import { FolderRequests } from "@/components/projects/folder-requests";
+import { NewRequestDialog, LINKS_KEY } from "@/components/projects/folder-requests";
+import type { VideoRequest } from "@/components/projects/request-card";
 import { CommentPanel } from "@/components/review/comment-panel";
 import { UploadZone } from "@/components/upload/upload-zone";
 import { useUploadStore } from "@/stores/upload-store";
@@ -236,6 +237,32 @@ export default function ProjectDetailPage() {
     };
     return find(tree ?? []) ?? (project?.name ?? "Project");
   }, [currentFolderId, tree, project?.name]);
+
+  // Requests filed in the folder currently in view. Fetched once for the whole
+  // project and filtered client-side — the list is small and it keeps navigating
+  // between folders instant instead of refetching per folder.
+  const { data: allRequests, mutate: mutateRequests } = useSWR<VideoRequest[]>(
+    LINKS_KEY,
+    (key: string) => api.get<VideoRequest[]>(key),
+  );
+  const [newRequestOpen, setNewRequestOpen] = React.useState(false);
+  const folderRequests = React.useMemo(
+    () =>
+      (allRequests ?? [])
+        .filter(
+          (r) =>
+            r.home_project_id === projectId &&
+            (r.home_folder_id ?? null) === currentFolderId,
+        )
+        .map((r) => ({
+          id: r.id,
+          title: r.title,
+          submission_count: r.submission_count,
+          has_brief: !!(r.has_brief || r.has_brief_json),
+          created_at: r.created_at,
+        })),
+    [allRequests, projectId, currentFolderId],
+  );
 
   const folderParam = currentFolderId
     ? `folder_id=${currentFolderId}`
@@ -969,17 +996,11 @@ export default function ProjectDetailPage() {
             </div>
           ) : (
             <>
-            {!filteringByTag_orLabel && (
-              <FolderRequests
-                projectId={projectId}
-                folderId={currentFolderId}
-                folderName={currentFolderName}
-                canCreate={canCreateFolder}
-              />
-            )}
             <AssetGrid
               assets={assets ?? []}
               folders={filteringByTag_orLabel ? [] : (subfolders ?? [])}
+              requests={filteringByTag_orLabel ? [] : folderRequests}
+              onRequestOpen={(requestId) => router.push(`/projects/requests/${requestId}`)}
               currentFolderId={currentFolderId}
               projectId={projectId}
               projectName={project?.name ?? 'Project'}
@@ -1182,6 +1203,15 @@ export default function ProjectDetailPage() {
                     >
                       <FolderPlus className="h-4 w-4" />
                       New Folder
+                    </button>
+                  )}
+                  {canCreateFolder && (
+                    <button
+                      className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover text-[13px] transition-colors"
+                      onClick={() => setNewRequestOpen(true)}
+                    >
+                      <FileText className="h-4 w-4" />
+                      New Request
                     </button>
                   )}
                   {canUpload && (
@@ -1566,6 +1596,15 @@ export default function ProjectDetailPage() {
           mutateAssets();
           mutateSubfolders();
         }}
+      />
+
+      <NewRequestDialog
+        projectId={projectId}
+        folderId={currentFolderId}
+        folderName={currentFolderName}
+        open={newRequestOpen}
+        onOpenChange={setNewRequestOpen}
+        onCreated={() => mutateRequests()}
       />
 
       {/* Share create dialog */}
