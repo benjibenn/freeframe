@@ -32,6 +32,7 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { PreAssignFolderDialog } from '@/components/shared/pre-assign-folder-dialog'
 import { RequestSettingsDialog } from '@/components/projects/request-settings-dialog'
 import { BriefView } from '@/components/projects/brief-view'
+import { SAMPLE_BRIEF_JSON } from '@/lib/sample-brief'
 import type { VideoRequest } from '@/components/projects/request-card'
 
 interface SubmissionItem {
@@ -568,7 +569,7 @@ export default function RequestDetailPage() {
         </div>
         <textarea
           className="mt-3 flex min-h-[140px] w-full rounded-md border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-          placeholder='{ "title": "…", "overview": "…", "script_with_storyboard": [ … ] }'
+          placeholder={SAMPLE_BRIEF_JSON}
           value={briefText}
           onChange={(e) => setBriefText(e.target.value)}
           spellCheck={false}
