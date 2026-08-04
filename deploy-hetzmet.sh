@@ -38,6 +38,12 @@ cd "$(dirname "$0")"
 # .env.prod is deliberately excluded: it holds this tenant's own DB
 # password, Redis password, JWT secret and Backblaze keys, and must
 # never be overwritten by (or copied from) a local file.
+#
+# .claude/ is excluded because Claude Code puts its worktrees under
+# .claude/worktrees — each one a full second copy of this repo. The
+# '.worktrees/' pattern never matched that nested path, so they shipped
+# to production until 2026-08-04. Nothing under .claude/ is needed to
+# build or run the app.
 # NOTE: macOS ships openrsync (advertises "rsync 2.6.9 compatible"), which
 # lacks --info=stats1 and --human-readable. --stats works on both, so this
 # stays portable if you later install GNU rsync via Homebrew.
@@ -53,6 +59,7 @@ rsync -az --delete --stats $DRY_RUN \
   --exclude '*.pyc' \
   --exclude '.pytest_cache/' \
   --exclude '.worktrees/' \
+  --exclude '.claude/' \
   --exclude '.playwright-mcp/' \
   --exclude 'test-results/' \
   --exclude 'playwright-report/' \

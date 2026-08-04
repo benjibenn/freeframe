@@ -47,6 +47,9 @@ from ..schemas.submission import (
     AttachProjectRequest,
     ChildProjectItem,
     MySubmissionItem,
+    BulkRefileRequest,
+    BulkDeleteRequest,
+    BulkResult,
 )
 from ..services.share_service import build_default_project_share_link
 from ..services import s3_service
@@ -600,6 +603,57 @@ def update_submission_link(
     resp.has_brief_json = bool(link.brief_json)
     resp.has_reference_video = bool(link.brief_reference_video_s3_key)
     return resp
+
+
+@router.post("/submission-links/bulk-refile", response_model=BulkResult)
+def bulk_refile_submission_links(
+    body: BulkRefileRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Move many requests into one folder.
+
+    Validates the destination once rather than per link — the folder either
+    belongs to the project or it does not, and failing the whole call is safer
+    than filing half the selection somewhere the user did not choose.
+    """
+    require_platform_admin(current_user)
+    if not body.link_ids:
+        return BulkResult(updated=0)
+    project, folder = _resolve_home(db, current_user, body.home_project_id, body.home_folder_id)
+    links = db.query(SubmissionLink).filter(
+        SubmissionLink.id.in_(body.link_ids),
+        SubmissionLink.deleted_at.is_(None),
+    ).all()
+    for link in links:
+        _get_owned_link(db, link.id, current_user)
+        _apply_home(db, link, project, folder)
+    db.commit()
+    return BulkResult(updated=len(links))
+
+
+@router.post("/submission-links/bulk-delete", response_model=BulkResult)
+def bulk_delete_submission_links(
+    body: BulkDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Close many requests. Soft-delete, exactly like the single-link version:
+    submitter projects and their uploads are untouched."""
+    require_platform_admin(current_user)
+    if not body.link_ids:
+        return BulkResult(updated=0)
+    links = db.query(SubmissionLink).filter(
+        SubmissionLink.id.in_(body.link_ids),
+        SubmissionLink.deleted_at.is_(None),
+    ).all()
+    now = datetime.now(timezone.utc)
+    for link in links:
+        _get_owned_link(db, link.id, current_user)
+        link.deleted_at = now
+        link.is_enabled = False
+    db.commit()
+    return BulkResult(updated=len(links))
 
 
 @router.delete("/submission-links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)

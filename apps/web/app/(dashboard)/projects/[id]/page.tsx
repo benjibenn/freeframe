@@ -131,6 +131,7 @@ export default function ProjectDetailPage() {
   const [pendingBulkDelete, setPendingBulkDelete] = React.useState<{
     assetIds: string[];
     folderIds: string[];
+    requestIds: string[];
   } | null>(null);
   const [assetToRename, setAssetToRename] = React.useState<AssetResponse | null>(null);
   const [assetToDelete, setAssetToDelete] = React.useState<AssetResponse | null>(null);
@@ -1072,14 +1073,26 @@ export default function ProjectDetailPage() {
               }}
               onAssetRename={(asset) => setAssetToRename(asset as AssetResponse)}
               onAssetDelete={(asset) => setAssetToDelete(asset as AssetResponse)}
-              onBulkMove={async (assetIds, folderIds, targetFolderId) => {
-                await bulkMove(assetIds, folderIds, targetFolderId);
+              onBulkMove={async (assetIds, folderIds, targetFolderId, requestIds) => {
+                if (assetIds.length || folderIds.length) {
+                  await bulkMove(assetIds, folderIds, targetFolderId);
+                }
+                // Requests are re-filed, not moved: they are rows in
+                // submission_links, so bulk-move would not find them.
+                if (requestIds.length) {
+                  await api.post("/submission-links/bulk-refile", {
+                    link_ids: requestIds,
+                    home_project_id: projectId,
+                    home_folder_id: targetFolderId,
+                  });
+                  mutateRequests();
+                }
                 mutateAssets();
                 mutateSubfolders();
                 mutateTree();
               }}
-              onBulkDelete={(assetIds, folderIds) => {
-                setPendingBulkDelete({ assetIds, folderIds });
+              onBulkDelete={(assetIds, folderIds, requestIds) => {
+                setPendingBulkDelete({ assetIds, folderIds, requestIds });
               }}
               onBulkStage={async (assetIds, stageId) => {
                 await api.patch(`/assets/bulk/stage`, { asset_ids: assetIds, task_stage_id: stageId });
@@ -1690,8 +1703,12 @@ export default function ProjectDetailPage() {
         onOpenChange={(open) => {
           if (!open) setPendingBulkDelete(null);
         }}
-        title={`Delete ${(pendingBulkDelete?.assetIds.length ?? 0) + (pendingBulkDelete?.folderIds.length ?? 0)} item${(pendingBulkDelete?.assetIds.length ?? 0) + (pendingBulkDelete?.folderIds.length ?? 0) !== 1 ? "s" : ""}?`}
-        description="This will move the selected items to the trash. You can restore them later from Recently Deleted."
+        title={`Delete ${(pendingBulkDelete?.assetIds.length ?? 0) + (pendingBulkDelete?.folderIds.length ?? 0) + (pendingBulkDelete?.requestIds.length ?? 0)} item${(pendingBulkDelete?.assetIds.length ?? 0) + (pendingBulkDelete?.folderIds.length ?? 0) + (pendingBulkDelete?.requestIds.length ?? 0) !== 1 ? "s" : ""}?`}
+        description={
+          pendingBulkDelete?.requestIds.length
+            ? "Files and folders move to the trash and can be restored. Requests are closed instead: existing submissions are kept, but the link stops accepting new ones."
+            : "This will move the selected items to the trash. You can restore them later from Recently Deleted."
+        }
         confirmLabel="Delete"
         variant="danger"
         onConfirm={async () => {
@@ -1699,6 +1716,12 @@ export default function ProjectDetailPage() {
           for (const id of pendingBulkDelete.folderIds) await deleteFolder(id);
           for (const id of pendingBulkDelete.assetIds)
             await api.delete(`/assets/${id}`);
+          if (pendingBulkDelete.requestIds.length) {
+            await api.post("/submission-links/bulk-delete", {
+              link_ids: pendingBulkDelete.requestIds,
+            });
+            mutateRequests();
+          }
           mutateAssets();
           mutateSubfolders();
           mutateTree();
