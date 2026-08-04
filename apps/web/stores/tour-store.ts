@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import { TOUR_STEPS } from '@/components/tour/tour-steps'
+import { visibleSteps, type TourContext, type TourStep } from '@/components/tour/tour-steps'
 
 interface TourStore {
   /** Whether the overlay is on screen right now. Never persisted — a reload
@@ -11,11 +11,14 @@ interface TourStore {
   /** Set once the tour has been finished or skipped, so it only auto-starts
    *  for a genuinely new user. Persisted. */
   seen: boolean
-  start: () => void
+  /** The project/asset this run walks through. Null until start. Never persisted. */
+  ctx: TourContext | null
+  /** Steps this run can actually reach — TOUR_STEPS minus unreachable asset steps. */
+  steps: TourStep[]
+  start: (ctx: TourContext) => void
   next: () => void
   back: () => void
-  /** Jump forward to a step whose target just appeared (see TourOverlay). Never
-   *  moves backwards, so the tour can't loop when a user navigates back. */
+  /** Jump forward to a step the user has navigated to. Never moves backwards. */
   jumpTo: (index: number) => void
   finish: () => void
 }
@@ -26,12 +29,14 @@ export const useTourStore = create<TourStore>()(
       active: false,
       stepIndex: 0,
       seen: false,
+      ctx: null,
+      steps: [],
 
-      start: () => set({ active: true, stepIndex: 0 }),
+      start: (ctx) => set({ active: true, stepIndex: 0, ctx, steps: visibleSteps(ctx) }),
 
       next: () => {
-        const { stepIndex } = get()
-        if (stepIndex >= TOUR_STEPS.length - 1) {
+        const { stepIndex, steps } = get()
+        if (stepIndex >= steps.length - 1) {
           set({ active: false, seen: true })
           return
         }
@@ -40,8 +45,7 @@ export const useTourStore = create<TourStore>()(
 
       back: () => set((s) => ({ stepIndex: Math.max(0, s.stepIndex - 1) })),
 
-      jumpTo: (index) =>
-        set((s) => (index > s.stepIndex ? { stepIndex: index } : {})),
+      jumpTo: (index) => set((s) => (index > s.stepIndex ? { stepIndex: index } : {})),
 
       finish: () => set({ active: false, seen: true }),
     }),
