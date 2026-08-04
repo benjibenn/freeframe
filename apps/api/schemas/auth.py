@@ -84,3 +84,6 @@ class UpdateNicknameRequest(BaseModel):
 class DeactivateUserRequest(BaseModel):
     user_id: uuid.UUID
 
+class AdminSetPasswordRequest(BaseModel):
+    password: str
+
