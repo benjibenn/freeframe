@@ -136,6 +136,120 @@ function BulkInviteDialog() {
   );
 }
 
+function SetPasswordDialog({ u }: { u: User }) {
+  const [open, setOpen] = React.useState(false);
+  const [password, setPassword] = React.useState("");
+  const [confirm, setConfirm] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState("");
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    // Mirrors the rule the API enforces (422 on < 8) so the admin hears about a
+    // typo before the round trip.
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters");
+      return;
+    }
+    if (password !== confirm) {
+      setError("Passwords do not match");
+      return;
+    }
+    setLoading(true);
+    try {
+      await api.post(`/admin/users/${u.id}/password`, { password });
+      mutate("/admin/users");
+      setPassword("");
+      setConfirm("");
+      setOpen(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to set password");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) {
+          setPassword("");
+          setConfirm("");
+          setError("");
+        }
+      }}
+    >
+      <Dialog.Trigger asChild>
+        <Button variant="ghost" size="sm">
+          Set Password
+        </Button>
+      </Dialog.Trigger>
+
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-md max-h-[85vh] overflow-y-auto -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-secondary p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+          <Dialog.Close className="absolute right-4 top-4 text-text-tertiary hover:text-text-primary transition-colors">
+            <X className="h-4 w-4" />
+          </Dialog.Close>
+
+          <Dialog.Title className="text-base font-semibold text-text-primary">
+            Set Password
+          </Dialog.Title>
+          <Dialog.Description className="mt-1 text-sm text-text-secondary">
+            Sets a password for {u.email} immediately. Share it with them
+            yourself — no email is sent.
+          </Dialog.Description>
+
+          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-text-secondary">
+                New password
+              </label>
+              <Input
+                type="password"
+                autoFocus
+                autoComplete="new-password"
+                value={password}
+                disabled={loading}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-text-secondary">
+                Confirm password
+              </label>
+              <Input
+                type="password"
+                autoComplete="new-password"
+                value={confirm}
+                disabled={loading}
+                onChange={(e) => setConfirm(e.target.value)}
+              />
+            </div>
+            {error && <p className="text-xs text-status-error">{error}</p>}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" loading={loading}>
+                Set Password
+              </Button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 function userStatusBadge(status: UserStatus) {
   const map: Record<UserStatus, { label: string; className: string }> = {
     active: {
@@ -460,6 +574,19 @@ export default function AdminPage() {
     }
   };
 
+  // Pending users never verified their email or accepted their invite; activating
+  // vouches for them by hand and burns any outstanding invite link.
+  const handleActivate = async (userId: string) => {
+    try {
+      await api.patch(`/admin/users/${userId}/activate`);
+      mutate("/admin/users");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Failed to activate user";
+      alert(message);
+    }
+  };
+
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
 
   const handleCopyInviteLink = (u: User) => {
@@ -676,6 +803,18 @@ export default function AdminPage() {
                             Activity
                           </Link>
                         </Button>
+                        {u.id !== user?.id && <SetPasswordDialog u={u} />}
+                        {u.id !== user?.id &&
+                          (u.status === "pending_verification" ||
+                            u.status === "pending_invite") && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleActivate(u.id)}
+                            >
+                              Activate
+                            </Button>
+                          )}
                         {u.status === "pending_invite" && u.invite_token && (
                           <Button
                             variant="ghost"

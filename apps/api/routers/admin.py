@@ -17,9 +17,9 @@ from ..models.library_access import LibraryAccess
 from ..models.project import Project
 from ..models.user import User, UserStatus
 from ..models.api_key import APIKey, generate_api_key, hash_api_key, API_KEY_PREFIX
-from ..schemas.auth import UserResponse, UpdateUserRoleRequest, UpdateSubadminRequest, UpdateUidRequest, UpdateNicknameRequest
+from ..schemas.auth import UserResponse, UpdateUserRoleRequest, UpdateSubadminRequest, UpdateUidRequest, UpdateNicknameRequest, AdminSetPasswordRequest
 from ..schemas.api_key import APIKeyResponse, APIKeyCreate, APIKeyCreated
-from ..services.auth_service import get_user_by_email
+from ..services.auth_service import get_user_by_email, hash_password
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -321,6 +321,81 @@ def update_user_nickname(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"nickname '{value}' is already taken by another user",
         )
+    db.refresh(user)
+    return user
+
+
+# ── Password / activation ────────────────────────────────────────────────────────
+
+MIN_PASSWORD_LENGTH = 8
+
+
+@router.post("/users/{user_id}/password", response_model=UserResponse)
+def set_user_password(
+    user_id: uuid.UUID,
+    body: AdminSetPasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Set a user's password on their behalf. Superadmin only.
+
+    This is the out-of-band path for users who never completed the magic-code or
+    invite flow: the admin hands them a password directly. Shorter than
+    ``MIN_PASSWORD_LENGTH`` -> 422, matching the client-side rule so the two
+    cannot drift apart silently. Setting a password does NOT activate the user —
+    a pending account still needs ``/activate`` before it looks settled.
+    """
+    _require_superadmin(current_user)
+
+    if len(body.password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
+        )
+
+    user = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.password_hash = hash_password(body.password)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.patch("/users/{user_id}/activate", response_model=UserResponse)
+def activate_user(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Activate a user still waiting on email verification or an invite. Superadmin only.
+
+    Vouching for the address by hand is what verification would have proved, so
+    ``email_verified`` is set too. Any outstanding invite token is burned: it stays
+    usable after activation (``/auth/accept-invite`` checks only the token), which
+    would let its holder overwrite the password an admin just set.
+
+    Deactivated users go through ``/reactivate`` instead — they were already
+    verified, and this endpoint's vouching semantics don't apply to them.
+    """
+    _require_superadmin(current_user)
+
+    user = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.status == UserStatus.deactivated:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use reactivate for deactivated users",
+        )
+
+    user.status = UserStatus.active
+    user.email_verified = True
+    user.invite_token = None
+    user.invite_token_expires_at = None
+    db.commit()
     db.refresh(user)
     return user
 
