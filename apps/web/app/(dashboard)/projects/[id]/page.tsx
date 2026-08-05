@@ -58,6 +58,7 @@ import { NameDialog } from "@/components/projects/name-dialog";
 import { ShareCreateDialog } from "@/components/projects/share-create-dialog";
 import { BucketImportDialog } from "@/components/projects/bucket-import-dialog";
 import { BriefView } from "@/components/projects/brief-view";
+import { ReferenceImageCarousel, ReferenceVideoList } from "@/components/shared/reference-carousel";
 import { ProjectMembersDialog } from "@/components/projects/project-members-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -1152,7 +1153,9 @@ export default function ProjectDetailPage() {
                       📄 View brief (PDF)
                     </a>
                   )}
-                  {(project?.brief_json || project?.reference_video_url || project?.reference_image_url) && (
+                  {(project?.brief_json ||
+                    (project?.reference_video_urls?.length ?? 0) > 0 ||
+                    (project?.reference_image_urls?.length ?? 0) > 0) && (
                     <button
                       onClick={() => setBriefViewOpen(true)}
                       className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline"
@@ -1668,30 +1671,27 @@ export default function ProjectDetailPage() {
               </Dialog.Close>
             </div>
             <div className="flex flex-col gap-5 overflow-y-auto px-5 py-4">
-              {project?.reference_image_url && (
+              {(project?.reference_image_urls?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">Reference image</p>
-                  {/* eslint-disable-next-line @next/next/no-img-element -- served via API redirect to a short-lived presigned URL */}
-                  <img
-                    src={`${process.env.NEXT_PUBLIC_API_URL || ''}${project.reference_image_url}`}
-                    alt="Reference ad to adapt"
-                    className="w-full rounded-lg border border-border bg-bg-primary"
-                    onContextMenu={(e) => e.preventDefault()}
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">
+                    Reference image{project!.reference_image_urls!.length === 1 ? '' : 's'}
+                  </p>
+                  <ReferenceImageCarousel
+                    urls={project!.reference_image_urls!.map(
+                      (u) => `${process.env.NEXT_PUBLIC_API_URL || ''}${u}`,
+                    )}
                   />
                 </div>
               )}
-              {project?.reference_video_url && (
+              {(project?.reference_video_urls?.length ?? 0) > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">Reference video</p>
-                  <video
-                    controls
-                    playsInline
-                    preload="metadata"
-                    src={`${process.env.NEXT_PUBLIC_API_URL || ''}${project.reference_video_url}`}
-                    className="w-full rounded-lg border border-border bg-black"
-                    controlsList="nodownload noremoteplayback"
-                    disablePictureInPicture
-                    onContextMenu={(e) => e.preventDefault()}
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">
+                    Reference video{project!.reference_video_urls!.length === 1 ? '' : 's'}
+                  </p>
+                  <ReferenceVideoList
+                    urls={project!.reference_video_urls!.map(
+                      (u) => `${process.env.NEXT_PUBLIC_API_URL || ''}${u}`,
+                    )}
                   />
                 </div>
               )}

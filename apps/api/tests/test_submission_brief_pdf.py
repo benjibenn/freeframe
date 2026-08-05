@@ -13,7 +13,8 @@ def _make_link(brief_pdf_s3_key=None):
     link.instructions = "Do the thing"
     link.brief_pdf_s3_key = brief_pdf_s3_key
     link.brief_json = None
-    link.brief_reference_video_s3_key = None
+    link.brief_reference_video_s3_keys = []
+    link.brief_reference_image_s3_keys = []
     # Hand-made request: no CF lineage (must be real None, not a MagicMock, so the
     # Optional[str] response fields validate).
     link.persona_label = None

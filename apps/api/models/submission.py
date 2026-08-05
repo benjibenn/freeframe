@@ -77,13 +77,19 @@ class SubmissionLink(Base):
     # deliverable) rendered inline on the submit + project pages. Independent of the
     # PDF brief — a link may carry both, neither, or one.
     brief_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    # An owner-uploaded reference video (S3 key), streamed inline in the View-brief
-    # dialog. Uploaded direct-to-S3 via presigned PUT. Independent of the PDF/JSON brief.
-    brief_reference_video_s3_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
-    # An owner-uploaded static reference image (S3 key) — the "adapt this ad" picture
-    # for static briefs. Uploaded through the API (images are small). Independent of
-    # the video/PDF/JSON brief.
-    brief_reference_image_s3_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    # Owner-uploaded reference videos (ordered list of S3 keys), streamed inline on
+    # the brief page. Uploaded direct-to-S3 via presigned PUT. Independent of the
+    # PDF/JSON brief. Always reassign the whole list when mutating (JSONB tracking).
+    brief_reference_video_s3_keys: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]", default=list
+    )
+    # Owner-uploaded static reference images (ordered list of S3 keys) — the "adapt
+    # this ad" pictures for static briefs, shown as a carousel on the brief page.
+    # Uploaded through the API (images are small). Independent of the video/PDF/JSON
+    # brief. Always reassign the whole list when mutating (JSONB change tracking).
+    brief_reference_image_s3_keys: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]", default=list
+    )
     # External (CF) lineage ids + human labels for the campaign this request came
     # from (the data spine). NULL for hand-made requests. The ids are stamped onto
     # every asset created under this request; the labels surface in the UI.

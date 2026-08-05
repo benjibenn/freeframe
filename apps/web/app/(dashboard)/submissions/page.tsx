@@ -30,6 +30,8 @@ interface SubmissionLink {
   has_brief_json?: boolean
   has_reference_video?: boolean
   has_reference_image?: boolean
+  reference_video_count?: number
+  reference_image_count?: number
 }
 
 interface SubmissionItem {
@@ -139,8 +141,8 @@ export default function SubmissionsPage() {
   // Starts as the full sample: editing a concrete brief beats composing from a hint.
   const [briefJson, setBriefJson] = useState(SAMPLE_BRIEF_JSON)
   const [languages, setLanguages] = useState(languagesFromBrief(JSON.parse(SAMPLE_BRIEF_JSON)))
-  const [briefVideo, setBriefVideo] = useState<File | null>(null)
-  const [briefImage, setBriefImage] = useState<File | null>(null)
+  const [briefVideos, setBriefVideos] = useState<File[]>([])
+  const [briefImages, setBriefImages] = useState<File[]>([])
   const [videoPct, setVideoPct] = useState<number | null>(null)
   const [creating, setCreating] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
@@ -206,16 +208,18 @@ export default function SubmissionsPage() {
       if (parsedBrief && link?.id) {
         await api.put(`/submission-links/${link.id}/brief-json`, { brief: parsedBrief })
       }
-      // Reference image is small enough to go through the API (multipart, like the PDF).
-      if (briefImage && link?.id) {
-        const fd = new FormData()
-        fd.append('file', briefImage)
-        await api.upload(`/submission-links/${link.id}/reference-image`, fd)
-      }
-      // Reference video uploads direct to S3 (large-file safe), then confirms.
-      if (briefVideo && link?.id) {
-        setVideoPct(0)
-        await uploadReferenceVideo(link.id, briefVideo, setVideoPct)
+      if (link?.id) {
+        // Reference images are small enough to go through the API (multipart, like the PDF).
+        for (const image of briefImages) {
+          const fd = new FormData()
+          fd.append('file', image)
+          await api.upload(`/submission-links/${link.id}/reference-image`, fd)
+        }
+        // Reference videos upload direct to S3 (large-file safe), then confirm.
+        for (const video of briefVideos) {
+          setVideoPct(0)
+          await uploadReferenceVideo(link.id, video, setVideoPct)
+        }
       }
       setTitle('')
       setInstructions('')
@@ -223,8 +227,8 @@ export default function SubmissionsPage() {
       setBriefFile(null)
       setBriefJson(SAMPLE_BRIEF_JSON)
       setLanguages(languagesFromBrief(JSON.parse(SAMPLE_BRIEF_JSON)))
-      setBriefVideo(null)
-      setBriefImage(null)
+      setBriefVideos([])
+      setBriefImages([])
       setVideoPct(null)
       setShowCreate(false)
       await load()
@@ -329,25 +333,32 @@ export default function SubmissionsPage() {
             <p className="text-xs text-text-tertiary">Submitters can view this from the submission page.</p>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-text-secondary">Reference image (optional)</label>
+            <label className="text-sm font-medium text-text-secondary">Reference images (optional)</label>
             <input
               type="file"
+              multiple
               accept="image/jpeg,image/png,image/webp,image/gif"
-              onChange={(e) => setBriefImage(e.target.files?.[0] ?? null)}
-              className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
-            />
-            <p className="text-xs text-text-tertiary">The static ad to adapt — shown on the submission page.</p>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-text-secondary">Reference video (optional)</label>
-            <input
-              type="file"
-              accept="video/*"
-              onChange={(e) => setBriefVideo(e.target.files?.[0] ?? null)}
+              onChange={(e) => setBriefImages(Array.from(e.target.files ?? []))}
               className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
             />
             <p className="text-xs text-text-tertiary">
-              {videoPct !== null ? `Uploading video… ${videoPct}%` : 'Plays inline in the View-brief dialog on the submission page.'}
+              The static ads to adapt — shown as a carousel on the submission page.
+              {briefImages.length > 1 && ` ${briefImages.length} selected.`}
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-text-secondary">Reference videos (optional)</label>
+            <input
+              type="file"
+              multiple
+              accept="video/*"
+              onChange={(e) => setBriefVideos(Array.from(e.target.files ?? []))}
+              className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
+            />
+            <p className="text-xs text-text-tertiary">
+              {videoPct !== null
+                ? `Uploading video… ${videoPct}%`
+                : `Play inline on the submission page.${briefVideos.length > 1 ? ` ${briefVideos.length} selected.` : ''}`}
             </p>
           </div>
           <div className="flex flex-col gap-1.5">
@@ -376,7 +387,7 @@ export default function SubmissionsPage() {
           </div>
           <div className="flex gap-2">
             <Button type="submit" loading={creating}>Create link</Button>
-            <Button type="button" variant="ghost" onClick={() => { setShowCreate(false); setBriefFile(null); setBriefJson(''); setBriefVideo(null); setBriefImage(null); setVideoPct(null) }}>Cancel</Button>
+            <Button type="button" variant="ghost" onClick={() => { setShowCreate(false); setBriefFile(null); setBriefJson(''); setBriefVideos([]); setBriefImages([]); setVideoPct(null) }}>Cancel</Button>
           </div>
         </form>
       )}
@@ -422,12 +433,12 @@ function LinkCard({
   })
   const [editBriefJson, setEditBriefJson] = useState('')
   const [editBriefFile, setEditBriefFile] = useState<File | null>(null)
-  const [editVideo, setEditVideo] = useState<File | null>(null)
-  const [editImage, setEditImage] = useState<File | null>(null)
-  const [hasImage, setHasImage] = useState(!!link.has_reference_image)
+  const [editVideos, setEditVideos] = useState<File[]>([])
+  const [editImages, setEditImages] = useState<File[]>([])
+  const [imageCount, setImageCount] = useState(link.reference_image_count ?? 0)
+  const [videoCount, setVideoCount] = useState(link.reference_video_count ?? 0)
   const [editLanguages, setEditLanguages] = useState('')
   const [hasBrief, setHasBrief] = useState(!!link.has_brief)
-  const [hasVideo, setHasVideo] = useState(!!link.has_reference_video)
   const [videoPct, setVideoPct] = useState<number | null>(null)
   const [briefError, setBriefError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -449,13 +460,13 @@ function LinkCard({
       folderId: link.home_folder_id ?? null,
     })
     setEditBriefFile(null)
-    setEditVideo(null)
-    setEditImage(null)
+    setEditVideos([])
+    setEditImages([])
     setVideoPct(null)
     setBriefError('')
     setHasBrief(!!link.has_brief)
-    setHasVideo(!!link.has_reference_video)
-    setHasImage(!!link.has_reference_image)
+    setVideoCount(link.reference_video_count ?? 0)
+    setImageCount(link.reference_image_count ?? 0)
     setEditLanguages('')
     setEditing(true)
     // The list payload omits brief_json to stay light; fetch the full link so the
@@ -468,8 +479,8 @@ function LinkCard({
       setEditBriefJson(full.brief_json ? JSON.stringify(full.brief_json, null, 2) : '')
       setEditLanguages(languagesFromBrief(full.brief_json))
       setHasBrief(!!full.has_brief)
-      setHasVideo(!!full.has_reference_video)
-      setHasImage(!!full.has_reference_image)
+      setVideoCount(full.reference_video_count ?? 0)
+      setImageCount(full.reference_image_count ?? 0)
     } catch {
       /* leave empty; user can still paste */
     }
@@ -520,14 +531,14 @@ function LinkCard({
       }
       // Sets or clears the structured brief (null clears).
       await api.put(`/submission-links/${link.id}/brief-json`, { brief: parsedBrief })
-      if (editImage) {
+      for (const image of editImages) {
         const fd = new FormData()
-        fd.append('file', editImage)
+        fd.append('file', image)
         await api.upload(`/submission-links/${link.id}/reference-image`, fd)
       }
-      if (editVideo) {
+      for (const video of editVideos) {
         setVideoPct(0)
-        await uploadReferenceVideo(link.id, editVideo, setVideoPct)
+        await uploadReferenceVideo(link.id, video, setVideoPct)
       }
       setEditing(false)
       await onUpdated()
@@ -538,25 +549,25 @@ function LinkCard({
     }
   }
 
-  async function removeVideo() {
+  async function removeVideos() {
     try {
       await api.delete(`/submission-links/${link.id}/reference-video`)
-      setHasVideo(false)
-      setEditVideo(null)
+      setVideoCount(0)
+      setEditVideos([])
       await onUpdated()
     } catch (err) {
-      setBriefError(err instanceof ApiError ? err.detail : 'Could not remove video.')
+      setBriefError(err instanceof ApiError ? err.detail : 'Could not remove videos.')
     }
   }
 
-  async function removeImage() {
+  async function removeImages() {
     try {
       await api.delete(`/submission-links/${link.id}/reference-image`)
-      setHasImage(false)
-      setEditImage(null)
+      setImageCount(0)
+      setEditImages([])
       await onUpdated()
     } catch (err) {
-      setBriefError(err instanceof ApiError ? err.detail : 'Could not remove image.')
+      setBriefError(err instanceof ApiError ? err.detail : 'Could not remove images.')
     }
   }
 
@@ -633,53 +644,59 @@ function LinkCard({
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-text-secondary">Reference image (optional)</label>
+            <label className="text-sm font-medium text-text-secondary">Reference images (optional)</label>
             <div className="flex items-center gap-2">
               <input
                 ref={editImageRef}
                 type="file"
+                multiple
                 accept="image/jpeg,image/png,image/webp,image/gif"
                 className="hidden"
-                onChange={(e) => setEditImage(e.target.files?.[0] ?? null)}
+                onChange={(e) => setEditImages(Array.from(e.target.files ?? []))}
               />
               <Button type="button" variant="secondary" size="sm" onClick={() => editImageRef.current?.click()}>
-                {hasImage ? 'Replace image' : 'Upload image'}
+                Add images
               </Button>
               <span className="truncate text-xs text-text-tertiary">
-                {editImage ? editImage.name : hasImage ? 'A reference image is attached.' : 'No image attached.'}
+                {editImages.length > 0
+                  ? `${editImages.length} to upload`
+                  : imageCount > 0
+                    ? `${imageCount} attached — shown as a carousel.`
+                    : 'No images attached.'}
               </span>
-              {hasImage && !editImage && (
-                <button type="button" onClick={removeImage} className="text-xs text-status-error hover:underline">
-                  Remove
+              {imageCount > 0 && editImages.length === 0 && (
+                <button type="button" onClick={removeImages} className="text-xs text-status-error hover:underline">
+                  Remove all
                 </button>
               )}
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-text-secondary">Reference video (optional)</label>
+            <label className="text-sm font-medium text-text-secondary">Reference videos (optional)</label>
             <div className="flex items-center gap-2">
               <input
                 ref={editVideoRef}
                 type="file"
+                multiple
                 accept="video/*"
                 className="hidden"
-                onChange={(e) => setEditVideo(e.target.files?.[0] ?? null)}
+                onChange={(e) => setEditVideos(Array.from(e.target.files ?? []))}
               />
               <Button type="button" variant="secondary" size="sm" onClick={() => editVideoRef.current?.click()}>
-                {hasVideo ? 'Replace video' : 'Upload video'}
+                Add videos
               </Button>
               <span className="truncate text-xs text-text-tertiary">
                 {videoPct !== null
                   ? `Uploading… ${videoPct}%`
-                  : editVideo
-                    ? editVideo.name
-                    : hasVideo
-                      ? 'A reference video is attached.'
-                      : 'No video attached.'}
+                  : editVideos.length > 0
+                    ? `${editVideos.length} to upload`
+                    : videoCount > 0
+                      ? `${videoCount} attached.`
+                      : 'No videos attached.'}
               </span>
-              {hasVideo && !editVideo && (
-                <button type="button" onClick={removeVideo} className="text-xs text-status-error hover:underline">
-                  Remove
+              {videoCount > 0 && editVideos.length === 0 && (
+                <button type="button" onClick={removeVideos} className="text-xs text-status-error hover:underline">
+                  Remove all
                 </button>
               )}
             </div>

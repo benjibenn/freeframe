@@ -43,8 +43,8 @@ export function NewRequestDialog({
   const [title, setTitle] = React.useState('')
   const [instructions, setInstructions] = React.useState('')
   const [briefFile, setBriefFile] = React.useState<File | null>(null)
-  const [briefVideo, setBriefVideo] = React.useState<File | null>(null)
-  const [briefImage, setBriefImage] = React.useState<File | null>(null)
+  const [briefVideos, setBriefVideos] = React.useState<File[]>([])
+  const [briefImages, setBriefImages] = React.useState<File[]>([])
   const [languages, setLanguages] = React.useState(SAMPLE_LANGUAGES)
   const [briefJson, setBriefJson] = React.useState(SAMPLE_BRIEF_JSON)
   const [videoPct, setVideoPct] = React.useState<number | null>(null)
@@ -56,8 +56,8 @@ export function NewRequestDialog({
       setTitle('')
       setInstructions('')
       setBriefFile(null)
-      setBriefVideo(null)
-      setBriefImage(null)
+      setBriefVideos([])
+      setBriefImages([])
       setLanguages(SAMPLE_LANGUAGES)
       setBriefJson(SAMPLE_BRIEF_JSON)
       setVideoPct(null)
@@ -108,14 +108,16 @@ export function NewRequestDialog({
       if (parsedBrief && link?.id) {
         await api.put(`/submission-links/${link.id}/brief-json`, { brief: parsedBrief })
       }
-      if (briefImage && link?.id) {
-        const fd = new FormData()
-        fd.append('file', briefImage)
-        await api.upload(`/submission-links/${link.id}/reference-image`, fd)
-      }
-      if (briefVideo && link?.id) {
-        setVideoPct(0)
-        await uploadReferenceVideo(link.id, briefVideo, setVideoPct)
+      if (link?.id) {
+        for (const image of briefImages) {
+          const fd = new FormData()
+          fd.append('file', image)
+          await api.upload(`/submission-links/${link.id}/reference-image`, fd)
+        }
+        for (const video of briefVideos) {
+          setVideoPct(0)
+          await uploadReferenceVideo(link.id, video, setVideoPct)
+        }
       }
       onCreated?.()
       onOpenChange(false)
@@ -206,29 +208,38 @@ export function NewRequestDialog({
 
             <div className="flex flex-col gap-1.5">
               <label className="text-sm font-medium text-text-secondary">
-                Reference image <span className="font-normal text-text-tertiary">(optional)</span>
+                Reference images <span className="font-normal text-text-tertiary">(optional)</span>
               </label>
               <input
                 type="file"
+                multiple
                 accept="image/jpeg,image/png,image/webp,image/gif"
-                onChange={(e) => setBriefImage(e.target.files?.[0] ?? null)}
+                onChange={(e) => setBriefImages(Array.from(e.target.files ?? []))}
                 className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
               />
-              <p className="text-xs text-text-tertiary">The static ad to adapt — shown on the submission page.</p>
+              <p className="text-xs text-text-tertiary">
+                The static ads to adapt — shown as a carousel on the submission page.
+                {briefImages.length > 1 && ` ${briefImages.length} selected.`}
+              </p>
             </div>
 
             <div className="flex flex-col gap-1.5">
               <label className="text-sm font-medium text-text-secondary">
-                Reference video <span className="font-normal text-text-tertiary">(optional)</span>
+                Reference videos <span className="font-normal text-text-tertiary">(optional)</span>
               </label>
               <input
                 type="file"
+                multiple
                 accept="video/*"
-                onChange={(e) => setBriefVideo(e.target.files?.[0] ?? null)}
+                onChange={(e) => setBriefVideos(Array.from(e.target.files ?? []))}
                 className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
               />
-              {videoPct !== null && (
+              {videoPct !== null ? (
                 <p className="text-xs text-text-tertiary">Uploading video… {videoPct}%</p>
+              ) : (
+                briefVideos.length > 1 && (
+                  <p className="text-xs text-text-tertiary">{briefVideos.length} selected.</p>
+                )
               )}
             </div>
 

@@ -33,10 +33,10 @@ class ProjectResponse(BaseModel):
     submission_link_id: uuid.UUID | None = None
     request_title: str | None = None
     brief_pdf_url: str | None = None
-    # Public token route to the request's reference video, if any (mirrors brief_pdf_url).
-    reference_video_url: str | None = None
-    # Public token route to the request's static reference image, if any.
-    reference_image_url: str | None = None
+    # Public token routes to the request's reference videos/images (mirrors
+    # brief_pdf_url). Ordered; the View-brief dialog renders images as a carousel.
+    reference_video_urls: list[str] = []
+    reference_image_urls: list[str] = []
     # Structured JSON brief from the request, rendered on the project page. Populated
     # on the single-project GET only (kept out of the projects-list payload).
     brief_json: dict | None = None

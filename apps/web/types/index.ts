@@ -159,8 +159,8 @@ export interface Project {
   submission_link_id?: string | null;
   request_title?: string | null;
   brief_pdf_url?: string | null;
-  reference_video_url?: string | null;
-  reference_image_url?: string | null;
+  reference_video_urls?: string[];
+  reference_image_urls?: string[];
   brief_json?: Record<string, unknown> | null;
 }
 

@@ -327,8 +327,10 @@ def list_submission_links(
         resp.home_path = home.get(l.id)
         resp.has_brief = bool(l.brief_pdf_s3_key)
         resp.has_brief_json = bool(l.brief_json)  # flag only; full brief_json omitted from lists
-        resp.has_reference_video = bool(l.brief_reference_video_s3_key)
-        resp.has_reference_image = bool(l.brief_reference_image_s3_key)
+        resp.reference_video_count = len(_ref_video_keys(l))
+        resp.has_reference_video = resp.reference_video_count > 0
+        resp.reference_image_count = len(_ref_image_keys(l))
+        resp.has_reference_image = resp.reference_image_count > 0
         out.append(resp)
     return out
 
@@ -344,8 +346,10 @@ def get_submission_link(
     resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
-    resp.has_reference_video = bool(link.brief_reference_video_s3_key)
-    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
+    resp.reference_video_count = len(_ref_video_keys(link))
+    resp.has_reference_video = resp.reference_video_count > 0
+    resp.reference_image_count = len(_ref_image_keys(link))
+    resp.has_reference_image = resp.reference_image_count > 0
     resp.brief_json = link.brief_json  # full brief for the detail/edit view
     resp.home_path = resolve_link_home_path(db, link)
     return resp
@@ -370,8 +374,10 @@ def set_submission_brief_json(
     resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
-    resp.has_reference_video = bool(link.brief_reference_video_s3_key)
-    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
+    resp.reference_video_count = len(_ref_video_keys(link))
+    resp.has_reference_video = resp.reference_video_count > 0
+    resp.reference_image_count = len(_ref_image_keys(link))
+    resp.has_reference_image = resp.reference_image_count > 0
     resp.brief_json = link.brief_json
     return resp
 
@@ -402,8 +408,10 @@ async def upload_submission_brief(
     resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
     resp.has_brief = True
     resp.has_brief_json = bool(link.brief_json)
-    resp.has_reference_video = bool(link.brief_reference_video_s3_key)
-    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
+    resp.reference_video_count = len(_ref_video_keys(link))
+    resp.has_reference_video = resp.reference_video_count > 0
+    resp.reference_image_count = len(_ref_image_keys(link))
+    resp.has_reference_image = resp.reference_image_count > 0
     return resp
 
 
@@ -436,11 +444,15 @@ def presign_reference_video(
     The browser uploads to the URL, then calls the confirm endpoint with the returned
     key. The key is derived server-side so the client can't target arbitrary objects."""
     link = _get_owned_link(db, link_id, current_user)
+    if len(_ref_video_keys(link)) >= _MAX_REFERENCE_ATTACHMENTS:
+        raise HTTPException(status_code=400, detail=f"At most {_MAX_REFERENCE_ATTACHMENTS} reference videos per request")
     content_type = (body.content_type or "").lower()
     if not content_type.startswith("video/"):
         raise HTTPException(status_code=400, detail="Reference must be a video file")
     ext = _VIDEO_EXT.get(content_type, ".mp4")
-    s3_key = f"{_reference_video_prefix(link.id)}{ext}"
+    # Unique per upload so several videos can coexist (and a re-upload never
+    # silently overwrites an older clip behind a cached presigned GET).
+    s3_key = f"{_reference_video_prefix(link.id)}-{uuid.uuid4().hex[:8]}{ext}"
     url = s3_service.generate_presigned_put_url(s3_key, content_type=content_type)
     return ReferenceVideoPresignResponse(url=url, s3_key=s3_key)
 
@@ -452,37 +464,55 @@ def confirm_reference_video(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Owner/admin: record the uploaded reference video on the link. Rejects any key
-    that isn't the one we would have presigned for this link (guards against pointing
+    """Owner/admin: append the uploaded reference video to the link. Rejects any key
+    that isn't one we would have presigned for this link (guards against pointing
     the link at an unrelated object)."""
     link = _get_owned_link(db, link_id, current_user)
     if not (body.s3_key or "").startswith(_reference_video_prefix(link.id)):
         raise HTTPException(status_code=400, detail="Invalid reference video key")
-    link.brief_reference_video_s3_key = body.s3_key
+    keys = _ref_video_keys(link)
+    if body.s3_key not in keys:
+        if len(keys) >= _MAX_REFERENCE_ATTACHMENTS:
+            raise HTTPException(status_code=400, detail=f"At most {_MAX_REFERENCE_ATTACHMENTS} reference videos per request")
+        link.brief_reference_video_s3_keys = [*keys, body.s3_key]
     db.commit()
     db.refresh(link)
-    resp = SubmissionLinkResponse.model_validate(link)
-    resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
-    resp.has_brief = bool(link.brief_pdf_s3_key)
-    resp.has_brief_json = bool(link.brief_json)
-    resp.has_reference_video = True
-    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
-    resp.brief_json = link.brief_json
-    return resp
+    return _link_response_with_flags(db, link)
 
 
-@router.delete("/submission-links/{link_id}/reference-video", status_code=status.HTTP_204_NO_CONTENT)
-def delete_reference_video(
+@router.delete("/submission-links/{link_id}/reference-video/{index}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_reference_video_at(
+    index: int,
     link_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Owner/admin: detach the reference video. Best-effort deletes the S3 object."""
+    """Owner/admin: detach one reference video by position. Best-effort deletes S3."""
     link = _get_owned_link(db, link_id, current_user)
-    key = link.brief_reference_video_s3_key
-    link.brief_reference_video_s3_key = None
+    keys = _ref_video_keys(link)
+    if not (0 <= index < len(keys)):
+        raise HTTPException(status_code=404, detail="No reference video at that position")
+    key = keys[index]
+    link.brief_reference_video_s3_keys = keys[:index] + keys[index + 1:]
     db.commit()
-    if key:
+    try:
+        s3_service.delete_object(key)
+    except Exception:
+        pass  # object may already be gone; the row is what matters
+
+
+@router.delete("/submission-links/{link_id}/reference-video", status_code=status.HTTP_204_NO_CONTENT)
+def delete_reference_videos(
+    link_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner/admin: detach ALL reference videos. Best-effort deletes the S3 objects."""
+    link = _get_owned_link(db, link_id, current_user)
+    keys = _ref_video_keys(link)
+    link.brief_reference_video_s3_keys = []
+    db.commit()
+    for key in keys:
         try:
             s3_service.delete_object(key)
         except Exception:
@@ -498,14 +528,31 @@ _IMAGE_EXT = {
     "image/gif": ".gif",
 }
 
+_MAX_REFERENCE_ATTACHMENTS = 10
+
+
+def _ref_image_keys(link: SubmissionLink) -> list[str]:
+    """The link's ordered reference-image S3 keys. Defensive against legacy rows
+    where the JSONB column may hold null instead of []."""
+    keys = link.brief_reference_image_s3_keys
+    return [k for k in keys if isinstance(k, str)] if isinstance(keys, list) else []
+
+
+def _ref_video_keys(link: SubmissionLink) -> list[str]:
+    """The link's ordered reference-video S3 keys (same defensiveness as images)."""
+    keys = link.brief_reference_video_s3_keys
+    return [k for k in keys if isinstance(k, str)] if isinstance(keys, list) else []
+
 
 def _link_response_with_flags(db: Session, link: SubmissionLink) -> SubmissionLinkResponse:
     resp = SubmissionLinkResponse.model_validate(link)
     resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
-    resp.has_reference_video = bool(link.brief_reference_video_s3_key)
-    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
+    resp.reference_video_count = len(_ref_video_keys(link))
+    resp.has_reference_video = resp.reference_video_count > 0
+    resp.reference_image_count = len(_ref_image_keys(link))
+    resp.has_reference_image = resp.reference_image_count > 0
     resp.brief_json = link.brief_json
     return resp
 
@@ -517,10 +564,13 @@ async def upload_reference_image(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Owner/admin: attach (or replace) a static reference image on a request — the
-    "adapt this ad" picture for static briefs. Served to submitters through the public
-    GET /submit/{token}/reference-image route."""
+    """Owner/admin: append a static reference image to a request — the "adapt this ad"
+    pictures for static briefs, shown as a carousel on the brief page. Served to
+    submitters through the public GET /submit/{token}/reference-image/{index} route."""
     link = _get_owned_link(db, link_id, current_user)
+    keys = _ref_image_keys(link)
+    if len(keys) >= _MAX_REFERENCE_ATTACHMENTS:
+        raise HTTPException(status_code=400, detail=f"At most {_MAX_REFERENCE_ATTACHMENTS} reference images per request")
     content_type = (file.content_type or "").lower()
     if content_type not in _IMAGE_EXT:
         raise HTTPException(status_code=400, detail="Reference image must be JPEG, PNG, WebP, or GIF")
@@ -529,26 +579,48 @@ async def upload_reference_image(
         raise HTTPException(status_code=400, detail="The uploaded image is empty")
     if len(data) > 15 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Reference image must be 15 MB or smaller")
-    s3_key = f"briefs/manual/{link.id}-reference-image{_IMAGE_EXT[content_type]}"
+    # Unique per upload so several images can coexist in order.
+    s3_key = f"briefs/manual/{link.id}-reference-image-{uuid.uuid4().hex[:8]}{_IMAGE_EXT[content_type]}"
     s3_service.put_object(s3_key, data, content_type=content_type)
-    link.brief_reference_image_s3_key = s3_key
+    link.brief_reference_image_s3_keys = [*keys, s3_key]
     db.commit()
     db.refresh(link)
     return _link_response_with_flags(db, link)
 
 
-@router.delete("/submission-links/{link_id}/reference-image", status_code=status.HTTP_204_NO_CONTENT)
-def delete_reference_image(
+@router.delete("/submission-links/{link_id}/reference-image/{index}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_reference_image_at(
+    index: int,
     link_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Owner/admin: detach the reference image. Best-effort deletes the S3 object."""
+    """Owner/admin: detach one reference image by position. Best-effort deletes S3."""
     link = _get_owned_link(db, link_id, current_user)
-    key = link.brief_reference_image_s3_key
-    link.brief_reference_image_s3_key = None
+    keys = _ref_image_keys(link)
+    if not (0 <= index < len(keys)):
+        raise HTTPException(status_code=404, detail="No reference image at that position")
+    key = keys[index]
+    link.brief_reference_image_s3_keys = keys[:index] + keys[index + 1:]
     db.commit()
-    if key:
+    try:
+        s3_service.delete_object(key)
+    except Exception:
+        pass  # object may already be gone; the row is what matters
+
+
+@router.delete("/submission-links/{link_id}/reference-image", status_code=status.HTTP_204_NO_CONTENT)
+def delete_reference_images(
+    link_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner/admin: detach ALL reference images. Best-effort deletes the S3 objects."""
+    link = _get_owned_link(db, link_id, current_user)
+    keys = _ref_image_keys(link)
+    link.brief_reference_image_s3_keys = []
+    db.commit()
+    for key in keys:
         try:
             s3_service.delete_object(key)
         except Exception:
@@ -672,8 +744,10 @@ def update_submission_link(
     resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
     resp.has_brief = bool(link.brief_pdf_s3_key)
     resp.has_brief_json = bool(link.brief_json)
-    resp.has_reference_video = bool(link.brief_reference_video_s3_key)
-    resp.has_reference_image = bool(link.brief_reference_image_s3_key)
+    resp.reference_video_count = len(_ref_video_keys(link))
+    resp.has_reference_video = resp.reference_video_count > 0
+    resp.reference_image_count = len(_ref_image_keys(link))
+    resp.has_reference_image = resp.reference_image_count > 0
     resp.home_path = resolve_link_home_path(db, link)
     return resp
 
@@ -1147,8 +1221,10 @@ def resolve_submission_link(
         requires_auth=current_user is None,
         has_brief=bool(link.brief_pdf_s3_key),
         brief_json=link.brief_json,
-        has_reference_video=bool(link.brief_reference_video_s3_key),
-        has_reference_image=bool(link.brief_reference_image_s3_key),
+        has_reference_video=len(_ref_video_keys(link)) > 0,
+        has_reference_image=len(_ref_image_keys(link)) > 0,
+        reference_video_count=len(_ref_video_keys(link)),
+        reference_image_count=len(_ref_image_keys(link)),
         persona_label=link.persona_label,
         angle_label=link.angle_label,
         problem=link.problem,
@@ -1171,36 +1247,41 @@ def get_submission_brief_pdf(token: str, db: Session = Depends(get_db)):
     return RedirectResponse(url)
 
 
-@router.get("/submit/{token}/reference-video")
-def get_submission_reference_video(token: str, db: Session = Depends(get_db)):
-    """Public: redirect to the reference video for a submission request, if it has one.
-
-    Token-gated like the submit page. No download_filename so it's served inline
-    (Content-Disposition absent) — the browser <video> element streams it, and S3
-    honours Range requests through the redirect so seeking works.
-    """
+def _reference_redirect(db: Session, token: str, index: int, kind: str) -> RedirectResponse:
+    """Shared public redirect for indexed reference attachments. Served inline (no
+    download_filename): <video> streams through the redirect (S3 honours Range so
+    seeking works) and <img> renders straight from it."""
     link = _validate_active(
         db.query(SubmissionLink).filter(SubmissionLink.token == token).first()
     )
-    if not link.brief_reference_video_s3_key:
-        raise HTTPException(status_code=404, detail="No reference video for this request")
-    url = s3_service.generate_presigned_get_url(link.brief_reference_video_s3_key, expires_in=3600)
-    return RedirectResponse(url)
+    keys = _ref_video_keys(link) if kind == "video" else _ref_image_keys(link)
+    if not (0 <= index < len(keys)):
+        raise HTTPException(status_code=404, detail=f"No reference {kind} at that position")
+    return RedirectResponse(s3_service.generate_presigned_get_url(keys[index], expires_in=3600))
+
+
+@router.get("/submit/{token}/reference-video/{index}")
+def get_submission_reference_video_at(token: str, index: int, db: Session = Depends(get_db)):
+    """Public: redirect to one of the request's reference videos, by position."""
+    return _reference_redirect(db, token, index, "video")
+
+
+@router.get("/submit/{token}/reference-video")
+def get_submission_reference_video(token: str, db: Session = Depends(get_db)):
+    """Public: the first reference video (kept for old links already in the wild)."""
+    return _reference_redirect(db, token, 0, "video")
+
+
+@router.get("/submit/{token}/reference-image/{index}")
+def get_submission_reference_image_at(token: str, index: int, db: Session = Depends(get_db)):
+    """Public: redirect to one of the request's reference images, by position."""
+    return _reference_redirect(db, token, index, "image")
 
 
 @router.get("/submit/{token}/reference-image")
 def get_submission_reference_image(token: str, db: Session = Depends(get_db)):
-    """Public: redirect to the static reference image for a submission request.
-
-    Token-gated like the submit page; served inline (no download_filename) so the
-    browser <img> renders it straight from the redirect."""
-    link = _validate_active(
-        db.query(SubmissionLink).filter(SubmissionLink.token == token).first()
-    )
-    if not link.brief_reference_image_s3_key:
-        raise HTTPException(status_code=404, detail="No reference image for this request")
-    url = s3_service.generate_presigned_get_url(link.brief_reference_image_s3_key, expires_in=3600)
-    return RedirectResponse(url)
+    """Public: the first reference image (kept for old links already in the wild)."""
+    return _reference_redirect(db, token, 0, "image")
 
 
 @router.post("/submit/{token}/accept", response_model=SubmissionAcceptResponse)

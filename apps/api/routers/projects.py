@@ -206,10 +206,15 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
             resp.request_title = link.title
             if link.brief_pdf_s3_key:
                 resp.brief_pdf_url = f"/submit/{link.token}/brief.pdf"
-            if link.brief_reference_video_s3_key:
-                resp.reference_video_url = f"/submit/{link.token}/reference-video"
-            if link.brief_reference_image_s3_key:
-                resp.reference_image_url = f"/submit/{link.token}/reference-image"
+            from ..routers.submissions import _ref_image_keys, _ref_video_keys
+            resp.reference_video_urls = [
+                f"/submit/{link.token}/reference-video/{i}"
+                for i in range(len(_ref_video_keys(link)))
+            ]
+            resp.reference_image_urls = [
+                f"/submit/{link.token}/reference-image/{i}"
+                for i in range(len(_ref_image_keys(link)))
+            ]
             resp.brief_json = link.brief_json
     return resp
 

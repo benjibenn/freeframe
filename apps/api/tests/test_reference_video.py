@@ -38,6 +38,12 @@ def _valid_link():
     link.persona_label = link.angle_label = link.problem = None
     link.brief_pdf_s3_key = None
     link.brief_json = None
+    link.brief_reference_video_s3_keys = []
+    link.brief_reference_image_s3_keys = []
+    link.home_project_id = None
+    link.home_folder_id = None
+    link.home_path = None
+    link.taxonomy_path = None
     return link
 
 
@@ -49,5 +55,5 @@ def test_confirm_accepts_key_this_link_would_have_presigned(monkeypatch):
     resp = subs.confirm_reference_video(
         link.id, ReferenceVideoConfirm(s3_key=key), db=MagicMock(), current_user=MagicMock(),
     )
-    assert link.brief_reference_video_s3_key == key
+    assert link.brief_reference_video_s3_keys == [key]
     assert resp.has_reference_video is True
