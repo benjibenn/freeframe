@@ -186,6 +186,29 @@ export default function ApiKeysPage() {
       ? `${window.location.origin}/api/public/v1`
       : "/api/public/v1";
 
+  // Read off the browser's own origin so each tenant shows its own host without
+  // a build-time constant. The /api prefix is not decoration: Traefik only routes
+  // PathPrefix(`/api`) to the API container, and the trailing slash avoids a 308
+  // that not every MCP client follows on POST.
+  const mcpUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/api/mcp/`
+      : "/api/mcp/";
+
+  const mcpConfig = JSON.stringify(
+    {
+      mcpServers: {
+        freeframe: {
+          type: "http",
+          url: mcpUrl,
+          headers: { "X-API-Key": "ffpk_paste_your_key_here" },
+        },
+      },
+    },
+    null,
+    2,
+  );
+
   const handleRevoke = async (key: APIKey) => {
     if (
       !confirm(
@@ -205,6 +228,11 @@ export default function ApiKeysPage() {
   const copyEndpoint = async () => {
     await navigator.clipboard.writeText(`${baseUrl}/videos`);
     toast.success("Endpoint URL copied");
+  };
+
+  const copyMcpConfig = async () => {
+    await navigator.clipboard.writeText(mcpConfig);
+    toast.success("MCP config copied — replace the placeholder with your key");
   };
 
   if (!isSuperAdmin) {
@@ -261,6 +289,45 @@ export default function ApiKeysPage() {
           a single video directly via{" "}
           <code className="font-mono">GET {baseUrl}/videos/{"{id}"}/download</code>
           .
+        </p>
+      </section>
+
+      {/* Connect an AI assistant (MCP) */}
+      <section className="rounded-lg border border-border bg-bg-secondary p-5 space-y-3">
+        <h2 className="text-sm font-semibold text-text-primary">
+          Connect an AI assistant (MCP)
+        </h2>
+        <p className="text-sm text-text-secondary">
+          The same key connects an AI assistant, which can then create,
+          duplicate and re-file video requests for you. Paste the config below
+          into your assistant, swapping the placeholder for a key from this
+          page. The key acts as the admin who created it, so revoking it here
+          cuts the assistant off immediately.
+        </p>
+
+        <div className="relative rounded-lg border border-border bg-bg-tertiary">
+          <button
+            type="button"
+            onClick={copyMcpConfig}
+            className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
+            title="Copy MCP config"
+          >
+            <Copy className="h-4 w-4" />
+          </button>
+          <pre className="overflow-x-auto p-3 pr-11 font-mono text-xs leading-relaxed text-text-primary">
+            {mcpConfig}
+          </pre>
+        </div>
+
+        <p className="text-xs text-text-tertiary">
+          Tools:{" "}
+          <code className="font-mono">list_briefs</code>,{" "}
+          <code className="font-mono">list_destinations</code>,{" "}
+          <code className="font-mono">create_brief</code>,{" "}
+          <code className="font-mono">duplicate_brief</code>,{" "}
+          <code className="font-mono">move_brief</code>. Moving a request only
+          changes where future submissions are filed — work already uploaded
+          keeps the path it was filed under.
         </p>
       </section>
 
