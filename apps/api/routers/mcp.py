@@ -38,7 +38,14 @@ from . import submissions as submissions_router
 
 # Set by the ASGI wrapper below, read by the tools. Safe because a stateless
 # streamable-HTTP request is handled start-to-finish in one task.
+#
+# The session is request-scoped and shared with the tools on purpose. Resolving
+# the key stamps `last_used_at` and commits, which expires the User; if that
+# session were then closed, the User would be detached and the first lazy
+# attribute read inside a tool would raise DetachedInstanceError. One session per
+# request — the same shape as `get_db` on the REST routes — keeps it live.
 _current_user: ContextVar[Optional[User]] = ContextVar("mcp_current_user", default=None)
+_current_db: ContextVar[Optional[Session]] = ContextVar("mcp_current_db", default=None)
 
 mcp = FastMCP(
     name="freeframe",
@@ -95,18 +102,25 @@ def _brief_summary(link: Any) -> dict[str, Any]:
 
 
 def _call(fn, **kwargs) -> Any:
-    """Run a route function against a fresh session, translating its HTTP errors.
+    """Run a route function on this request's session, translating its HTTP errors.
+
+    Uses the session the auth wrapper opened rather than a fresh one: the
+    authenticated User is attached to it, and a second session would leave that
+    User detached.
 
     An HTTPException escaping into the transport becomes an opaque failure the
     agent cannot act on. "Not a member of that project" is actionable; a 500 is not.
+    The rollback matters because one MCP request may carry several tool calls — a
+    failed one must not leave a poisoned transaction for the next.
     """
-    db: Session = SessionLocal()
+    db = _current_db.get()
+    if db is None:
+        raise ValueError("No database session on this MCP request")
     try:
         return fn(db=db, current_user=_user(), **kwargs)
     except HTTPException as exc:
+        db.rollback()
         raise ValueError(str(exc.detail)) from exc
-    finally:
-        db.close()
 
 
 # ── Discovery ────────────────────────────────────────────────────────────────
@@ -275,16 +289,19 @@ async def mcp_app(scope, receive, send):
     try:
         user = resolve_api_key_user(db, headers.get("x-api-key"))
     except HTTPException as exc:
+        db.close()
         await _send_json_error(send, exc.status_code, str(exc.detail))
         return
-    finally:
-        db.close()
 
-    token = _current_user.set(user)
+    # The session stays open for the whole request so `user` remains attached to it.
+    user_token = _current_user.set(user)
+    db_token = _current_db.set(db)
     try:
         await _inner_app(scope, receive, send)
     finally:
-        _current_user.reset(token)
+        _current_user.reset(user_token)
+        _current_db.reset(db_token)
+        db.close()
 
 
 async def _send_json_error(send, status_code: int, detail: str) -> None:

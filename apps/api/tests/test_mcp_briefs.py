@@ -108,12 +108,42 @@ def test_valid_admin_key_resolves_to_its_creator(mock_db):
 
 @pytest.fixture
 def as_admin(mock_db):
-    """Run a tool body as an authenticated admin against a mocked session."""
+    """Run a tool body as an authenticated admin on a request-scoped session."""
     user = _admin()
-    token = mcp_router._current_user.set(user)
-    with patch("apps.api.routers.mcp.SessionLocal", return_value=mock_db):
-        yield user
-    mcp_router._current_user.reset(token)
+    user_token = mcp_router._current_user.set(user)
+    db_token = mcp_router._current_db.set(mock_db)
+    yield user
+    mcp_router._current_user.reset(user_token)
+    mcp_router._current_db.reset(db_token)
+
+
+def test_tools_use_the_request_session_not_a_new_one(as_admin, mock_db):
+    """Regression: the authenticated User is attached to the request's session.
+
+    resolve_api_key_user commits to stamp last_used_at, which expires the User.
+    If a tool then opened its own session, that User would be detached and the
+    first lazy attribute read inside the route would raise DetachedInstanceError —
+    which is exactly what happened against a real database, invisibly to mocks.
+    """
+    with patch("apps.api.routers.mcp.SessionLocal") as fresh:
+        with patch.object(
+            mcp_router.submissions_router, "list_submission_links", return_value=[]
+        ) as listed:
+            mcp_router.list_briefs()
+    fresh.assert_not_called()
+    assert listed.call_args.kwargs["db"] is mock_db
+
+
+def test_a_failed_tool_rolls_back_so_the_next_one_is_usable(as_admin, mock_db):
+    """One MCP request can carry several tool calls on one session."""
+    with patch.object(
+        mcp_router.submissions_router,
+        "create_submission_link",
+        side_effect=HTTPException(status_code=404, detail="Project not found"),
+    ):
+        with pytest.raises(ValueError):
+            mcp_router.create_brief(title="X", home_project_id=str(uuid.uuid4()))
+    mock_db.rollback.assert_called_once()
 
 
 def _link(**over):
