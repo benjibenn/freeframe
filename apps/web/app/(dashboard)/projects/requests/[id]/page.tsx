@@ -35,6 +35,10 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { PreAssignFolderDialog } from '@/components/shared/pre-assign-folder-dialog'
 import { RequestSettingsDialog } from '@/components/projects/request-settings-dialog'
 import { BriefView } from '@/components/projects/brief-view'
+import {
+  ReferencePickerDialog,
+  type ReferenceLibrary,
+} from '@/components/projects/reference-picker-dialog'
 import { SAMPLE_BRIEF_JSON, languagesFromBrief, withLanguages } from '@/lib/sample-brief'
 import type { VideoRequest } from '@/components/projects/request-card'
 
@@ -294,6 +298,16 @@ export default function RequestDetailPage() {
   const videoInputRef = React.useRef<HTMLInputElement>(null)
   const [uploadingVideo, setUploadingVideo] = React.useState(false)
   const [videoPct, setVideoPct] = React.useState<number | null>(null)
+
+  // The shared References library, when the deployment has one configured.
+  // Null is the normal "not configured" answer, so the picker simply stays hidden
+  // rather than erroring.
+  const { data: referenceLibrary } = useSWR<ReferenceLibrary | null>(
+    '/references/library',
+    () => api.get<ReferenceLibrary | null>('/references/library'),
+    { shouldRetryOnError: false },
+  )
+  const [pickerKind, setPickerKind] = React.useState<'video' | 'image' | null>(null)
 
   const uploadVideo = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? [])
@@ -647,15 +661,23 @@ export default function RequestDetailPage() {
           className="hidden"
           onChange={uploadVideo}
         />
-        <Button
-          variant={request?.has_reference_video ? 'secondary' : 'primary'}
-          size="sm"
-          onClick={() => videoInputRef.current?.click()}
-          disabled={uploadingVideo || !request}
-        >
-          {uploadingVideo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          Add videos
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          {referenceLibrary && (
+            <Button variant="secondary" size="sm" onClick={() => setPickerKind('video')} disabled={!request}>
+              <Film className="h-4 w-4" />
+              From References
+            </Button>
+          )}
+          <Button
+            variant={request?.has_reference_video ? 'secondary' : 'primary'}
+            size="sm"
+            onClick={() => videoInputRef.current?.click()}
+            disabled={uploadingVideo || !request}
+          >
+            {uploadingVideo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            Add videos
+          </Button>
+        </div>
       </div>
 
       {/* Reference images (owner-uploaded static ads, carousel on the brief page) */}
@@ -705,16 +727,37 @@ export default function RequestDetailPage() {
           className="hidden"
           onChange={uploadImage}
         />
-        <Button
-          variant={request?.has_reference_image ? 'secondary' : 'primary'}
-          size="sm"
-          onClick={() => imageInputRef.current?.click()}
-          disabled={uploadingImage || !request}
-        >
-          {uploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          Add images
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          {referenceLibrary && (
+            <Button variant="secondary" size="sm" onClick={() => setPickerKind('image')} disabled={!request}>
+              <ImageIcon className="h-4 w-4" />
+              From References
+            </Button>
+          )}
+          <Button
+            variant={request?.has_reference_image ? 'secondary' : 'primary'}
+            size="sm"
+            onClick={() => imageInputRef.current?.click()}
+            disabled={uploadingImage || !request}
+          >
+            {uploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            Add images
+          </Button>
+        </div>
       </div>
+
+      {pickerKind && referenceLibrary && request && (
+        <ReferencePickerDialog
+          library={referenceLibrary}
+          requestId={request.id}
+          kind={pickerKind}
+          onClose={() => setPickerKind(null)}
+          onAttached={() => {
+            mutateRequest()
+            toast.success(pickerKind === 'video' ? 'Reference video added' : 'Reference image added')
+          }}
+        />
+      )}
 
       {/* Structured brief (JSON) — renders inline on the submit + project pages */}
       <div className="rounded-xl border border-border bg-bg-secondary px-4 py-3">

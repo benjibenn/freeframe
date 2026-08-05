@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 import uuid
 from datetime import datetime, timezone
+from ..config import settings
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
@@ -96,7 +97,15 @@ def initiate_upload(
         # so it shows up triaged in the admin task list right away. Images are
         # included: static ads are a deliverable in their own right, and skipping
         # them left every one of them permanently unassigned on the board.
-        if asset_type in (AssetType.video, AssetType.image):
+        #
+        # The References library is the exception: it is a swipe file, not work.
+        # The task board is global (`db.query(Asset)` with no project filter), so
+        # stamping a stage here would put every clipped competitor ad on it.
+        is_references = (
+            settings.references_project_id
+            and str(body.project_id) == settings.references_project_id
+        )
+        if asset_type in (AssetType.video, AssetType.image) and not is_references:
             from ..models.task_stage import TaskStage
             default_stage = db.query(TaskStage).filter(
                 TaskStage.is_default.is_(True),
