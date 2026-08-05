@@ -5,6 +5,11 @@ import { HomePicker, type HomeValue } from '@/components/projects/home-picker'
 import Link from 'next/link'
 import { api, ApiError } from '@/lib/api'
 import { uploadReferenceVideo } from '@/lib/reference-video'
+import {
+  UseExistingReferenceButton,
+  PickedReferenceChips,
+  useDeferredReferences,
+} from '@/components/projects/use-reference-picker'
 import { SAMPLE_BRIEF_JSON, languagesFromBrief, withLanguages } from '@/lib/sample-brief'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -143,6 +148,7 @@ export default function SubmissionsPage() {
   const [languages, setLanguages] = useState(languagesFromBrief(JSON.parse(SAMPLE_BRIEF_JSON)))
   const [briefVideos, setBriefVideos] = useState<File[]>([])
   const [briefImages, setBriefImages] = useState<File[]>([])
+  const refs = useDeferredReferences()
   const [videoPct, setVideoPct] = useState<number | null>(null)
   const [creating, setCreating] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
@@ -220,6 +226,9 @@ export default function SubmissionsPage() {
           setVideoPct(0)
           await uploadReferenceVideo(link.id, video, setVideoPct)
         }
+        // Picked-from-Freeframe references attach after creation for the same
+        // reason the files do: there is no link id until the request exists.
+        await refs.attachAll(link.id)
       }
       setTitle('')
       setInstructions('')
@@ -341,6 +350,11 @@ export default function SubmissionsPage() {
               onChange={(e) => setBriefImages(Array.from(e.target.files ?? []))}
               className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
             />
+            <div className="flex items-center gap-2">
+              <UseExistingReferenceButton kind="image" onPick={(a) => refs.add(a, 'image')} />
+              <span className="text-xs text-text-tertiary">or upload above</span>
+            </div>
+            <PickedReferenceChips picked={refs.picked} kind="image" onRemove={refs.remove} />
             <p className="text-xs text-text-tertiary">
               The static ads to adapt — shown as a carousel on the submission page.
               {briefImages.length > 1 && ` ${briefImages.length} selected.`}
@@ -355,6 +369,11 @@ export default function SubmissionsPage() {
               onChange={(e) => setBriefVideos(Array.from(e.target.files ?? []))}
               className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
             />
+            <div className="flex items-center gap-2">
+              <UseExistingReferenceButton kind="video" onPick={(a) => refs.add(a, 'video')} />
+              <span className="text-xs text-text-tertiary">or upload above</span>
+            </div>
+            <PickedReferenceChips picked={refs.picked} kind="video" onRemove={refs.remove} />
             <p className="text-xs text-text-tertiary">
               {videoPct !== null
                 ? `Uploading video… ${videoPct}%`
@@ -435,6 +454,7 @@ function LinkCard({
   const [editBriefFile, setEditBriefFile] = useState<File | null>(null)
   const [editVideos, setEditVideos] = useState<File[]>([])
   const [editImages, setEditImages] = useState<File[]>([])
+  const editRefs = useDeferredReferences()
   const [imageCount, setImageCount] = useState(link.reference_image_count ?? 0)
   const [videoCount, setVideoCount] = useState(link.reference_video_count ?? 0)
   const [editLanguages, setEditLanguages] = useState('')
@@ -540,6 +560,8 @@ function LinkCard({
         setVideoPct(0)
         await uploadReferenceVideo(link.id, video, setVideoPct)
       }
+      // Staged alongside the file uploads so one Save applies every change.
+      await editRefs.attachAll(link.id)
       setEditing(false)
       await onUpdated()
     } catch (err) {
@@ -657,6 +679,7 @@ function LinkCard({
               <Button type="button" variant="secondary" size="sm" onClick={() => editImageRef.current?.click()}>
                 Add images
               </Button>
+              <UseExistingReferenceButton kind="image" onPick={(a) => editRefs.add(a, 'image')} />
               <span className="truncate text-xs text-text-tertiary">
                 {editImages.length > 0
                   ? `${editImages.length} to upload`
@@ -670,6 +693,7 @@ function LinkCard({
                 </button>
               )}
             </div>
+            <PickedReferenceChips picked={editRefs.picked} kind="image" onRemove={editRefs.remove} />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-secondary">Reference videos (optional)</label>
@@ -685,6 +709,7 @@ function LinkCard({
               <Button type="button" variant="secondary" size="sm" onClick={() => editVideoRef.current?.click()}>
                 Add videos
               </Button>
+              <UseExistingReferenceButton kind="video" onPick={(a) => editRefs.add(a, 'video')} />
               <span className="truncate text-xs text-text-tertiary">
                 {videoPct !== null
                   ? `Uploading… ${videoPct}%`
@@ -700,6 +725,7 @@ function LinkCard({
                 </button>
               )}
             </div>
+            <PickedReferenceChips picked={editRefs.picked} kind="video" onRemove={editRefs.remove} />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-secondary">Structured brief (JSON, optional)</label>
