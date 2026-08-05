@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     # fails. Both tenants run this code, so a token minted for one must not be
     # accepted by the other — which is only enforceable if this is exact.
     mcp_resource_url: str | None = None
+    # RFC 7591 dynamic registration. Off because it is a SHOULD, not a MUST, and
+    # Claude accepts a manually issued client ID — so an open registration
+    # endpoint on the public internet adds an abuse surface for no gain.
+    mcp_oauth_allow_dcr: bool = False
 
     @property
     def mcp_oauth_issuer_url(self) -> str | None:
