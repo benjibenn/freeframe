@@ -69,9 +69,11 @@ class Settings(BaseSettings):
     # IdP and implement only the resource-server half (token verification plus
     # RFC 9728 metadata), so that is what this does.
     #
-    # The issuer defaults to the SSO issuer, which is already an OAuth
-    # authorization server wherever SSO is configured. Set it explicitly to point
-    # MCP at a different one.
+    # Explicit opt-in. This deliberately does NOT fall back to oidc_issuer: an SSO
+    # issuer is not automatically usable here, because it must also bind tokens to
+    # this server's canonical URI (RFC 8707). Defaulting to it would turn OAuth on
+    # for any tenant with SSO and advertise an authorization server that cannot
+    # actually satisfy the audience check.
     mcp_oauth_issuer: str | None = None
     # Canonical resource URI for RFC 8707 audience binding. MUST equal the URL the
     # user types into the client, path and trailing slash included, or discovery
@@ -81,7 +83,7 @@ class Settings(BaseSettings):
 
     @property
     def mcp_oauth_issuer_url(self) -> str | None:
-        return self.mcp_oauth_issuer or self.oidc_issuer
+        return self.mcp_oauth_issuer
 
     @property
     def mcp_oauth_enabled(self) -> bool:
