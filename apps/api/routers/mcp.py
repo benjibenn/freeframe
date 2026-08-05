@@ -26,6 +26,8 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import SessionLocal
 from ..middleware.api_key import resolve_api_key_user
+from ..services import mcp_oauth
+from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE
 from ..models.user import User
 from ..schemas.submission import (
     BriefJsonUpdate,
@@ -47,6 +49,25 @@ from . import submissions as submissions_router
 # request — the same shape as `get_db` on the REST routes — keeps it live.
 _current_user: ContextVar[Optional[User]] = ContextVar("mcp_current_user", default=None)
 _current_db: ContextVar[Optional[Session]] = ContextVar("mcp_current_db", default=None)
+# Scopes the caller holds. API keys are unscoped and get everything, preserving
+# today's behaviour; OAuth tokens carry whatever the issuer granted.
+_current_scopes: ContextVar[Optional[list[str]]] = ContextVar("mcp_current_scopes", default=None)
+
+
+def _require_scope(scope: str) -> None:
+    """Enforce a scope, treating "unscoped" as full access.
+
+    An API key has no scopes and must keep working exactly as before — so None
+    means "not scope-limited", which is different from an empty list (a token that
+    was granted nothing).
+    """
+    held = _current_scopes.get()
+    if held is None:
+        return
+    if scope not in held:
+        raise ValueError(
+            f"This token is missing the {scope} scope; it holds {held or 'no scopes'}"
+        )
 
 mcp = FastMCP(
     name="freeframe",
@@ -163,6 +184,7 @@ def _call(fn, **kwargs) -> Any:
 )
 def list_briefs(project_id: str | None = None) -> list[dict[str, Any]]:
     """Args: project_id — optional; only briefs filed in this project."""
+    _require_scope(SCOPE_READ)
     links = _call(submissions_router.list_submission_links)
     out = [_brief_summary(l) for l in links]
     if project_id:
@@ -180,6 +202,7 @@ def list_briefs(project_id: str | None = None) -> list[dict[str, Any]]:
 )
 def list_destinations(project_id: str | None = None) -> dict[str, Any]:
     """Args: project_id — optional; when given, also returns that project's folders."""
+    _require_scope(SCOPE_READ)
     if project_id is None:
         projects = _call(projects_router.list_projects)
         return {
@@ -216,6 +239,7 @@ def list_destinations(project_id: str | None = None) -> dict[str, Any]:
 )
 def get_brief(link_id: str) -> dict[str, Any]:
     """Args: link_id — the brief to read."""
+    _require_scope(SCOPE_READ)
     link = _call(
         submissions_router.get_submission_link, link_id=_uuid(link_id, "link_id")
     )
@@ -242,6 +266,7 @@ def get_brief(link_id: str) -> dict[str, Any]:
 )
 def set_brief_json(link_id: str, brief_json: dict[str, Any] | None) -> dict[str, Any]:
     """Args: brief_json — the complete brief object, or null to clear it."""
+    _require_scope(SCOPE_WRITE)
     updated = _call(
         submissions_router.set_submission_brief_json,
         link_id=_uuid(link_id, "link_id"),
@@ -272,6 +297,7 @@ def create_brief(
     brief_json: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Args: expires_at — optional ISO 8601 timestamp after which the link stops accepting work."""
+    _require_scope(SCOPE_WRITE)
     # Validated before the request exists. The underlying API has no way to create
     # a request and attach a brief in one write, so a brief rejected afterwards
     # would strand an empty request with a live submit URL.
@@ -323,6 +349,7 @@ def duplicate_brief(
     brief_json: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Args: link_id — the brief to copy. Omitted overrides fall back to the source's values."""
+    _require_scope(SCOPE_WRITE)
     body = DuplicateLinkRequest(
         title=title,
         instructions=instructions,
@@ -359,6 +386,7 @@ def move_brief(
     home_folder_id: str | None = None,
 ) -> dict[str, Any]:
     """Args: link_ids — one or more brief ids; all are moved to the same destination."""
+    _require_scope(SCOPE_WRITE)
     if not link_ids:
         raise ValueError("link_ids must contain at least one brief id")
     body = BulkRefileRequest(
@@ -393,33 +421,62 @@ async def mcp_app(scope, receive, send):
 
     headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
     db: Session = SessionLocal()
+    # Two credentials are accepted. Bearer is tried first because a client that
+    # sent one meant it; falling through to the API key on a bad token would hide
+    # a token problem behind whatever key happened to be configured.
+    scopes: Optional[list[str]] = None
+    auth = headers.get("authorization", "")
     try:
-        user = resolve_api_key_user(db, headers.get("x-api-key"))
+        if auth.lower().startswith("bearer ") and settings.mcp_oauth_enabled:
+            claims = mcp_oauth.verify_bearer(auth[7:].strip())
+            user = mcp_oauth.resolve_token_user(db, claims)
+            scopes = mcp_oauth.token_scopes(claims)
+        else:
+            # Unscoped: an API key keeps the full access it has always had.
+            user = resolve_api_key_user(db, headers.get("x-api-key"))
+    except mcp_oauth.MCPAuthError as exc:
+        db.close()
+        await _send_json_error(send, 401, str(exc), challenge=True)
+        return
     except HTTPException as exc:
         db.close()
-        await _send_json_error(send, exc.status_code, str(exc.detail))
+        # A 401 must carry the discovery pointer; a 403 is an answered question,
+        # so re-challenging there would just loop the client.
+        await _send_json_error(
+            send, exc.status_code, str(exc.detail), challenge=exc.status_code == 401
+        )
         return
 
     # The session stays open for the whole request so `user` remains attached to it.
     user_token = _current_user.set(user)
     db_token = _current_db.set(db)
+    scopes_token = _current_scopes.set(scopes)
     try:
         await _inner_app(scope, receive, send)
     finally:
         _current_user.reset(user_token)
         _current_db.reset(db_token)
+        _current_scopes.reset(scopes_token)
         db.close()
 
 
-async def _send_json_error(send, status_code: int, detail: str) -> None:
+async def _send_json_error(send, status_code: int, detail: str, challenge: bool = False) -> None:
     import json
 
     body = json.dumps({"error": detail}).encode()
-    await send({
-        "type": "http.response.start",
-        "status": status_code,
-        "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
-    })
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(body)).encode()),
+    ]
+    # Without this a compliant client cannot discover where to authenticate. It is
+    # only honoured on a 401 — never on a 200 — and its absence is the single most
+    # common reason a connector fails with nothing reaching the issuer at all.
+    if challenge and settings.mcp_oauth_enabled:
+        headers.append((
+            b"www-authenticate",
+            mcp_oauth.www_authenticate_header(scope=" ".join(mcp_oauth.SUPPORTED_SCOPES)).encode(),
+        ))
+    await send({"type": "http.response.start", "status": status_code, "headers": headers})
     await send({"type": "http.response.body", "body": body})
 
 

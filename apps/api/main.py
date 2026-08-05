@@ -1,10 +1,11 @@
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .routers import auth, oidc, users, projects, upload, events, assets, me, comments, approvals, share, metadata, branding, notifications, admin, setup, folders, hls_proxy, submissions, activity, tasks, public_api, portal, import_router, frame_tags, tag_palette, drive_sync, library, brief_template
 from .routers import mcp as mcp_router
+from .services import mcp_oauth
 from .services.s3_service import ensure_bucket_exists
 from .middleware.global_rate_limit import GlobalRateLimitMiddleware
 from .middleware.setup_guard import SetupGuardMiddleware
@@ -79,6 +80,20 @@ app.include_router(brief_template.router)
 # Mounted rather than included: the MCP transport is its own ASGI app, not a
 # collection of routes. Its auth is the X-API-Key header, checked inside the mount.
 app.mount("/mcp", mcp_router.mcp_app)
+
+
+# RFC 9728. Must be unauthenticated by requirement. Publicly this is
+# /api/.well-known/oauth-protected-resource — not the origin root, because Traefik
+# routes only /api here; clients are pointed at it by the `resource_metadata`
+# parameter on the 401, which the spec allows to live at any HTTPS location.
+@app.get("/.well-known/oauth-protected-resource")
+def oauth_protected_resource():
+    # 404 rather than a document with an empty authorization_servers list: an
+    # empty list is a valid-looking answer that sends the client nowhere, which is
+    # harder to diagnose than the endpoint simply not being there.
+    if not settings.mcp_oauth_enabled:
+        raise HTTPException(status_code=404, detail="OAuth is not configured on this server")
+    return mcp_oauth.protected_resource_metadata()
 
 @app.get("/health")
 def health():
