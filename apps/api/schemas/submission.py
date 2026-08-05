@@ -15,6 +15,19 @@ class SubmissionLinkCreate(BaseModel):
     expires_at: Optional[datetime] = None
 
 
+class DuplicateLinkRequest(BaseModel):
+    """Optional overrides for POST /submission-links/{id}/duplicate. Anything
+    omitted is copied from the source; the dialog pre-fills these so the user can
+    retitle and re-file the copy before it is created."""
+    title: Optional[str] = None
+    instructions: Optional[str] = None
+    home_project_id: Optional[uuid.UUID] = None
+    # Only applied when home_project_id is also given (a folder is meaningless
+    # without its project).
+    home_folder_id: Optional[uuid.UUID] = None
+    brief_json: Optional[dict[str, Any]] = None
+
+
 class BriefJsonUpdate(BaseModel):
     # The structured brief object, or null to clear it. Free-form: stored as-is and
     # rendered defensively (only known sections are shown), so briefs can vary in shape.

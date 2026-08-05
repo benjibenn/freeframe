@@ -38,6 +38,7 @@ import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/shared/avatar";
 import { AssetGrid } from "@/components/projects/asset-grid";
 import { NewRequestDialog, LINKS_KEY } from "@/components/projects/folder-requests";
+import { DuplicateRequestDialog } from "@/components/projects/duplicate-request-dialog";
 import type { VideoRequest } from "@/components/projects/request-card";
 import { CommentPanel } from "@/components/review/comment-panel";
 import { UploadZone } from "@/components/upload/upload-zone";
@@ -248,15 +249,8 @@ export default function ProjectDetailPage() {
     (key: string) => api.get<VideoRequest[]>(key),
   );
   const [newRequestOpen, setNewRequestOpen] = React.useState(false);
-  const duplicateRequest = async (requestId: string) => {
-    try {
-      await api.post(`/submission-links/${requestId}/duplicate`, {});
-      await mutateRequests();
-      toast.success("Request duplicated — brief and references copied");
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.detail : "Could not duplicate the request");
-    }
-  };
+  // Duplicate opens a pre-filled form (retitle / re-file) rather than cloning blind.
+  const [duplicateSourceId, setDuplicateSourceId] = React.useState<string | null>(null);
   const folderRequests = React.useMemo(
     () =>
       (allRequests ?? [])
@@ -1012,7 +1006,7 @@ export default function ProjectDetailPage() {
               folders={filteringByTag_orLabel ? [] : (subfolders ?? [])}
               requests={filteringByTag_orLabel ? [] : folderRequests}
               onRequestOpen={(requestId) => router.push(`/projects/requests/${requestId}`)}
-              onRequestDuplicate={duplicateRequest}
+              onRequestDuplicate={setDuplicateSourceId}
               currentFolderId={currentFolderId}
               projectId={projectId}
               projectName={project?.name ?? 'Project'}
@@ -1631,6 +1625,20 @@ export default function ProjectDetailPage() {
         open={newRequestOpen}
         onOpenChange={setNewRequestOpen}
         onCreated={() => mutateRequests()}
+      />
+
+      <DuplicateRequestDialog
+        sourceId={duplicateSourceId}
+        open={duplicateSourceId !== null}
+        onOpenChange={(open) => {
+          if (!open) setDuplicateSourceId(null);
+        }}
+        onDone={(homePath) => {
+          mutateRequests();
+          toast.success(
+            homePath ? `Copy created in ${homePath}` : "Copy created",
+          );
+        }}
       />
 
       {/* Share create dialog */}
