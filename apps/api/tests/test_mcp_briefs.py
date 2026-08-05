@@ -276,3 +276,131 @@ def test_list_destinations_flattens_folders_to_paths(as_admin):
     with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=[root]):
         out = mcp_router.list_destinations(project_id=str(uuid.uuid4()))
     assert [f["path"] for f in out["folders"]] == ["ecom", "ecom/Phones"]
+
+
+# ── Structured briefs ────────────────────────────────────────────────────────
+
+SAMPLE = {
+    "title": "Static - iPhone",
+    "overview": "Adapt the reference ad into 2 localised statics.",
+    "output_languages": ["German", "Swedish"],
+    "guidelines": ["Keep the original layout"],
+}
+
+
+def test_create_brief_attaches_the_structured_brief_in_one_call(as_admin):
+    """The REST API needs two writes; the agent should not have to know that.
+
+    A forgotten second call leaves a live submit URL on a request with no brief,
+    which submitters can already start working against.
+    """
+    created = _link()
+    attached = _link()
+    attached.brief_json = SAMPLE
+    with patch.object(
+        mcp_router.submissions_router, "create_submission_link", return_value=created
+    ):
+        with patch.object(
+            mcp_router.submissions_router,
+            "set_submission_brief_json",
+            return_value=attached,
+        ) as setter:
+            out = mcp_router.create_brief(
+                title="Static - iPhone",
+                home_project_id=str(uuid.uuid4()),
+                brief_json=SAMPLE,
+            )
+    assert setter.call_args.kwargs["link_id"] == created.id
+    assert setter.call_args.kwargs["body"].brief == SAMPLE
+    assert out["has_brief_json"] is True
+
+
+def test_create_brief_without_brief_json_makes_only_one_write(as_admin):
+    with patch.object(
+        mcp_router.submissions_router, "create_submission_link", return_value=_link()
+    ):
+        with patch.object(
+            mcp_router.submissions_router, "set_submission_brief_json"
+        ) as setter:
+            mcp_router.create_brief(title="X", home_project_id=str(uuid.uuid4()))
+    setter.assert_not_called()
+
+
+def test_an_invalid_brief_is_rejected_before_the_request_exists(as_admin):
+    """Validating after create would strand an empty request with a live URL."""
+    with patch.object(mcp_router.submissions_router, "create_submission_link") as create:
+        with pytest.raises(ValueError, match="must not be empty"):
+            mcp_router.create_brief(
+                title="X", home_project_id=str(uuid.uuid4()), brief_json={}
+            )
+    create.assert_not_called()
+
+
+def test_a_failed_attach_retracts_the_request(as_admin):
+    """No half-made request: if the brief cannot be attached, the request goes away."""
+    created = _link()
+    with patch.object(
+        mcp_router.submissions_router, "create_submission_link", return_value=created
+    ):
+        with patch.object(
+            mcp_router.submissions_router,
+            "set_submission_brief_json",
+            side_effect=HTTPException(status_code=500, detail="boom"),
+        ):
+            with patch.object(
+                mcp_router.submissions_router, "disable_submission_link"
+            ) as retract:
+                with pytest.raises(ValueError):
+                    mcp_router.create_brief(
+                        title="X",
+                        home_project_id=str(uuid.uuid4()),
+                        brief_json=SAMPLE,
+                    )
+    assert retract.call_args.kwargs["link_id"] == created.id
+
+
+def test_duplicate_brief_passes_brief_json_through(as_admin):
+    """The duplicate endpoint takes brief_json natively — it was simply never wired up."""
+    with patch.object(
+        mcp_router.submissions_router, "duplicate_submission_link", return_value=_link()
+    ) as dup:
+        mcp_router.duplicate_brief(link_id=str(uuid.uuid4()), brief_json=SAMPLE)
+    assert dup.call_args.kwargs["body"].brief_json == SAMPLE
+
+
+def test_get_brief_returns_brief_json_that_list_briefs_omits(as_admin):
+    link = _link()
+    link.instructions = "Deliver by Friday"
+    link.brief_json = SAMPLE
+    link.has_brief_json = True
+    link.has_brief = True
+    link.reference_video_count = 2
+    link.reference_image_count = 0
+    with patch.object(
+        mcp_router.submissions_router, "get_submission_link", return_value=link
+    ):
+        out = mcp_router.get_brief(link_id=str(uuid.uuid4()))
+    assert out["brief_json"] == SAMPLE
+    # Flagged rather than returned — no MCP tool serves the PDF or media bytes,
+    # and silence would read as "this brief has nothing attached".
+    assert out["has_brief_pdf"] is True
+    assert out["reference_video_count"] == 2
+
+
+def test_set_brief_json_accepts_null_to_clear(as_admin):
+    cleared = _link()
+    cleared.brief_json = None
+    cleared.has_brief_json = False
+    with patch.object(
+        mcp_router.submissions_router,
+        "set_submission_brief_json",
+        return_value=cleared,
+    ) as setter:
+        out = mcp_router.set_brief_json(link_id=str(uuid.uuid4()), brief_json=None)
+    assert setter.call_args.kwargs["body"].brief is None
+    assert out["has_brief_json"] is False
+
+
+def test_set_brief_json_rejects_a_non_object(as_admin):
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        mcp_router.set_brief_json(link_id=str(uuid.uuid4()), brief_json="just a string")

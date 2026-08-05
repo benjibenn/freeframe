@@ -28,6 +28,7 @@ from ..database import SessionLocal
 from ..middleware.api_key import resolve_api_key_user
 from ..models.user import User
 from ..schemas.submission import (
+    BriefJsonUpdate,
     BulkRefileRequest,
     DuplicateLinkRequest,
     SubmissionLinkCreate,
@@ -79,6 +80,35 @@ def _uuid(value: str, field: str) -> uuid.UUID:
 
 def _submit_url(token: str) -> str:
     return f"{settings.frontend_url}/submit/{token}"
+
+
+# brief_json is stored free-form and rendered defensively — only sections the
+# tenant's brief template knows about are displayed. An agent inventing its own
+# key names produces a brief that saves cleanly and then shows nothing, so the
+# tools advertise the shape the rest of the product already uses (the same one
+# apps/web/lib/sample-brief.ts seeds every surface with).
+_BRIEF_SHAPE = (
+    "Free-form object. Use these keys so it renders: "
+    '"title" (str), "overview" (str), "output_languages" (list of str), '
+    '"final_deliverable" {"label": str, "hook_variations": [{"variation", '
+    '"script_voiceover", "shot", "on_screen_text"}]}, "guidelines" (list of str). '
+    "Extra keys are stored but only display if the tenant's brief template "
+    "renders them."
+)
+
+
+def _brief(value: Any, field: str = "brief_json") -> dict[str, Any]:
+    """Validate a structured brief before anything is written.
+
+    Checked up front rather than left to the endpoint so create_brief can fail
+    before it creates a request — a rejected brief must not leave an empty
+    request behind with a live submit URL.
+    """
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be a JSON object, got {type(value).__name__}")
+    if not value:
+        raise ValueError(f"{field} must not be empty — pass null to clear a brief instead")
+    return value
 
 
 def _brief_summary(link: Any) -> dict[str, Any]:
@@ -176,13 +206,61 @@ def list_destinations(project_id: str | None = None) -> dict[str, Any]:
     return {"project_id": project_id, "folders": flatten(tree)}
 
 
+@mcp.tool(
+    description=(
+        "Read one brief in full, including its structured brief_json. list_briefs "
+        "omits brief_json to keep listings small, so fetch a brief here before "
+        "editing it. Also reports whether a brief PDF and reference media are "
+        "attached; their contents are not exposed over MCP."
+    )
+)
+def get_brief(link_id: str) -> dict[str, Any]:
+    """Args: link_id — the brief to read."""
+    link = _call(
+        submissions_router.get_submission_link, link_id=_uuid(link_id, "link_id")
+    )
+    out = _brief_summary(link)
+    out["instructions"] = link.instructions
+    out["brief_json"] = link.brief_json
+    out["has_brief_json"] = link.has_brief_json
+    # Flagged, not returned: the PDF and reference media live in S3 and no MCP
+    # tool serves them. Saying so beats an agent concluding the brief is empty.
+    out["has_brief_pdf"] = link.has_brief
+    out["reference_video_count"] = link.reference_video_count
+    out["reference_image_count"] = link.reference_image_count
+    return out
+
+
+@mcp.tool(
+    description=(
+        "Set or replace the structured brief on an existing request. This "
+        "REPLACES the whole object rather than merging — call get_brief first and "
+        "send the full brief back with your edits. Pass null to remove the brief. "
+        "Independent of the brief PDF; a request may carry both. brief_json: "
+        + _BRIEF_SHAPE
+    )
+)
+def set_brief_json(link_id: str, brief_json: dict[str, Any] | None) -> dict[str, Any]:
+    """Args: brief_json — the complete brief object, or null to clear it."""
+    updated = _call(
+        submissions_router.set_submission_brief_json,
+        link_id=_uuid(link_id, "link_id"),
+        body=BriefJsonUpdate(brief=_brief(brief_json) if brief_json is not None else None),
+    )
+    out = _brief_summary(updated)
+    out["brief_json"] = updated.brief_json
+    out["has_brief_json"] = updated.has_brief_json
+    return out
+
+
 # ── Lifecycle ────────────────────────────────────────────────────────────────
 
 @mcp.tool(
     description=(
         "Create a new video request brief and return its public submit URL. "
         "home_project_id is required — get one from list_destinations. Omit "
-        "home_folder_id to file the brief at the project root."
+        "home_folder_id to file the brief at the project root. Pass brief_json "
+        "to attach the structured brief in the same call. brief_json: " + _BRIEF_SHAPE
     )
 )
 def create_brief(
@@ -191,8 +269,14 @@ def create_brief(
     home_folder_id: str | None = None,
     instructions: str | None = None,
     expires_at: str | None = None,
+    brief_json: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Args: expires_at — optional ISO 8601 timestamp after which the link stops accepting work."""
+    # Validated before the request exists. The underlying API has no way to create
+    # a request and attach a brief in one write, so a brief rejected afterwards
+    # would strand an empty request with a live submit URL.
+    checked = _brief(brief_json) if brief_json is not None else None
+
     body = SubmissionLinkCreate(
         title=title,
         instructions=instructions,
@@ -200,15 +284,34 @@ def create_brief(
         home_folder_id=_uuid(home_folder_id, "home_folder_id") if home_folder_id else None,
         expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
     )
-    return _brief_summary(_call(submissions_router.create_submission_link, body=body))
+    created = _call(submissions_router.create_submission_link, body=body)
+    if checked is None:
+        return _brief_summary(created)
+
+    try:
+        attached = _call(
+            submissions_router.set_submission_brief_json,
+            link_id=created.id,
+            body=BriefJsonUpdate(brief=checked),
+        )
+    except Exception:
+        # Belt and braces after the validation above: rather than leave a live
+        # request the caller did not get told about, retract it and re-raise.
+        _call(submissions_router.disable_submission_link, link_id=created.id)
+        raise
+
+    out = _brief_summary(attached)
+    out["has_brief_json"] = True
+    return out
 
 
 @mcp.tool(
     description=(
         "Duplicate an existing brief. Anything not overridden is copied from the "
-        "source, including its brief PDF and reference media. Submissions are NOT "
-        "copied — the duplicate starts accepting fresh work. Returns the new brief "
-        "with its own submit URL; the original is untouched."
+        "source, including its brief PDF, structured brief and reference media. "
+        "Submissions are NOT copied — the duplicate starts accepting fresh work. "
+        "Returns the new brief with its own submit URL; the original is untouched. "
+        "Pass brief_json to give the copy a different structured brief: " + _BRIEF_SHAPE
     )
 )
 def duplicate_brief(
@@ -217,6 +320,7 @@ def duplicate_brief(
     home_project_id: str | None = None,
     home_folder_id: str | None = None,
     instructions: str | None = None,
+    brief_json: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Args: link_id — the brief to copy. Omitted overrides fall back to the source's values."""
     body = DuplicateLinkRequest(
@@ -226,6 +330,9 @@ def duplicate_brief(
         # The endpoint only applies a folder when a project came with it, so
         # sending one alone would be silently dropped. Say so instead.
         home_folder_id=_uuid(home_folder_id, "home_folder_id") if home_folder_id else None,
+        # Straight passthrough — the duplicate endpoint takes this natively, so
+        # unlike create there is no second write and nothing to unwind.
+        brief_json=_brief(brief_json) if brief_json is not None else None,
     )
     if home_folder_id and not home_project_id:
         raise ValueError("home_folder_id needs home_project_id — a folder is meaningless without its project")
