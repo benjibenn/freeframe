@@ -6,10 +6,10 @@ destroys data rather than merely erroring:
   * The object is COPIED. Detaching a reference calls delete_object on its key,
     so if a brief stored the library's own key, removing that reference from one
     brief would delete the library asset out from under every other brief.
-  * Only assets inside the configured References project may be attached. Brief
-    tokens are handed to external submitters, and the public
-    /submit/{token}/reference-* route redirects to a presigned URL for whatever
-    key the brief holds — so an unrestricted attach is an arbitrary-object read.
+  * Attach is permission-checked. Brief tokens are handed to external
+    submitters, and the public /submit/{token}/reference-* route redirects to a
+    presigned URL for whatever key the brief holds — so attaching an asset the
+    caller cannot read would turn any brief into an arbitrary-object read.
 """
 import uuid
 from datetime import datetime, timezone
@@ -18,7 +18,6 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
-from apps.api.config import settings
 from apps.api.models.asset import AssetType
 from apps.api.routers import submissions as subs
 
@@ -71,10 +70,10 @@ def _asset(project_id, asset_type=AssetType.video):
     return a
 
 
-def _setup(monkeypatch, link, references_project_id):
+def _setup(monkeypatch, link):
     monkeypatch.setattr(subs, "_get_owned_link", lambda db, lid, u: link)
     monkeypatch.setattr(subs, "_count_map", lambda db, ids: {})
-    monkeypatch.setattr(settings, "references_project_id", str(references_project_id))
+    monkeypatch.setattr(subs, "require_asset_access", lambda db, a, u: None)
 
 
 def test_copies_the_object_instead_of_reusing_the_library_key(monkeypatch):
@@ -85,7 +84,7 @@ def test_copies_the_object_instead_of_reusing_the_library_key(monkeypatch):
     """
     project_id = uuid.uuid4()
     link = _valid_link()
-    _setup(monkeypatch, link, project_id)
+    _setup(monkeypatch, link)
 
     asset = _asset(project_id, AssetType.video)
     version = MagicMock(id=uuid.uuid4())
@@ -114,22 +113,52 @@ def test_copies_the_object_instead_of_reusing_the_library_key(monkeypatch):
     assert resp.has_reference_video is True
 
 
-def test_rejects_an_asset_outside_the_references_library(monkeypatch):
-    """Anything else is an arbitrary-object read via the public brief token."""
-    link = _valid_link()
-    _setup(monkeypatch, link, uuid.uuid4())
+def test_rejects_an_asset_the_caller_cannot_read(monkeypatch):
+    """Attach is permission-checked, not project-restricted.
 
-    foreign = _asset(uuid.uuid4())  # some other project
+    Letting a caller attach anything they can already read is not a widening —
+    they could download and re-upload it as a file. Naming an asset id they
+    CANNOT read is the real hazard, because /submit/{token}/reference-* is
+    public: an unchecked attach turns any brief into an arbitrary-object read.
+    """
+    link = _valid_link()
+    _setup(monkeypatch, link)
+
+    asset = _asset(uuid.uuid4())
+
+    def deny(db, a, user):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    monkeypatch.setattr(subs, "require_asset_access", deny)
     monkeypatch.setattr(subs.s3_service, "copy_object", lambda src, dest: pytest.fail("copied"))
 
     with pytest.raises(HTTPException) as ei:
         subs.add_reference_from_asset(
             link.id,
-            subs.ReferenceFromAssetRequest(asset_id=foreign.id),
-            db=_db_returning(foreign, MagicMock(), MagicMock()),
+            subs.ReferenceFromAssetRequest(asset_id=asset.id),
+            db=_db_returning(asset, MagicMock(), MagicMock()),
             current_user=MagicMock(),
         )
-    assert ei.value.status_code == 404
+    assert ei.value.status_code == 403
+
+
+def test_attaches_from_any_project_the_caller_can_read(monkeypatch):
+    """Briefs pull references from ordinary projects, not just one library."""
+    link = _valid_link()
+    _setup(monkeypatch, link)
+
+    asset = _asset(uuid.uuid4(), AssetType.video)  # any project
+    version = MagicMock(id=uuid.uuid4())
+    media = MagicMock(s3_key_raw=f"raw/p/{asset.id}/{version.id}/original.mp4")
+    monkeypatch.setattr(subs.s3_service, "copy_object", lambda src, dest: None)
+
+    subs.add_reference_from_asset(
+        link.id,
+        subs.ReferenceFromAssetRequest(asset_id=asset.id),
+        db=_db_returning(asset, version, media),
+        current_user=MagicMock(),
+    )
+    assert len(link.brief_reference_video_s3_keys) == 1
 
 
 def test_images_land_in_the_image_list(monkeypatch):
@@ -137,7 +166,7 @@ def test_images_land_in_the_image_list(monkeypatch):
     key prefix must not collide with the video one."""
     project_id = uuid.uuid4()
     link = _valid_link()
-    _setup(monkeypatch, link, project_id)
+    _setup(monkeypatch, link)
 
     asset = _asset(project_id, AssetType.image)
     version = MagicMock(id=uuid.uuid4())
@@ -155,18 +184,3 @@ def test_images_land_in_the_image_list(monkeypatch):
     assert len(link.brief_reference_image_s3_keys) == 1
     assert "-reference-image-" in link.brief_reference_image_s3_keys[0]
     assert link.brief_reference_image_s3_keys[0].endswith(".jpg")
-
-
-def test_refuses_when_no_references_library_is_configured(monkeypatch):
-    link = _valid_link()
-    monkeypatch.setattr(subs, "_get_owned_link", lambda db, lid, u: link)
-    monkeypatch.setattr(settings, "references_project_id", None)
-
-    with pytest.raises(HTTPException) as ei:
-        subs.add_reference_from_asset(
-            link.id,
-            subs.ReferenceFromAssetRequest(asset_id=uuid.uuid4()),
-            db=MagicMock(),
-            current_user=MagicMock(),
-        )
-    assert ei.value.status_code == 400
