@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     # If unset, the /public/* endpoints return 503 (disabled).
     public_api_key: str | None = None
 
+    # The shared "References" project — the swipe-file library the browser
+    # extension clips ads into, and the source briefs pick reference media from.
+    # It is an ordinary project; naming it here only changes two things:
+    # its uploads skip the default task stage (so the admin task board is not
+    # flooded with swipes), and the UI knows which tree to show in the picker.
+    # Unset = no References library configured; the picker is simply hidden.
+    references_project_id: str | None = None
+
     # Fallback owner for briefs imported from Creative Flywheel via
     # POST /public/v1/briefs when the brief has no resolvable owner email.
     # The account is auto-created (active, verified) if it does not exist.

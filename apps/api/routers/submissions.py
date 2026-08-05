@@ -11,6 +11,7 @@ Two surfaces:
   * Visitor-facing: GET /submit/{token} (resolve), POST /submit/{token}/accept
     (auth required — provisions the per-submitter project).
 """
+import os
 import secrets
 import uuid
 from datetime import datetime, timezone
@@ -23,13 +24,14 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import get_db
 from ..middleware.auth import get_current_user, get_optional_user
 from ..models.user import User, UserStatus
 from ..services.auth_service import get_user_by_email
 from ..models.project import Project, ProjectMember, ProjectRole, ProjectType
 from ..models.folder import Folder
-from ..models.asset import Asset
+from ..models.asset import Asset, AssetType, AssetVersion, MediaFile
 from ..models.submission import SubmissionLink, Submission
 from ..schemas.submission import (
     SubmissionLinkCreate,
@@ -54,7 +56,7 @@ from ..schemas.submission import (
 from ..services.share_service import build_default_project_share_link
 from ..services import s3_service
 from ..services import brief_import_service
-from ..services.permissions import require_platform_admin, is_platform_admin
+from ..services.permissions import require_platform_admin, is_platform_admin, can_view_project
 from ..services.folder_paths import link_home_paths, resolve_link_home_path
 
 router = APIRouter(tags=["submissions"])
@@ -625,6 +627,135 @@ def delete_reference_images(
             s3_service.delete_object(key)
         except Exception:
             pass  # object may already be gone; the row is what matters
+
+
+class ReferenceFromAssetRequest(BaseModel):
+    asset_id: uuid.UUID
+
+
+class ReferenceLibraryResponse(BaseModel):
+    project_id: uuid.UUID
+    name: str
+
+
+@router.get("/references/library", response_model=Optional[ReferenceLibraryResponse])
+def get_reference_library(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """The shared References library, or null when the deployment has none.
+
+    Returned rather than read from a NEXT_PUBLIC_* var so the id lives in exactly
+    one place; a frontend copy would drift the day someone rebuilds the library.
+    Null is a normal answer, not an error — the UI just hides the picker.
+    """
+    raw = settings.references_project_id
+    if not raw:
+        return None
+    try:
+        project_id = uuid.UUID(raw)
+    except ValueError:
+        return None
+
+    project = db.query(Project).filter(
+        Project.id == project_id, Project.deleted_at.is_(None),
+    ).first()
+    if not project:
+        return None
+    # Hide it from anyone who could not open it anyway, so the picker never
+    # offers a tree the next request would 403 on.
+    if not can_view_project(db, project.id, current_user):
+        return None
+    return ReferenceLibraryResponse(project_id=project.id, name=project.name)
+
+
+def _references_project_id() -> uuid.UUID:
+    """The configured shared References library, or 400 if the deployment has none."""
+    raw = settings.references_project_id
+    if not raw:
+        raise HTTPException(
+            status_code=400,
+            detail="No References library is configured on this server",
+        )
+    try:
+        return uuid.UUID(raw)
+    except ValueError:
+        raise HTTPException(
+            status_code=500,
+            detail="REFERENCES_PROJECT_ID is not a valid UUID",
+        )
+
+
+@router.post("/submission-links/{link_id}/reference-from-asset", response_model=SubmissionLinkResponse)
+def add_reference_from_asset(
+    link_id: uuid.UUID,
+    body: ReferenceFromAssetRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner/admin: attach an asset from the shared References library to this brief.
+
+    The object is COPIED into the link's own reference prefix rather than
+    referenced in place. Two existing behaviours make that mandatory:
+
+      * `confirm_reference_video` only accepts keys under
+        `briefs/manual/{link_id}-reference`, a deliberate guard stopping an owner
+        from pointing a brief at an arbitrary object and reading it through the
+        public `/submit/{token}/reference-*` route. Copying satisfies the guard
+        instead of weakening it.
+      * Detaching a reference calls `delete_object` on its key. If briefs shared
+        the library's key, removing a reference from one brief would delete the
+        library asset out from under every other brief using it.
+
+    Only assets in the configured References project may be attached, for the
+    same confused-deputy reason: brief tokens are handed to external submitters.
+    """
+    link = _get_owned_link(db, link_id, current_user)
+    references_project_id = _references_project_id()
+
+    asset = db.query(Asset).filter(
+        Asset.id == body.asset_id,
+        Asset.deleted_at.is_(None),
+    ).first()
+    if not asset or asset.project_id != references_project_id:
+        raise HTTPException(status_code=404, detail="Asset not found in the References library")
+
+    version = db.query(AssetVersion).filter(
+        AssetVersion.asset_id == asset.id,
+        AssetVersion.deleted_at.is_(None),
+    ).order_by(AssetVersion.version_number.desc()).first()
+    media = db.query(MediaFile).filter(
+        MediaFile.version_id == version.id
+    ).first() if version else None
+    if not media or not media.s3_key_raw:
+        raise HTTPException(status_code=400, detail="That reference has no media file yet")
+
+    is_video = asset.asset_type == AssetType.video
+    keys = _ref_video_keys(link) if is_video else _ref_image_keys(link)
+    if len(keys) >= _MAX_REFERENCE_ATTACHMENTS:
+        kind = "videos" if is_video else "images"
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {_MAX_REFERENCE_ATTACHMENTS} reference {kind} per request",
+        )
+
+    # Keep the extension from the stored original: the brief page streams these
+    # straight from a presigned URL, so the key's suffix is what tells the
+    # browser how to play it.
+    ext = os.path.splitext(media.s3_key_raw)[1].lower() or (".mp4" if is_video else ".jpg")
+    suffix = "" if is_video else "-image"
+    dest_key = f"{_reference_video_prefix(link.id)}{suffix}-{uuid.uuid4().hex[:8]}{ext}"
+
+    s3_service.copy_object(media.s3_key_raw, dest_key)
+
+    if is_video:
+        link.brief_reference_video_s3_keys = [*keys, dest_key]
+    else:
+        link.brief_reference_image_s3_keys = [*keys, dest_key]
+
+    db.commit()
+    db.refresh(link)
+    return _link_response_with_flags(db, link)
 
 
 @router.get("/submission-links/{link_id}/submissions", response_model=list[SubmissionItem])
