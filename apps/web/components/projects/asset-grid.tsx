@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { X, Download, MoreHorizontal, Layers, Share2, Trash2, FolderInput, FolderIcon, Check, Film, Music, Image as ImageIcon, Images, Link as LinkIcon, Pencil, FileText } from 'lucide-react'
+import { X, Download, MoreHorizontal, Copy, Layers, Share2, Trash2, FolderInput, FolderIcon, Check, Film, Music, Image as ImageIcon, Images, Link as LinkIcon, Pencil, FileText } from 'lucide-react'
 import { cn, formatRelativeTime, formatBytes } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Avatar } from '@/components/shared/avatar'
@@ -44,6 +44,8 @@ interface AssetGridProps {
    *  find who submitted and what they sent. */
   requests?: RequestFolderItem[]
   onRequestOpen?: (requestId: string) => void
+  /** Duplicate a request (brief + attachments) in place. Hidden when absent. */
+  onRequestDuplicate?: (requestId: string) => void
   currentFolderId?: string | null
   onFolderOpen?: (folder: Folder) => void
   onFolderRename?: (folderId: string, name: string) => Promise<void>
@@ -116,6 +118,7 @@ export function AssetGrid({
   folders,
   requests,
   onRequestOpen,
+  onRequestDuplicate,
   currentFolderId,
   onFolderOpen,
   onFolderRename,
@@ -364,6 +367,16 @@ export function AssetGrid({
                   selectedRequestIds.has(r.id) && 'ring-2 ring-accent',
                 )}
               >
+                {onRequestDuplicate && (
+                  <button
+                    className="absolute right-9 top-2 z-10 flex h-5 w-5 items-center justify-center rounded border border-white/30 bg-black/40 text-white/70 opacity-0 transition-all hover:text-white group-hover/req:opacity-100"
+                    onClick={(e) => { e.stopPropagation(); onRequestDuplicate(r.id) }}
+                    title="Duplicate request (copies the brief)"
+                    aria-label="Duplicate request"
+                  >
+                    <Copy className="h-3 w-3" />
+                  </button>
+                )}
                 <button
                   className={cn(
                     'absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded border transition-all',
@@ -581,7 +594,18 @@ export function AssetGrid({
                   year: 'numeric',
                 })}
               </div>
-              <div className="w-8 shrink-0" />
+              <div className="flex w-8 shrink-0 items-center justify-center">
+                {onRequestDuplicate && (
+                  <button
+                    className="rounded p-1 text-text-tertiary opacity-0 transition-all hover:bg-bg-tertiary hover:text-text-primary group-hover:opacity-100"
+                    onClick={(e) => { e.stopPropagation(); onRequestDuplicate(r.id) }}
+                    title="Duplicate request (copies the brief)"
+                    aria-label="Duplicate request"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
               <div className="w-8 shrink-0" />
             </div>
           ))}

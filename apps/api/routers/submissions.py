@@ -207,6 +207,65 @@ def create_submission_link(
     return resp
 
 
+@router.post("/submission-links/{link_id}/duplicate", response_model=SubmissionLinkResponse, status_code=status.HTTP_201_CREATED)
+def duplicate_submission_link(
+    link_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Clone a request in place: same home folder, instructions, structured brief,
+    and server-side copies of the PDF and reference attachments (new keys under the
+    new link's id, so deleting one request's files never orphans the other's).
+    Submissions are NOT copied — the duplicate starts accepting fresh work. Any
+    S3 copy failure aborts the whole thing (rollback) rather than committing a
+    half-cloned brief."""
+    require_platform_admin(current_user)
+    src = _get_owned_link(db, link_id, current_user)
+    new = SubmissionLink(
+        token=secrets.token_urlsafe(32),
+        created_by=current_user.id,
+        title=f"{src.title} (copy)",
+        instructions=src.instructions,
+        grant_role=src.grant_role,
+        expires_at=src.expires_at,
+        brief_json=src.brief_json,
+        persona_label=src.persona_label,
+        angle_label=src.angle_label,
+        problem=src.problem,
+        home_project_id=src.home_project_id,
+        home_folder_id=src.home_folder_id,
+    )
+    db.add(new)
+    db.flush()
+    new.taxonomy_path = resolve_link_home_path(db, new) or src.taxonomy_path
+
+    def _ext(key: str) -> str:
+        return os.path.splitext(key)[1] or ""
+
+    if src.brief_pdf_s3_key:
+        dest = f"briefs/manual/{new.id}.pdf"
+        s3_service.copy_object(src.brief_pdf_s3_key, dest)
+        new.brief_pdf_s3_key = dest
+    image_keys = []
+    for key in _ref_image_keys(src):
+        dest = f"briefs/manual/{new.id}-reference-image-{uuid.uuid4().hex[:8]}{_ext(key)}"
+        s3_service.copy_object(key, dest)
+        image_keys.append(dest)
+    new.brief_reference_image_s3_keys = image_keys
+    video_keys = []
+    for key in _ref_video_keys(src):
+        dest = f"{_reference_video_prefix(new.id)}-{uuid.uuid4().hex[:8]}{_ext(key)}"
+        s3_service.copy_object(key, dest)
+        video_keys.append(dest)
+    new.brief_reference_video_s3_keys = video_keys
+
+    db.commit()
+    db.refresh(new)
+    resp = _link_response_with_flags(db, new)
+    resp.home_path = resolve_link_home_path(db, new)
+    return resp
+
+
 @router.post("/submission-links/from-project/{project_id}", response_model=SubmissionLinkResponse, status_code=status.HTTP_201_CREATED)
 def create_request_from_project(
     project_id: uuid.UUID,

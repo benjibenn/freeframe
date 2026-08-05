@@ -31,7 +31,7 @@ import {
   Clock,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatBytes } from "@/lib/utils";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/shared/toast";
 import { Input } from "@/components/ui/input";
@@ -248,6 +248,15 @@ export default function ProjectDetailPage() {
     (key: string) => api.get<VideoRequest[]>(key),
   );
   const [newRequestOpen, setNewRequestOpen] = React.useState(false);
+  const duplicateRequest = async (requestId: string) => {
+    try {
+      await api.post(`/submission-links/${requestId}/duplicate`, {});
+      await mutateRequests();
+      toast.success("Request duplicated — brief and references copied");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : "Could not duplicate the request");
+    }
+  };
   const folderRequests = React.useMemo(
     () =>
       (allRequests ?? [])
@@ -1003,6 +1012,7 @@ export default function ProjectDetailPage() {
               folders={filteringByTag_orLabel ? [] : (subfolders ?? [])}
               requests={filteringByTag_orLabel ? [] : folderRequests}
               onRequestOpen={(requestId) => router.push(`/projects/requests/${requestId}`)}
+              onRequestDuplicate={duplicateRequest}
               currentFolderId={currentFolderId}
               projectId={projectId}
               projectName={project?.name ?? 'Project'}
