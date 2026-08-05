@@ -35,6 +35,7 @@ from ..models.asset import Asset, AssetType, AssetVersion, MediaFile
 from ..models.submission import SubmissionLink, Submission
 from ..schemas.submission import (
     SubmissionLinkCreate,
+    DuplicateLinkRequest,
     BriefJsonUpdate,
     ReferenceVideoPresignRequest,
     ReferenceVideoPresignResponse,
@@ -212,25 +213,29 @@ def create_submission_link(
 @router.post("/submission-links/{link_id}/duplicate", response_model=SubmissionLinkResponse, status_code=status.HTTP_201_CREATED)
 def duplicate_submission_link(
     link_id: uuid.UUID,
+    body: DuplicateLinkRequest = DuplicateLinkRequest(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Clone a request in place: same home folder, instructions, structured brief,
-    and server-side copies of the PDF and reference attachments (new keys under the
-    new link's id, so deleting one request's files never orphans the other's).
-    Submissions are NOT copied — the duplicate starts accepting fresh work. Any
-    S3 copy failure aborts the whole thing (rollback) rather than committing a
-    half-cloned brief."""
+    """Clone a request with optional overrides (title, instructions, home, brief
+    JSON) — anything omitted is copied from the source. Attachments are server-side
+    S3 copies under the new link's id, so deleting one request's files never orphans
+    the other's. Submissions are NOT copied — the duplicate starts accepting fresh
+    work. Any S3 copy failure aborts the whole thing (rollback) rather than
+    committing a half-cloned brief."""
     require_platform_admin(current_user)
     src = _get_owned_link(db, link_id, current_user)
+    title = (body.title or "").strip() or f"{src.title} (copy)"
+    if body.brief_json is not None and not body.brief_json:
+        raise HTTPException(status_code=400, detail="Brief JSON must be a non-empty object")
     new = SubmissionLink(
         token=secrets.token_urlsafe(32),
         created_by=current_user.id,
-        title=f"{src.title} (copy)",
-        instructions=src.instructions,
+        title=title,
+        instructions=body.instructions if body.instructions is not None else src.instructions,
         grant_role=src.grant_role,
         expires_at=src.expires_at,
-        brief_json=src.brief_json,
+        brief_json=body.brief_json if body.brief_json is not None else src.brief_json,
         persona_label=src.persona_label,
         angle_label=src.angle_label,
         problem=src.problem,
@@ -238,8 +243,13 @@ def duplicate_submission_link(
         home_folder_id=src.home_folder_id,
     )
     db.add(new)
-    db.flush()
-    new.taxonomy_path = resolve_link_home_path(db, new) or src.taxonomy_path
+    if body.home_project_id is not None:
+        # Re-filing the copy somewhere else: validated exactly like create/PATCH.
+        project, folder = _resolve_home(db, current_user, body.home_project_id, body.home_folder_id)
+        _apply_home(db, new, project, folder)
+    else:
+        db.flush()
+        new.taxonomy_path = resolve_link_home_path(db, new) or src.taxonomy_path
 
     def _ext(key: str) -> str:
         return os.path.splitext(key)[1] or ""
