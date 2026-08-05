@@ -22,3 +22,7 @@ jinja2==3.1.6
 kombu==5.4.2
 google-api-python-client==2.151.0
 google-auth==2.36.0
+# MCP server for the /mcp mount. Held at 1.x: 2.0 requires pydantic>=2.12, which
+# would drag the whole app off its pinned 2.9.2. 1.12.4 is the newest release that
+# resolves against every existing pin unchanged.
+mcp==1.12.4
