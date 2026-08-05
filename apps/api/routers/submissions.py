@@ -56,7 +56,7 @@ from ..schemas.submission import (
 from ..services.share_service import build_default_project_share_link
 from ..services import s3_service
 from ..services import brief_import_service
-from ..services.permissions import require_platform_admin, is_platform_admin, can_view_project
+from ..services.permissions import require_platform_admin, is_platform_admin, can_view_project, require_asset_access
 from ..services.folder_paths import link_home_paths, resolve_link_home_path
 
 router = APIRouter(tags=["submissions"])
@@ -669,23 +669,6 @@ def get_reference_library(
     return ReferenceLibraryResponse(project_id=project.id, name=project.name)
 
 
-def _references_project_id() -> uuid.UUID:
-    """The configured shared References library, or 400 if the deployment has none."""
-    raw = settings.references_project_id
-    if not raw:
-        raise HTTPException(
-            status_code=400,
-            detail="No References library is configured on this server",
-        )
-    try:
-        return uuid.UUID(raw)
-    except ValueError:
-        raise HTTPException(
-            status_code=500,
-            detail="REFERENCES_PROJECT_ID is not a valid UUID",
-        )
-
-
 @router.post("/submission-links/{link_id}/reference-from-asset", response_model=SubmissionLinkResponse)
 def add_reference_from_asset(
     link_id: uuid.UUID,
@@ -693,32 +676,35 @@ def add_reference_from_asset(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Owner/admin: attach an asset from the shared References library to this brief.
+    """Owner/admin: attach an existing Freeframe asset to this brief as a reference.
+
+    Any asset the caller can already read may be attached. That is not a
+    widening of their reach: they could download it and re-upload it as a file
+    through the normal reference endpoints, so requiring `require_asset_access`
+    is the honest guard. What it does prevent is naming an arbitrary asset id
+    they cannot see — the brief's `/submit/{token}/reference-*` route is public,
+    so an unchecked attach would turn a brief into an arbitrary-object read.
 
     The object is COPIED into the link's own reference prefix rather than
     referenced in place. Two existing behaviours make that mandatory:
 
       * `confirm_reference_video` only accepts keys under
         `briefs/manual/{link_id}-reference`, a deliberate guard stopping an owner
-        from pointing a brief at an arbitrary object and reading it through the
-        public `/submit/{token}/reference-*` route. Copying satisfies the guard
-        instead of weakening it.
+        from pointing a brief at an arbitrary object. Copying satisfies that
+        guard instead of weakening it.
       * Detaching a reference calls `delete_object` on its key. If briefs shared
-        the library's key, removing a reference from one brief would delete the
-        library asset out from under every other brief using it.
-
-    Only assets in the configured References project may be attached, for the
-    same confused-deputy reason: brief tokens are handed to external submitters.
+        the source asset's key, removing a reference from one brief would delete
+        the asset out from under the project and every other brief using it.
     """
     link = _get_owned_link(db, link_id, current_user)
-    references_project_id = _references_project_id()
 
     asset = db.query(Asset).filter(
         Asset.id == body.asset_id,
         Asset.deleted_at.is_(None),
     ).first()
-    if not asset or asset.project_id != references_project_id:
-        raise HTTPException(status_code=404, detail="Asset not found in the References library")
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    require_asset_access(db, asset, current_user)
 
     version = db.query(AssetVersion).filter(
         AssetVersion.asset_id == asset.id,

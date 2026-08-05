@@ -34,9 +34,9 @@ import { PreAssignFolderDialog } from '@/components/shared/pre-assign-folder-dia
 import { RequestSettingsDialog } from '@/components/projects/request-settings-dialog'
 import { BriefView } from '@/components/projects/brief-view'
 import {
-  ReferencePickerDialog,
-  type ReferenceLibrary,
-} from '@/components/projects/reference-picker-dialog'
+  UseExistingReferenceButton,
+  attachReferenceAsset,
+} from '@/components/projects/use-reference-picker'
 import { SAMPLE_BRIEF_JSON, languagesFromBrief, withLanguages } from '@/lib/sample-brief'
 import type { VideoRequest } from '@/components/projects/request-card'
 
@@ -248,15 +248,12 @@ export default function RequestDetailPage() {
   const [uploadingVideo, setUploadingVideo] = React.useState(false)
   const [videoPct, setVideoPct] = React.useState<number | null>(null)
 
-  // The shared References library, when the deployment has one configured.
-  // Null is the normal "not configured" answer, so the picker simply stays hidden
-  // rather than erroring.
-  const { data: referenceLibrary } = useSWR<ReferenceLibrary | null>(
-    '/references/library',
-    () => api.get<ReferenceLibrary | null>('/references/library'),
-    { shouldRetryOnError: false },
-  )
-  const [pickerKind, setPickerKind] = React.useState<'video' | 'image' | null>(null)
+  /** Attach an existing asset, then refresh so the new chip appears. */
+  const useExisting = async (assetId: string, kind: 'video' | 'image') => {
+    await attachReferenceAsset(request!.id, assetId)
+    await mutateRequest()
+    toast.success(kind === 'video' ? 'Reference video added' : 'Reference image added')
+  }
 
   const uploadVideo = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? [])
@@ -611,12 +608,11 @@ export default function RequestDetailPage() {
           onChange={uploadVideo}
         />
         <div className="flex shrink-0 gap-2">
-          {referenceLibrary && (
-            <Button variant="secondary" size="sm" onClick={() => setPickerKind('video')} disabled={!request}>
-              <Film className="h-4 w-4" />
-              From References
-            </Button>
-          )}
+          <UseExistingReferenceButton
+            kind="video"
+            disabled={!request}
+            onPick={(a) => useExisting(a.id, 'video')}
+          />
           <Button
             variant={request?.has_reference_video ? 'secondary' : 'primary'}
             size="sm"
@@ -677,12 +673,11 @@ export default function RequestDetailPage() {
           onChange={uploadImage}
         />
         <div className="flex shrink-0 gap-2">
-          {referenceLibrary && (
-            <Button variant="secondary" size="sm" onClick={() => setPickerKind('image')} disabled={!request}>
-              <ImageIcon className="h-4 w-4" />
-              From References
-            </Button>
-          )}
+          <UseExistingReferenceButton
+            kind="image"
+            disabled={!request}
+            onPick={(a) => useExisting(a.id, 'image')}
+          />
           <Button
             variant={request?.has_reference_image ? 'secondary' : 'primary'}
             size="sm"
@@ -694,19 +689,6 @@ export default function RequestDetailPage() {
           </Button>
         </div>
       </div>
-
-      {pickerKind && referenceLibrary && request && (
-        <ReferencePickerDialog
-          library={referenceLibrary}
-          requestId={request.id}
-          kind={pickerKind}
-          onClose={() => setPickerKind(null)}
-          onAttached={() => {
-            mutateRequest()
-            toast.success(pickerKind === 'video' ? 'Reference video added' : 'Reference image added')
-          }}
-        />
-      )}
 
       {/* Structured brief (JSON) — renders inline on the submit + project pages */}
       <div className="rounded-xl border border-border bg-bg-secondary px-4 py-3">

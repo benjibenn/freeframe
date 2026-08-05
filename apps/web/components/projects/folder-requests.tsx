@@ -5,6 +5,11 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { uploadReferenceVideo } from '@/lib/reference-video'
+import {
+  UseExistingReferenceButton,
+  PickedReferenceChips,
+  useDeferredReferences,
+} from '@/components/projects/use-reference-picker'
 import { SAMPLE_BRIEF_JSON, languagesFromBrief, withLanguages } from '@/lib/sample-brief'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -44,6 +49,7 @@ export function NewRequestDialog({
   const [instructions, setInstructions] = React.useState('')
   const [briefFile, setBriefFile] = React.useState<File | null>(null)
   const [briefVideos, setBriefVideos] = React.useState<File[]>([])
+  const refs = useDeferredReferences()
   const [briefImages, setBriefImages] = React.useState<File[]>([])
   const [languages, setLanguages] = React.useState(SAMPLE_LANGUAGES)
   const [briefJson, setBriefJson] = React.useState(SAMPLE_BRIEF_JSON)
@@ -118,6 +124,9 @@ export function NewRequestDialog({
           setVideoPct(0)
           await uploadReferenceVideo(link.id, video, setVideoPct)
         }
+        // Picked-from-Freeframe references attach after creation for the same
+        // reason the files do: there is no link id until the request exists.
+        await refs.attachAll(link.id)
       }
       onCreated?.()
       onOpenChange(false)
@@ -217,6 +226,11 @@ export function NewRequestDialog({
                 onChange={(e) => setBriefImages(Array.from(e.target.files ?? []))}
                 className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
               />
+              <div className="flex items-center gap-2">
+                <UseExistingReferenceButton kind="image" onPick={(a) => refs.add(a, 'image')} />
+                <span className="text-xs text-text-tertiary">or upload above</span>
+              </div>
+              <PickedReferenceChips picked={refs.picked} kind="image" onRemove={refs.remove} />
               <p className="text-xs text-text-tertiary">
                 The static ads to adapt — shown as a carousel on the submission page.
                 {briefImages.length > 1 && ` ${briefImages.length} selected.`}
@@ -234,6 +248,11 @@ export function NewRequestDialog({
                 onChange={(e) => setBriefVideos(Array.from(e.target.files ?? []))}
                 className="text-sm text-text-secondary file:mr-3 file:rounded-md file:border file:border-border file:bg-bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-text-secondary hover:file:bg-bg-hover"
               />
+              <div className="flex items-center gap-2">
+                <UseExistingReferenceButton kind="video" onPick={(a) => refs.add(a, 'video')} />
+                <span className="text-xs text-text-tertiary">or upload above</span>
+              </div>
+              <PickedReferenceChips picked={refs.picked} kind="video" onRemove={refs.remove} />
               {videoPct !== null ? (
                 <p className="text-xs text-text-tertiary">Uploading video… {videoPct}%</p>
               ) : (
