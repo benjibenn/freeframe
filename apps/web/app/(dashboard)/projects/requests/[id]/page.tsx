@@ -245,19 +245,21 @@ export default function RequestDetailPage() {
   const [videoPct, setVideoPct] = React.useState<number | null>(null)
 
   const uploadVideo = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+    const files = Array.from(e.target.files ?? [])
     e.target.value = ''
-    if (!file || !request) return
-    if (!file.type.startsWith('video/')) {
-      toast.error('Reference must be a video file')
+    if (files.length === 0 || !request) return
+    if (files.some((f) => !f.type.startsWith('video/'))) {
+      toast.error('References must be video files')
       return
     }
     setUploadingVideo(true)
-    setVideoPct(0)
     try {
-      await uploadReferenceVideo(request.id, file, setVideoPct)
+      for (const file of files) {
+        setVideoPct(0)
+        await uploadReferenceVideo(request.id, file, setVideoPct)
+      }
       await mutateRequest()
-      toast.success(request.has_reference_video ? 'Reference video replaced' : 'Reference video uploaded')
+      toast.success(files.length === 1 ? 'Reference video added' : `${files.length} reference videos added`)
     } catch (err) {
       toast.error(err instanceof ApiError ? err.detail : 'Could not upload the video')
     } finally {
@@ -266,10 +268,10 @@ export default function RequestDetailPage() {
     }
   }
 
-  const removeVideo = async () => {
+  const removeVideoAt = async (index: number) => {
     if (!request) return
     try {
-      await api.delete(`/submission-links/${request.id}/reference-video`)
+      await api.delete(`/submission-links/${request.id}/reference-video/${index}`)
       await mutateRequest()
       toast.success('Reference video removed')
     } catch (err) {
@@ -281,16 +283,18 @@ export default function RequestDetailPage() {
   const [uploadingImage, setUploadingImage] = React.useState(false)
 
   const uploadImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+    const files = Array.from(e.target.files ?? [])
     e.target.value = ''
-    if (!file || !request) return
+    if (files.length === 0 || !request) return
     setUploadingImage(true)
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      await api.upload(`/submission-links/${request.id}/reference-image`, fd)
+      for (const file of files) {
+        const fd = new FormData()
+        fd.append('file', file)
+        await api.upload(`/submission-links/${request.id}/reference-image`, fd)
+      }
       await mutateRequest()
-      toast.success(request.has_reference_image ? 'Reference image replaced' : 'Reference image uploaded')
+      toast.success(files.length === 1 ? 'Reference image added' : `${files.length} reference images added`)
     } catch (err) {
       toast.error(err instanceof ApiError ? err.detail : 'Could not upload the image')
     } finally {
@@ -298,10 +302,10 @@ export default function RequestDetailPage() {
     }
   }
 
-  const removeImage = async () => {
+  const removeImageAt = async (index: number) => {
     if (!request) return
     try {
-      await api.delete(`/submission-links/${request.id}/reference-image`)
+      await api.delete(`/submission-links/${request.id}/reference-image/${index}`)
       await mutateRequest()
       toast.success('Reference image removed')
     } catch (err) {
@@ -535,29 +539,51 @@ export default function RequestDetailPage() {
         </Button>
       </div>
 
-      {/* Reference video (owner-uploaded, streamed inline in the View-brief dialog) */}
+      {/* Reference videos (owner-uploaded, streamed inline on the brief page) */}
       <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-bg-secondary px-4 py-3">
         <div className="flex items-start gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-bg-tertiary text-text-secondary">
             <Film className="h-4 w-4" />
           </div>
           <div>
-            <p className="text-sm font-medium text-text-primary">Reference video</p>
+            <p className="text-sm font-medium text-text-primary">Reference videos</p>
             <p className="text-xs text-text-tertiary">
               {videoPct !== null
                 ? `Uploading… ${videoPct}%`
-                : 'Upload a reference clip. Submitters watch it inline before they upload.'}
+                : 'Upload reference clips. Submitters watch them inline before they upload.'}
             </p>
-            {request?.has_reference_video && videoPct === null && (
-              <button onClick={removeVideo} className="mt-1 text-xs text-status-error hover:underline">
-                Remove video
-              </button>
+            {(request?.reference_video_count ?? 0) > 0 && videoPct === null && (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {Array.from({ length: request!.reference_video_count! }, (_, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1 rounded bg-bg-tertiary px-1.5 py-0.5 text-xs text-text-secondary"
+                  >
+                    <a
+                      href={`${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${request!.token}/reference-video/${i}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-accent hover:underline"
+                    >
+                      Video {i + 1}
+                    </a>
+                    <button
+                      onClick={() => removeVideoAt(i)}
+                      aria-label={`Remove video ${i + 1}`}
+                      className="text-text-tertiary hover:text-status-error"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
             )}
           </div>
         </div>
         <input
           ref={videoInputRef}
           type="file"
+          multiple
           accept="video/*"
           className="hidden"
           onChange={uploadVideo}
@@ -569,34 +595,45 @@ export default function RequestDetailPage() {
           disabled={uploadingVideo || !request}
         >
           {uploadingVideo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          {request?.has_reference_video ? 'Replace' : 'Upload video'}
+          Add videos
         </Button>
       </div>
 
-      {/* Reference image (owner-uploaded static ad, shown inline on the submit page) */}
+      {/* Reference images (owner-uploaded static ads, carousel on the brief page) */}
       <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-bg-secondary px-4 py-3">
         <div className="flex items-start gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-bg-tertiary text-text-secondary">
             <ImageIcon className="h-4 w-4" />
           </div>
           <div>
-            <p className="text-sm font-medium text-text-primary">Reference image</p>
+            <p className="text-sm font-medium text-text-primary">Reference images</p>
             <p className="text-xs text-text-tertiary">
-              The static ad to adapt. Submitters see it inline before they upload.
+              The static ads to adapt. Submitters flip through them as a carousel.
             </p>
-            {request?.has_reference_image && (
-              <div className="mt-1 flex items-center gap-3">
-                <a
-                  href={`${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${request.token}/reference-image`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-accent hover:underline"
-                >
-                  View image
-                </a>
-                <button onClick={removeImage} className="text-xs text-status-error hover:underline">
-                  Remove image
-                </button>
+            {(request?.reference_image_count ?? 0) > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {Array.from({ length: request!.reference_image_count! }, (_, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1 rounded bg-bg-tertiary px-1.5 py-0.5 text-xs text-text-secondary"
+                  >
+                    <a
+                      href={`${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${request!.token}/reference-image/${i}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-accent hover:underline"
+                    >
+                      Image {i + 1}
+                    </a>
+                    <button
+                      onClick={() => removeImageAt(i)}
+                      aria-label={`Remove image ${i + 1}`}
+                      className="text-text-tertiary hover:text-status-error"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
               </div>
             )}
           </div>
@@ -604,6 +641,7 @@ export default function RequestDetailPage() {
         <input
           ref={imageInputRef}
           type="file"
+          multiple
           accept="image/jpeg,image/png,image/webp,image/gif"
           className="hidden"
           onChange={uploadImage}
@@ -615,7 +653,7 @@ export default function RequestDetailPage() {
           disabled={uploadingImage || !request}
         >
           {uploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          {request?.has_reference_image ? 'Replace' : 'Upload image'}
+          Add images
         </Button>
       </div>
 

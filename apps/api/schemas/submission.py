@@ -59,10 +59,13 @@ class SubmissionLinkResponse(BaseModel):
     # populated on the detail endpoint (kept out of list payloads).
     has_brief_json: bool = False
     brief_json: Optional[dict[str, Any]] = None
-    # True when an owner-uploaded reference video is attached.
+    # True when owner-uploaded reference videos are attached.
     has_reference_video: bool = False
-    # True when an owner-uploaded static reference image is attached.
+    # True when owner-uploaded static reference images are attached.
     has_reference_image: bool = False
+    # How many of each — the brief page builds its indexed public URLs from these.
+    reference_video_count: int = 0
+    reference_image_count: int = 0
     # Shared reference project (None = strict isolation, the default).
     reference_project_id: Optional[uuid.UUID] = None
     # CF campaign labels (None for hand-made requests).
@@ -81,10 +84,13 @@ class SubmissionLinkPublic(BaseModel):
     has_brief: bool = False
     # The structured JSON brief, rendered inline on the submit page (null if none).
     brief_json: Optional[dict[str, Any]] = None
-    # True when an owner-uploaded reference video is attached (streamed inline).
+    # True when owner-uploaded reference videos are attached (streamed inline).
     has_reference_video: bool = False
-    # True when an owner-uploaded static reference image is attached (shown inline).
+    # True when owner-uploaded static reference images are attached (carousel).
     has_reference_image: bool = False
+    # How many of each — the submit page builds its indexed URLs from these.
+    reference_video_count: int = 0
+    reference_image_count: int = 0
     # CF campaign labels (None for hand-made requests).
     persona_label: Optional[str] = None
     angle_label: Optional[str] = None

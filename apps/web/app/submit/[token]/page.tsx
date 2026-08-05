@@ -6,6 +6,7 @@ import { api, ApiError } from '@/lib/api'
 import { getAccessToken } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { BriefView } from '@/components/projects/brief-view'
+import { ReferenceImageCarousel, ReferenceVideoList } from '@/components/shared/reference-carousel'
 
 interface SubmissionLinkPublic {
   title: string
@@ -14,6 +15,8 @@ interface SubmissionLinkPublic {
   has_brief: boolean
   has_reference_video: boolean
   has_reference_image: boolean
+  reference_video_count: number
+  reference_image_count: number
   brief_json: Record<string, unknown> | null
   persona_label: string | null
   angle_label: string | null
@@ -118,30 +121,29 @@ export default function SubmitPage() {
                 📄 View brief (PDF)
               </a>
             )}
-            {link.has_reference_image && (
+            {link.reference_image_count > 0 && (
               <div className="mb-6">
-                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">Reference image</p>
-                {/* eslint-disable-next-line @next/next/no-img-element -- served via API redirect to a short-lived presigned URL; next/image can't optimize it */}
-                <img
-                  src={`${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/reference-image`}
-                  alt="Reference ad to adapt"
-                  className="w-full rounded-lg border border-border bg-bg-primary"
-                  onContextMenu={(e) => e.preventDefault()}
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">
+                  Reference image{link.reference_image_count === 1 ? '' : 's'}
+                </p>
+                <ReferenceImageCarousel
+                  urls={Array.from(
+                    { length: link.reference_image_count },
+                    (_, i) => `${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/reference-image/${i}`,
+                  )}
                 />
               </div>
             )}
-            {link.has_reference_video && (
+            {link.reference_video_count > 0 && (
               <div className="mb-6">
-                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">Reference video</p>
-                <video
-                  controls
-                  playsInline
-                  preload="metadata"
-                  src={`${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/reference-video`}
-                  className="w-full rounded-lg border border-border bg-black"
-                  controlsList="nodownload noremoteplayback"
-                  disablePictureInPicture
-                  onContextMenu={(e) => e.preventDefault()}
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">
+                  Reference video{link.reference_video_count === 1 ? '' : 's'}
+                </p>
+                <ReferenceVideoList
+                  urls={Array.from(
+                    { length: link.reference_video_count },
+                    (_, i) => `${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/reference-video/${i}`,
+                  )}
                 />
               </div>
             )}
