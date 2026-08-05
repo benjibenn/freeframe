@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .routers import auth, oidc, users, projects, upload, events, assets, me, comments, approvals, share, metadata, branding, notifications, admin, setup, folders, hls_proxy, submissions, activity, tasks, public_api, portal, import_router, frame_tags, tag_palette, drive_sync, library, brief_template
+from .routers import mcp as mcp_router
 from .services.s3_service import ensure_bucket_exists
 from .middleware.global_rate_limit import GlobalRateLimitMiddleware
 from .middleware.setup_guard import SetupGuardMiddleware
@@ -11,7 +12,11 @@ from .middleware.setup_guard import SetupGuardMiddleware
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_bucket_exists()
-    yield
+    # Starlette does not run a mounted sub-app's lifespan, and the MCP transport
+    # keeps its session manager there — so it has to be started from here or the
+    # /mcp mount fails on its first request.
+    async with mcp_router.session_manager().run():
+        yield
 
 _disable_docs = os.getenv("DISABLE_DOCS", "").lower() in ("true", "1", "yes")
 
@@ -70,6 +75,10 @@ app.include_router(tag_palette.router)
 app.include_router(drive_sync.router)
 app.include_router(library.router)
 app.include_router(brief_template.router)
+
+# Mounted rather than included: the MCP transport is its own ASGI app, not a
+# collection of routes. Its auth is the X-API-Key header, checked inside the mount.
+app.mount("/mcp", mcp_router.mcp_app)
 
 @app.get("/health")
 def health():
