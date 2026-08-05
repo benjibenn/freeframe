@@ -124,9 +124,11 @@ class OAuthToken(Base):
     resource: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    # Rotation chain. Refresh tokens rotate on every use; presenting a token that
-    # has already been rotated is replay, and revokes the whole chain rather than
-    # just failing the one request.
+    # Chain link, walked in both directions when revoking. Two kinds of edge:
+    # a rotated refresh token points at the one it replaced, and an access token
+    # points at the refresh token it was issued alongside. The second edge is what
+    # makes replay detection reach the access token — the credential actually in
+    # use — rather than only killing refresh tokens.
     rotated_from: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("oauth_tokens.id"), nullable=True, index=True
     )

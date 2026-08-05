@@ -423,15 +423,6 @@ class FreeframeAuthorizationServer(
         access = generate_secret()
         refresh = generate_secret()
         now = _now()
-        access_row = TokenRow(
-            token_hash=hash_secret(access),
-            kind="access",
-            client_id=client_id,
-            user_id=user_id,
-            scopes=scopes,
-            resource=resource,
-            expires_at=now + timedelta(seconds=ACCESS_TOKEN_TTL_SECONDS),
-        )
         refresh_row = TokenRow(
             token_hash=hash_secret(refresh),
             kind="refresh",
@@ -442,8 +433,24 @@ class FreeframeAuthorizationServer(
             expires_at=now + timedelta(seconds=REFRESH_TOKEN_TTL_SECONDS),
             rotated_from=rotated_from,
         )
-        db.add(access_row)
         db.add(refresh_row)
+        # Flushed to get the refresh row's id, so the access token can hang off it.
+        db.flush()
+        access_row = TokenRow(
+            token_hash=hash_secret(access),
+            kind="access",
+            client_id=client_id,
+            user_id=user_id,
+            scopes=scopes,
+            resource=resource,
+            expires_at=now + timedelta(seconds=ACCESS_TOKEN_TTL_SECONDS),
+            # Hung off its refresh token so chain revocation reaches it. Without
+            # this the access token is not in the chain at all: replay detection
+            # would kill the refresh tokens and leave the stolen access token —
+            # the one actually being used — working until it expired.
+            rotated_from=refresh_row.id,
+        )
+        db.add(access_row)
         return OAuthToken(
             access_token=access,
             token_type="Bearer",

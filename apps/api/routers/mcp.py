@@ -428,9 +428,7 @@ async def mcp_app(scope, receive, send):
     auth = headers.get("authorization", "")
     try:
         if auth.lower().startswith("bearer ") and settings.mcp_oauth_enabled:
-            claims = mcp_oauth.verify_bearer(auth[7:].strip())
-            user = mcp_oauth.resolve_token_user(db, claims)
-            scopes = mcp_oauth.token_scopes(claims)
+            user, scopes = mcp_oauth.verify_access_token(db, auth[7:].strip())
         else:
             # Unscoped: an API key keeps the full access it has always had.
             user = resolve_api_key_user(db, headers.get("x-api-key"))

@@ -86,6 +86,17 @@ app.mount("/mcp", mcp_router.mcp_app)
 # /api/.well-known/oauth-protected-resource — not the origin root, because Traefik
 # routes only /api here; clients are pointed at it by the `resource_metadata`
 # parameter on the 401, which the spec allows to live at any HTTPS location.
+# Authorization-server endpoints (/authorize, /token, /register, /revoke and the
+# RFC 8414 metadata). Mounted here rather than inside the /mcp mount: that mount
+# is wrapped in an auth guard, which would make /authorize unreachable for the
+# user trying to authenticate through it.
+if settings.mcp_oauth_enabled:
+    from .routers import mcp_oauth_routes
+
+    app.include_router(mcp_oauth_routes.router)
+    app.router.routes.extend(mcp_oauth_routes.authorization_server_routes())
+
+
 @app.get("/.well-known/oauth-protected-resource")
 def oauth_protected_resource():
     # 404 rather than a document with an empty authorization_servers list: an
