@@ -63,6 +63,51 @@ class Settings(BaseSettings):
             self.oidc_redirect_uri,
         ])
 
+    # ---- MCP OAuth (resource server only) ----
+    # Freeframe validates tokens; it does not issue them. Almost no MCP server
+    # runs its own authorization server — the common pattern is to delegate to an
+    # IdP and implement only the resource-server half (token verification plus
+    # RFC 9728 metadata), so that is what this does.
+    #
+    # The issuer defaults to the SSO issuer, which is already an OAuth
+    # authorization server wherever SSO is configured. Set it explicitly to point
+    # MCP at a different one.
+    mcp_oauth_issuer: str | None = None
+    # Canonical resource URI for RFC 8707 audience binding. MUST equal the URL the
+    # user types into the client, path and trailing slash included, or discovery
+    # fails. Both tenants run this code, so a token minted for one must not be
+    # accepted by the other — which is only enforceable if this is exact.
+    mcp_resource_url: str | None = None
+
+    @property
+    def mcp_oauth_issuer_url(self) -> str | None:
+        return self.mcp_oauth_issuer or self.oidc_issuer
+
+    @property
+    def mcp_oauth_enabled(self) -> bool:
+        """OAuth is additive: unset issuer means API-key auth only, which is the
+        state both tenants ship in today."""
+        return bool(self.mcp_oauth_issuer_url)
+
+    @property
+    def mcp_canonical_resource(self) -> str:
+        # Derived from frontend_url because Traefik routes only /api to this app
+        # and strips the prefix, so the app never sees the public path itself.
+        if self.mcp_resource_url:
+            return self.mcp_resource_url
+        return f"{self.frontend_url.rstrip('/')}/api/mcp/"
+
+    @property
+    def mcp_resource_metadata_url(self) -> str:
+        """Where the RFC 9728 document is served.
+
+        Not at the origin root: `/.well-known/*` there is served by the frontend,
+        since Traefik only routes /api here. Clients are told the real location via
+        the `resource_metadata` parameter on the 401, which the spec allows to be
+        any HTTPS location.
+        """
+        return f"{self.frontend_url.rstrip('/')}/api/.well-known/oauth-protected-resource"
+
     # ---- Authentik portal (Phase 2 Shell) ----
     # freeframe's /portal/apps endpoint reads each user's launchable apps from
     # Authentik. Both must be set for the endpoint to work; otherwise it 503s.
