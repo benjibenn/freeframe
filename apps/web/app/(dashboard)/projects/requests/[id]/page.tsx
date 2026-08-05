@@ -33,7 +33,7 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { PreAssignFolderDialog } from '@/components/shared/pre-assign-folder-dialog'
 import { RequestSettingsDialog } from '@/components/projects/request-settings-dialog'
 import { BriefView } from '@/components/projects/brief-view'
-import { SAMPLE_BRIEF_JSON } from '@/lib/sample-brief'
+import { SAMPLE_BRIEF_JSON, languagesFromBrief, withLanguages } from '@/lib/sample-brief'
 import type { VideoRequest } from '@/components/projects/request-card'
 
 interface SubmissionItem {
@@ -315,12 +315,14 @@ export default function RequestDetailPage() {
 
   // Structured JSON brief editor. Sync the textarea from the loaded request once.
   const [briefText, setBriefText] = React.useState('')
+  const [briefLanguages, setBriefLanguages] = React.useState('')
   const [briefLoaded, setBriefLoaded] = React.useState(false)
   const [savingBriefJson, setSavingBriefJson] = React.useState(false)
   const [briefPreviewOpen, setBriefPreviewOpen] = React.useState(false)
   React.useEffect(() => {
     if (request && !briefLoaded) {
       setBriefText(request.brief_json ? JSON.stringify(request.brief_json, null, 2) : '')
+      setBriefLanguages(languagesFromBrief(request.brief_json))
       setBriefLoaded(true)
     }
   }, [request, briefLoaded])
@@ -341,9 +343,15 @@ export default function RequestDetailPage() {
         return
       }
     }
+    // The dedicated languages input wins over whatever the JSON says — same
+    // contract as the create/edit forms elsewhere.
+    brief = withLanguages(brief, briefLanguages)
     setSavingBriefJson(true)
     try {
       await api.put(`/submission-links/${request.id}/brief-json`, { brief })
+      // Reflect the merged result back into the textarea so the two controls
+      // never show different truths after a save.
+      setBriefText(brief ? JSON.stringify(brief, null, 2) : '')
       await mutateRequest()
       toast.success(brief ? 'Structured brief saved' : 'Structured brief cleared')
     } catch (err) {
@@ -683,6 +691,19 @@ export default function RequestDetailPage() {
               Save
             </Button>
           </div>
+        </div>
+        <div className="mt-3 flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-text-secondary">Output languages</label>
+          <input
+            value={briefLanguages}
+            onChange={(e) => setBriefLanguages(e.target.value)}
+            placeholder="e.g. German, Swedish"
+            className="w-full rounded-md border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+          />
+          <p className="text-xs text-text-tertiary">
+            Comma-separated; saved into the brief&apos;s <code>output_languages</code> on Save.
+            This field wins over the JSON below.
+          </p>
         </div>
         <textarea
           className="mt-3 flex min-h-[140px] w-full rounded-md border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
