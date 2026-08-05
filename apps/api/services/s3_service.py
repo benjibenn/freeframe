@@ -253,6 +253,23 @@ def delete_object(s3_key: str) -> None:
     s3.delete_object(Bucket=settings.s3_bucket, Key=s3_key)
 
 
+def copy_object(source_key: str, dest_key: str) -> None:
+    """Server-side copy within the bucket. The bytes never transit the API.
+
+    Used when a brief adopts an asset from the References library. The brief gets
+    its OWN object rather than a second pointer at the library's, because
+    detaching a reference deletes the underlying object — sharing one key would
+    let removing a reference from one brief destroy the library asset and every
+    other brief using it.
+    """
+    s3 = get_s3_client()
+    s3.copy_object(
+        Bucket=settings.s3_bucket,
+        CopySource={"Bucket": settings.s3_bucket, "Key": source_key},
+        Key=dest_key,
+    )
+
+
 def list_objects_v2(prefix: str, max_keys: int = 1000) -> list[dict]:
     """List objects under a prefix. Returns [{"key": str, "size": int}, ...]."""
     s3 = get_s3_client()
