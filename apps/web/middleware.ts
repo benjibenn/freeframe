@@ -51,7 +51,10 @@ export async function middleware(request: NextRequest) {
 
   if (!accessToken && !refreshToken) {
     const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('from', pathname)
+    // Carry the query string, not just the path. The OAuth consent screen is
+    // identified entirely by ?request_id=, so dropping the search would send the
+    // user back to a page that no longer knows what it is consenting to.
+    loginUrl.searchParams.set('from', pathname + request.nextUrl.search)
     return NextResponse.redirect(loginUrl)
   }
 
