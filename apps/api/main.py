@@ -47,6 +47,32 @@ app.add_middleware(
 app.add_middleware(GlobalRateLimitMiddleware)
 app.add_middleware(SetupGuardMiddleware)
 
+
+class NormalizeMcpPath:
+    """Serve the MCP endpoint with or without its trailing slash.
+
+    Mounting at /mcp makes Starlette answer a bare /mcp with a redirect, and that
+    redirect is wrong twice over from outside: Traefik strips the /api prefix
+    before this app sees the request, so the Location names the internal /mcp/
+    path, and without proxy headers the scheme comes back as http. A client that
+    posts to /api/mcp is handed a downgraded URL pointing nowhere.
+
+    Clients do type the URL without the slash — claude.ai stores exactly what the
+    user entered — so rewriting the path here and never redirecting is more
+    reliable than trying to make the redirect correct.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("path") == "/mcp":
+            scope = dict(scope, path="/mcp/", raw_path=b"/mcp/")
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(NormalizeMcpPath)
+
 app.include_router(auth.router)
 app.include_router(oidc.router)
 app.include_router(users.router)
