@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
-from sqlalchemy import String, Enum, DateTime, ForeignKey, Boolean, func, Text, UniqueConstraint
+from sqlalchemy import String, Enum, Date, DateTime, ForeignKey, Boolean, func, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 try:
@@ -119,6 +119,10 @@ class Submission(Base):
     # Owner-set handle override. When set, the per-submitter project is named
     # "{request title} — {display_name}". Null => use the submitter's account name.
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # When the owner paid this editor for this request. A date, not a timestamp:
+    # it records the bookkeeping day (often backdated), not a click time. Null =
+    # unpaid. Owner-visible only — never exposed to the editors themselves.
+    paid_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

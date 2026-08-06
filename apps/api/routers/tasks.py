@@ -382,17 +382,22 @@ def get_task_board(
 
     # Editors per brief: whoever accepted the link. Derived, never stored.
     editors_by_link: dict = {}
+    sub_counts: dict = {}
+    paid_counts: dict = {}
     if links:
         rows = (
-            db.query(Submission.submission_link_id, User)
+            db.query(Submission.submission_link_id, Submission.paid_at, User)
             .join(User, User.id == Submission.user_id)
             .filter(Submission.submission_link_id.in_([l.id for l in links]))
             .all()
         )
-        for link_id, user in rows:
+        for link_id, paid_at, user in rows:
             editors_by_link.setdefault(link_id, []).append(
                 BriefEditor(id=user.id, name=user.name, email=user.email)
             )
+            sub_counts[link_id] = sub_counts.get(link_id, 0) + 1
+            if paid_at is not None:
+                paid_counts[link_id] = paid_counts.get(link_id, 0) + 1
 
     briefs = [
         BriefTaskItem(
@@ -405,6 +410,10 @@ def get_task_board(
             editors=editors_by_link.get(l.id, []),
             has_brief=bool(l.brief_pdf_s3_key),
             has_brief_json=bool(l.brief_json),
+            # Payment state is the owner's bookkeeping, not the editor's — zeroed
+            # for non-admins rather than filtered in the UI.
+            paid_count=paid_counts.get(l.id, 0) if admin else 0,
+            submission_count=sub_counts.get(l.id, 0) if admin else 0,
             created_at=l.created_at,
             assets=by_request.get(l.id, []),
         )
