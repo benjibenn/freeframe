@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 
 
@@ -168,12 +168,20 @@ class SubmissionItem(BaseModel):
     project_id: uuid.UUID
     asset_count: int
     files: list[SubmissionFile] = []
+    paid_at: Optional[date] = None  # Day the owner paid this editor; null = unpaid
     created_at: datetime
 
 
 class SubmissionUpdate(BaseModel):
-    # Empty/whitespace clears the override (falls back to the submitter's account name).
+    # Both fields are only applied when present in the request body
+    # (model_fields_set), so a paid-only update cannot clear the handle
+    # and a rename cannot clear the paid date.
+    # display_name: empty/whitespace clears the override (falls back to the
+    # submitter's account name).
     display_name: Optional[str] = None
+    # paid_at: a date marks the submission paid on that day; explicit null
+    # marks it unpaid again.
+    paid_at: Optional[date] = None
 
 
 class MySubmissionItem(BaseModel):

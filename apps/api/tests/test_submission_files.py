@@ -12,6 +12,7 @@ def _sub(project_id, user_id):
     s.user_id = user_id
     s.display_name = None
     s.project_id = project_id
+    s.paid_at = None
     s.created_at = datetime.now(timezone.utc)
     return s
 

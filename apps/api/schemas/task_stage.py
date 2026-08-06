@@ -94,6 +94,10 @@ class BriefTaskItem(BaseModel):
     editors: list[BriefEditor] = []
     has_brief: bool = False
     has_brief_json: bool = False
+    # Paid roll-up over this brief's submissions (per-editor paid_at). Admin-only:
+    # for non-admin viewers both stay 0, so no payment state leaks to editors.
+    paid_count: int = 0
+    submission_count: int = 0
     created_at: datetime
     assets: list[TaskItem] = []
 
