@@ -69,27 +69,37 @@ class Settings(BaseSettings):
     # IdP and implement only the resource-server half (token verification plus
     # RFC 9728 metadata), so that is what this does.
     #
-    # Explicit opt-in. This deliberately does NOT fall back to oidc_issuer: an SSO
-    # issuer is not automatically usable here, because it must also bind tokens to
-    # this server's canonical URI (RFC 8707). Defaulting to it would turn OAuth on
-    # for any tenant with SSO and advertise an authorization server that cannot
-    # actually satisfy the audience check.
-    mcp_oauth_issuer: str | None = None
+    # Freeframe is the authorization server, not a relying party. Delegating was
+    # the first plan, but client2.0 has no IdP and client current's Authentik
+    # stamps the client_id into `aud` rather than this server's URI, so it cannot
+    # satisfy the audience binding that separates the tenants. Issuing our own
+    # tokens fixes that at the root.
+    #
+    # Explicit opt-in: off means API-key auth only, which is how both tenants ship.
+    mcp_oauth_enabled_flag: bool = False
     # Canonical resource URI for RFC 8707 audience binding. MUST equal the URL the
     # user types into the client, path and trailing slash included, or discovery
     # fails. Both tenants run this code, so a token minted for one must not be
     # accepted by the other — which is only enforceable if this is exact.
     mcp_resource_url: str | None = None
+    # RFC 7591 dynamic registration. Off because it is a SHOULD, not a MUST, and
+    # Claude accepts a manually issued client ID — so an open registration
+    # endpoint on the public internet adds an abuse surface for no gain.
+    mcp_oauth_allow_dcr: bool = False
 
     @property
-    def mcp_oauth_issuer_url(self) -> str | None:
-        return self.mcp_oauth_issuer
+    def mcp_oauth_issuer_url(self) -> str:
+        """Our own issuer.
+
+        `/api` rather than the origin root because Traefik routes only that prefix
+        to this app; the authorization-server routes and its RFC 8414 metadata all
+        hang off it.
+        """
+        return f"{self.frontend_url.rstrip('/')}/api"
 
     @property
     def mcp_oauth_enabled(self) -> bool:
-        """OAuth is additive: unset issuer means API-key auth only, which is the
-        state both tenants ship in today."""
-        return bool(self.mcp_oauth_issuer_url)
+        return self.mcp_oauth_enabled_flag
 
     @property
     def mcp_canonical_resource(self) -> str:

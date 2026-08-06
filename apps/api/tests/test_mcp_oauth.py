@@ -1,60 +1,31 @@
-"""Security tests for the MCP OAuth resource-server path.
+"""Security tests for MCP OAuth, with Freeframe as the authorization server.
 
-These sign real RS256 tokens against a generated key and let the verifier do its
-actual work. Mocking verify_bearer would leave the audience and expiry checks —
-the two things standing between the tenants — completely untested.
+Tokens are opaque rows rather than JWTs, so these exercise the lookup path:
+revocation, expiry, audience binding, and the admin check that runs on every
+request rather than only at consent.
+
+The end-to-end flow (authorize → consent → token → refresh → replay) needs a real
+Postgres and is covered separately; see test_mcp_oauth_flow.py.
 """
-import base64
-import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from jose import jwt
 
+from apps.api.models.oauth import hash_secret, verify_code_challenge
 from apps.api.services import mcp_oauth
 from apps.api.services.mcp_oauth import MCPAuthError
 
-ISSUER = "https://sso.example.test/application/o/freeframe"
 RESOURCE = "https://freeframe.multiadsx.com/api/mcp/"
 OTHER_TENANT = "https://review.debugged.com.my/api/mcp/"
 
 
-def _b64u(n: int) -> str:
-    raw = n.to_bytes((n.bit_length() + 7) // 8, "big")
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-@pytest.fixture(scope="module")
-def keypair():
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    pub = key.public_key().public_numbers()
-    pem = key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-    jwks = {
-        "keys": [{
-            "kty": "RSA",
-            "kid": "test-key",
-            "use": "sig",
-            "alg": "RS256",
-            "n": _b64u(pub.n),
-            "e": _b64u(pub.e),
-        }]
-    }
-    return pem, jwks
-
-
 @pytest.fixture(autouse=True)
 def oauth_settings():
-    """Point the verifier at the test issuer and this tenant's canonical URL."""
     with patch("apps.api.services.mcp_oauth.settings") as s:
-        s.mcp_oauth_issuer_url = ISSUER
         s.mcp_oauth_enabled = True
+        s.mcp_oauth_issuer_url = "https://freeframe.multiadsx.com/api"
         s.mcp_canonical_resource = RESOURCE
         s.mcp_resource_metadata_url = (
             "https://freeframe.multiadsx.com/api/.well-known/oauth-protected-resource"
@@ -62,84 +33,11 @@ def oauth_settings():
         yield s
 
 
-def _token(keypair, **over):
-    pem, _ = keypair
-    claims = {
-        "iss": ISSUER,
-        "aud": over.pop("aud", RESOURCE),
-        "sub": "user-1",
-        "email": over.pop("email", "admin@example.test"),
-        "exp": over.pop("exp", int(time.time()) + 600),
-        "iat": int(time.time()),
-        "scope": over.pop("scope", "briefs:read briefs:write"),
-    }
-    claims.update(over)
-    return jwt.encode(claims, pem, algorithm="RS256", headers={"kid": "test-key"})
-
-
-@pytest.fixture
-def verify(keypair):
-    _, jwks = keypair
-    with patch.object(mcp_oauth, "get_jwks", return_value=jwks):
-        yield
-
-
-# ── Audience binding ─────────────────────────────────────────────────────────
-
-def test_a_token_for_this_tenant_verifies(keypair, verify):
-    claims = mcp_oauth.verify_bearer(_token(keypair))
-    assert claims["email"] == "admin@example.test"
-
-
-def test_a_token_minted_for_the_other_tenant_is_rejected(keypair, verify):
-    """The whole reason audience binding is enforced.
-
-    Both tenants run this same code off the same branch. Without this check, a
-    token issued for client current would be spendable at MultiAdsX — the
-    "access token privilege restriction" failure the MCP security guidance names.
-    """
-    with pytest.raises(MCPAuthError, match="audience does not include this server"):
-        mcp_oauth.verify_bearer(_token(keypair, aud=OTHER_TENANT))
-
-
-def test_a_token_with_no_audience_is_rejected(keypair, verify):
-    with pytest.raises(MCPAuthError, match="audience"):
-        mcp_oauth.verify_bearer(_token(keypair, aud=None))
-
-
-def test_an_audience_list_containing_this_server_is_accepted(keypair, verify):
-    """IdPs legitimately issue multi-audience tokens; only presence matters."""
-    claims = mcp_oauth.verify_bearer(_token(keypair, aud=[OTHER_TENANT, RESOURCE]))
-    assert claims["sub"] == "user-1"
-
-
-# ── Signature, issuer, expiry ────────────────────────────────────────────────
-
-def test_an_expired_token_is_rejected(keypair, verify):
-    with pytest.raises(MCPAuthError):
-        mcp_oauth.verify_bearer(_token(keypair, exp=int(time.time()) - 60))
-
-
-def test_a_token_from_another_issuer_is_rejected(keypair, verify):
-    with pytest.raises(MCPAuthError):
-        mcp_oauth.verify_bearer(_token(keypair, iss="https://evil.example.test"))
-
-
-def test_a_tampered_token_is_rejected(keypair, verify):
-    tok = _token(keypair)
-    head, payload, sig = tok.split(".")
-    with pytest.raises(MCPAuthError, match="Invalid token"):
-        mcp_oauth.verify_bearer(f"{head}.{payload}.{sig[:-4]}AAAA")
-
-
-# ── Claims to user ───────────────────────────────────────────────────────────
-
-def _user(email="admin@example.test", admin=True, deactivated=False):
+def _user(admin=True, deactivated=False):
     from apps.api.models.user import UserStatus
 
     u = MagicMock()
     u.id = uuid.uuid4()
-    u.email = email
     u.is_superadmin = admin
     u.is_subadmin = False
     u.deleted_at = None
@@ -147,66 +45,144 @@ def _user(email="admin@example.test", admin=True, deactivated=False):
     return u
 
 
-def test_an_unknown_email_does_not_provision_an_account(mock_db):
-    """Unlike the SSO login flow, which creates users on first sign-in.
-
-    A token good enough to call tools is not evidence anyone intended to create a
-    Freeframe account, and auto-provisioning here would let anyone the IdP trusts
-    become an admin-adjacent user.
-    """
-    mock_db.first.return_value = None
-    with pytest.raises(MCPAuthError, match="No Freeframe user"):
-        mcp_oauth.resolve_token_user(mock_db, {"email": "stranger@example.test"})
-
-
-def test_a_token_without_an_email_claim_is_rejected(mock_db):
-    with pytest.raises(MCPAuthError, match="no email claim"):
-        mcp_oauth.resolve_token_user(mock_db, {"sub": "abc"})
+def _row(user_id, *, resource=RESOURCE, revoked=False, expired=False, scopes=None):
+    r = MagicMock()
+    r.user_id = user_id
+    r.resource = resource
+    r.revoked_at = datetime.now(timezone.utc) if revoked else None
+    r.expires_at = datetime.now(timezone.utc) + timedelta(
+        seconds=-60 if expired else 3600
+    )
+    r.scopes = scopes if scopes is not None else ["briefs:read", "briefs:write"]
+    return r
 
 
-def test_a_non_admin_user_is_rejected(mock_db):
-    mock_db.first.return_value = _user(admin=False)
-    with pytest.raises(MCPAuthError, match="admin rights"):
-        mcp_oauth.resolve_token_user(mock_db, {"email": "someone@example.test"})
+def _db(token_row, user):
+    """A mock session returning the token row first, then the user."""
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.first.side_effect = [token_row, user]
+    return db
 
 
-def test_a_deactivated_user_is_rejected(mock_db):
-    mock_db.first.return_value = _user(deactivated=True)
-    with pytest.raises(MCPAuthError, match="deactivated"):
-        mcp_oauth.resolve_token_user(mock_db, {"email": "admin@example.test"})
+# ── Happy path ───────────────────────────────────────────────────────────────
 
-
-def test_an_active_admin_resolves(mock_db):
+def test_a_live_token_resolves_to_its_user_and_scopes():
     u = _user()
-    mock_db.first.return_value = u
-    assert mcp_oauth.resolve_token_user(mock_db, {"email": "Admin@Example.Test"}) is u
+    user, scopes = mcp_oauth.verify_access_token(_db(_row(u.id), u), "tok")
+    assert user is u
+    assert scopes == ["briefs:read", "briefs:write"]
 
 
-# ── Scopes ───────────────────────────────────────────────────────────────────
+# ── Revocation and expiry ────────────────────────────────────────────────────
 
-def test_scopes_parse_from_either_shape():
-    assert mcp_oauth.token_scopes({"scope": "briefs:read briefs:write"}) == [
-        "briefs:read",
-        "briefs:write",
-    ]
-    assert mcp_oauth.token_scopes({"scp": ["briefs:read"]}) == ["briefs:read"]
-    assert mcp_oauth.token_scopes({}) == []
+def test_a_revoked_token_stops_working_immediately():
+    """The reason tokens are opaque rows instead of JWTs.
+
+    A JWT can only be revoked via a blocklist — which is this table with extra
+    steps, plus a window where the revoked token still works.
+    """
+    u = _user()
+    with pytest.raises(MCPAuthError, match="revoked"):
+        mcp_oauth.verify_access_token(_db(_row(u.id, revoked=True), u), "tok")
+
+
+def test_an_expired_token_is_rejected():
+    u = _user()
+    with pytest.raises(MCPAuthError, match="expired"):
+        mcp_oauth.verify_access_token(_db(_row(u.id, expired=True), u), "tok")
+
+
+def test_an_unknown_token_is_rejected():
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.first.return_value = None
+    with pytest.raises(MCPAuthError, match="Unknown access token"):
+        mcp_oauth.verify_access_token(db, "nope")
+
+
+# ── Audience binding ─────────────────────────────────────────────────────────
+
+def test_a_token_minted_for_the_other_tenant_is_rejected():
+    """Both tenants run this same code off the same branch.
+
+    Without this check a token issued at client current would be spendable at
+    MultiAdsX — the "access token privilege restriction" failure the MCP security
+    guidance names. Because Freeframe now issues the token, it also sets the
+    audience, which is what Authentik could not do.
+    """
+    u = _user()
+    with pytest.raises(MCPAuthError, match="not this server"):
+        mcp_oauth.verify_access_token(_db(_row(u.id, resource=OTHER_TENANT), u), "tok")
+
+
+# ── Authorisation is re-checked per request ──────────────────────────────────
+
+def test_rights_revoked_after_issuance_take_effect_immediately():
+    """Admin status is checked on every call, not just at consent.
+
+    Otherwise demoting someone would leave their connector working until the
+    token happened to expire.
+    """
+    u = _user(admin=False)
+    with pytest.raises(MCPAuthError, match="admin rights"):
+        mcp_oauth.verify_access_token(_db(_row(u.id), u), "tok")
+
+
+def test_a_deactivated_account_stops_working_immediately():
+    u = _user(deactivated=True)
+    with pytest.raises(MCPAuthError, match="deactivated"):
+        mcp_oauth.verify_access_token(_db(_row(u.id), u), "tok")
+
+
+def test_a_deleted_user_is_rejected():
+    u = _user()
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.first.side_effect = [_row(u.id), None]  # token found, user gone
+    with pytest.raises(MCPAuthError, match="no longer exists"):
+        mcp_oauth.verify_access_token(db, "tok")
+
+
+# ── PKCE ─────────────────────────────────────────────────────────────────────
+
+def test_pkce_s256_round_trips_and_rejects_a_wrong_verifier():
+    import base64
+    import hashlib
+    import secrets
+
+    verifier = secrets.token_urlsafe(48)
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        .decode()
+        .rstrip("=")
+    )
+    assert verify_code_challenge(verifier, challenge) is True
+    assert verify_code_challenge("not-the-verifier", challenge) is False
+
+
+def test_secrets_are_stored_only_as_hashes():
+    """A database dump must not hand over usable credentials."""
+    raw = "ffmcp_example_secret"
+    assert hash_secret(raw) != raw
+    assert len(hash_secret(raw)) == 64
 
 
 # ── Metadata and the 401 challenge ───────────────────────────────────────────
 
-def test_protected_resource_metadata_shape():
-    """`resource` must equal the URL the user types in, or discovery mismatches
-    in a way that is invisible from the client side."""
+def test_protected_resource_metadata_points_at_our_own_issuer():
     md = mcp_oauth.protected_resource_metadata()
     assert md["resource"] == RESOURCE
-    assert md["authorization_servers"] == [ISSUER]
+    assert md["authorization_servers"] == ["https://freeframe.multiadsx.com/api"]
     assert md["scopes_supported"] == ["briefs:read", "briefs:write"]
 
 
 def test_www_authenticate_points_at_the_metadata_document():
-    """The most commonly missed requirement: without this a client never learns
-    where the authorization server is, and nothing reaches the issuer at all."""
+    """Without this a client never learns where the authorization server is, and
+    the connection fails with nothing reaching the issuer at all."""
     h = mcp_oauth.www_authenticate_header(scope="briefs:read briefs:write")
     assert h.startswith("Bearer ")
     assert 'resource_metadata="https://freeframe.multiadsx.com/api/.well-known/oauth-protected-resource"' in h
@@ -218,14 +194,14 @@ def test_www_authenticate_points_at_the_metadata_document():
 def test_an_api_key_is_unscoped_and_keeps_full_access():
     """Scope enforcement must not quietly demote the credential already in use.
 
-    None means "not scope-limited" and is deliberately different from [], which is
-    a token that was granted nothing.
+    None means "not scope-limited" and is deliberately distinct from [], which is
+    a token granted nothing.
     """
     from apps.api.routers import mcp as mcp_router
 
     tok = mcp_router._current_scopes.set(None)
     try:
-        mcp_router._require_scope(mcp_router.SCOPE_WRITE)  # must not raise
+        mcp_router._require_scope(mcp_router.SCOPE_WRITE)
     finally:
         mcp_router._current_scopes.reset(tok)
 
@@ -235,7 +211,7 @@ def test_a_read_only_token_cannot_reach_a_write_tool():
 
     tok = mcp_router._current_scopes.set([mcp_router.SCOPE_READ])
     try:
-        mcp_router._require_scope(mcp_router.SCOPE_READ)  # allowed
+        mcp_router._require_scope(mcp_router.SCOPE_READ)
         with pytest.raises(ValueError, match="missing the briefs:write scope"):
             mcp_router._require_scope(mcp_router.SCOPE_WRITE)
     finally:

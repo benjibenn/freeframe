@@ -13,11 +13,10 @@ exactly as it did before.
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-import httpx
-from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from ..config import settings
+from ..models.oauth import OAuthToken, hash_secret, json_list
 from ..models.user import User, UserStatus
 from ..services.permissions import is_platform_admin
 
@@ -40,125 +39,48 @@ class MCPAuthError(Exception):
     token itself — error strings reach the caller, and tokens do not belong there."""
 
 
-def _issuer() -> str:
-    issuer = settings.mcp_oauth_issuer_url
-    if not issuer:
-        raise MCPAuthError("OAuth is not configured on this server")
-    return issuer.rstrip("/")
+def verify_access_token(db: Session, raw_token: str) -> tuple[User, list[str]]:
+    """Resolve an opaque access token to its user and scopes.
 
+    Opaque, not a JWT, so revocation is real: a revoked row stops working on the
+    next request rather than when some short expiry catches up.
 
-def get_discovery() -> dict:
-    issuer = _issuer()
-    if issuer not in _discovery_cache:
-        # Try OIDC discovery first: Authentik and most IdPs serve it, and it
-        # carries jwks_uri either way. RFC 8414 is the OAuth-only fallback.
-        last: Exception | None = None
-        for suffix in ("/.well-known/openid-configuration", "/.well-known/oauth-authorization-server"):
-            try:
-                resp = httpx.get(issuer + suffix, timeout=10.0)
-                resp.raise_for_status()
-                _discovery_cache[issuer] = resp.json()
-                break
-            except Exception as exc:  # noqa: BLE001 - try the next well-known path
-                last = exc
-        else:
-            raise MCPAuthError(f"Could not read issuer metadata: {last}")
-    return _discovery_cache[issuer]
-
-
-def get_jwks() -> dict:
-    issuer = _issuer()
-    if issuer not in _jwks_cache:
-        jwks_uri = get_discovery().get("jwks_uri")
-        if not jwks_uri:
-            raise MCPAuthError("Issuer metadata has no jwks_uri")
-        resp = httpx.get(jwks_uri, timeout=10.0)
-        resp.raise_for_status()
-        _jwks_cache[issuer] = resp.json()
-    return _jwks_cache[issuer]
-
-
-def _audiences(claims: dict[str, Any]) -> list[str]:
-    aud = claims.get("aud")
-    if isinstance(aud, str):
-        return [aud]
-    if isinstance(aud, list):
-        return [str(a) for a in aud]
-    return []
-
-
-def verify_bearer(token: str) -> dict[str, Any]:
-    """Validate a Bearer token and return its claims.
-
-    Audience validation is not optional and has no override. Both tenants run this
-    same code, so without it a token minted for one would be spendable at the
-    other — the "access token privilege restriction" failure the MCP security
-    guidance calls out by name. It requires the issuer to honour RFC 8707 resource
-    indicators; if it does not, the right fix is at the issuer, not a weakened
-    check here.
+    Audience binding has no override. Both tenants run this same code, so without
+    it a token minted for one would be spendable at the other — the "access token
+    privilege restriction" failure the MCP security guidance names.
     """
-    resource = settings.mcp_canonical_resource
-    try:
-        claims = jwt.decode(
-            token,
-            get_jwks(),
-            algorithms=["RS256", "RS512", "ES256"],
-            issuer=_issuer(),
-            # Checked explicitly below so the failure names the audience problem
-            # rather than surfacing as a generic signature error.
-            options={"verify_aud": False},
-        )
-    except JWTError as exc:
-        raise MCPAuthError(f"Invalid token: {exc}") from exc
-
-    if resource not in _audiences(claims):
-        raise MCPAuthError(
-            "Token audience does not include this server "
-            f"({resource}) — the client must request it as the resource"
-        )
-
-    exp = claims.get("exp")
-    if exp is None or datetime.fromtimestamp(exp, tz=timezone.utc) <= datetime.now(timezone.utc):
+    row = (
+        db.query(OAuthToken)
+        .filter(OAuthToken.token_hash == hash_secret(raw_token), OAuthToken.kind == "access")
+        .first()
+    )
+    if row is None:
+        raise MCPAuthError("Unknown access token")
+    if row.revoked_at is not None:
+        raise MCPAuthError("This token has been revoked")
+    if row.expires_at <= datetime.now(timezone.utc):
         raise MCPAuthError("Token has expired")
 
-    return claims
-
-
-def token_scopes(claims: dict[str, Any]) -> list[str]:
-    """Scopes from either shape IdPs use: space-delimited `scope`, or `scp` list."""
-    raw = claims.get("scope")
-    if isinstance(raw, str):
-        return [s for s in raw.split() if s]
-    scp = claims.get("scp")
-    if isinstance(scp, list):
-        return [str(s) for s in scp]
-    return []
-
-
-def resolve_token_user(db: Session, claims: dict[str, Any]) -> User:
-    """Map verified claims onto an existing Freeframe user.
-
-    Deliberately does not create users, unlike the SSO login flow: a token good
-    enough to call tools is not evidence anyone intended to provision an account.
-    Admin rights are checked here for the same reason as in resolve_api_key_user —
-    a non-admin would otherwise fail twice, in two unrelated places.
-    """
-    email = (claims.get("email") or "").lower().strip()
-    if not email:
-        raise MCPAuthError("Token has no email claim, so it cannot be mapped to a user")
+    resource = settings.mcp_canonical_resource
+    if row.resource and row.resource != resource:
+        raise MCPAuthError(
+            f"Token was issued for {row.resource}, not this server ({resource})"
+        )
 
     user = (
         db.query(User)
-        .filter(User.email == email, User.deleted_at.is_(None))
+        .filter(User.id == row.user_id, User.deleted_at.is_(None))
         .first()
     )
     if user is None:
-        raise MCPAuthError(f"No Freeframe user for {email}")
+        raise MCPAuthError("The user this token was issued to no longer exists")
     if user.status == UserStatus.deactivated:
         raise MCPAuthError("This account is deactivated")
+    # Checked per request, not just at consent: rights revoked after a token was
+    # issued must take effect immediately, not at expiry.
     if not is_platform_admin(user):
         raise MCPAuthError("Managing requests needs admin rights")
-    return user
+    return user, json_list(row.scopes)
 
 
 def protected_resource_metadata() -> dict[str, Any]:
@@ -170,7 +92,7 @@ def protected_resource_metadata() -> dict[str, Any]:
     """
     return {
         "resource": settings.mcp_canonical_resource,
-        "authorization_servers": [_issuer()] if settings.mcp_oauth_enabled else [],
+        "authorization_servers": [settings.mcp_oauth_issuer_url],
         "scopes_supported": SUPPORTED_SCOPES,
         "bearer_methods_supported": ["header"],
     }
