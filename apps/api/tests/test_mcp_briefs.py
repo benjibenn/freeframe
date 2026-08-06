@@ -404,3 +404,38 @@ def test_set_brief_json_accepts_null_to_clear(as_admin):
 def test_set_brief_json_rejects_a_non_object(as_admin):
     with pytest.raises(ValueError, match="must be a JSON object"):
         mcp_router.set_brief_json(link_id=str(uuid.uuid4()), brief_json="just a string")
+
+
+def test_the_mcp_endpoint_answers_with_or_without_a_trailing_slash():
+    """Regression: claude.ai stores the URL exactly as typed.
+
+    Mounting at /mcp made a bare /mcp redirect, and behind Traefik that redirect
+    named the internal path over plain http — a client posting to /api/mcp got a
+    downgraded URL pointing nowhere, and the connector failed with "couldn't
+    connect" before a single request reached the app.
+    """
+    import os
+    from unittest.mock import MagicMock, patch
+
+    for k, v in dict(
+        DATABASE_URL="postgresql://u:p@localhost:5432/t", REDIS_URL="redis://localhost:6379/0",
+        S3_BUCKET="b", S3_ENDPOINT="http://x", S3_ACCESS_KEY="k", S3_SECRET_KEY="s",
+        S3_REGION="r", JWT_SECRET="x" * 32, FRONTEND_URL="https://freeframe.multiadsx.com",
+    ).items():
+        os.environ.setdefault(k, v)
+
+    with patch("apps.api.services.s3_service.ensure_bucket_exists"), \
+         patch("apps.api.services.s3_service.get_s3_client", return_value=MagicMock()):
+        from fastapi.testclient import TestClient
+        from apps.api.main import app
+
+        body = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                           "clientInfo": {"name": "v", "version": "1"}}}
+        headers = {"Accept": "application/json, text/event-stream",
+                   "Content-Type": "application/json"}
+        with TestClient(app) as c:
+            for path in ("/mcp", "/mcp/"):
+                r = c.post(path, json=body, headers=headers, follow_redirects=False)
+                # 401 is the endpoint answering. A 3xx means it redirected instead.
+                assert r.status_code == 401, f"{path} returned {r.status_code}, not the endpoint"
