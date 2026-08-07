@@ -90,6 +90,10 @@ export interface BriefTaskItem {
   editors: BriefEditor[];
   has_brief: boolean;
   has_brief_json: boolean;
+  /** Paid roll-up over per-editor submissions. Always 0 for non-admin viewers —
+   *  payment state is the owner's bookkeeping, not the editor's. */
+  paid_count: number;
+  submission_count: number;
   created_at: string;
   assets: TaskItem[];
 }

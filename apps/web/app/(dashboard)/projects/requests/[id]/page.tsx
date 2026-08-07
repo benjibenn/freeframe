@@ -23,8 +23,10 @@ import {
   Film,
   ImageIcon,
   Upload,
+  Banknote,
 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import { uploadReferenceVideo } from '@/lib/reference-video'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -48,6 +50,7 @@ interface SubmissionItem {
   display_name: string | null
   project_id: string
   asset_count: number
+  paid_at: string | null
   created_at: string
 }
 
@@ -69,6 +72,8 @@ type Card = {
   assetCount: number
   editDefault: string
   submissionId?: string
+  /** Day this editor was paid (YYYY-MM-DD); null = unpaid. Submissions only. */
+  paidAt?: string | null
 }
 
 function submitUrl(token: string): string {
@@ -115,6 +120,7 @@ export default function RequestDetailPage() {
       assetCount: s.asset_count,
       editDefault: s.display_name ?? s.user_name ?? '',
       submissionId: s.id,
+      paidAt: s.paid_at,
     }))
     const attachedCards: Card[] = attached.map((p) => ({
       key: `att-${p.project_id}`,
@@ -148,10 +154,55 @@ export default function RequestDetailPage() {
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editValue, setEditValue] = React.useState('')
   const [savingHandle, setSavingHandle] = React.useState(false)
+  const [paidEditingId, setPaidEditingId] = React.useState<string | null>(null)
+  const [paidValue, setPaidValue] = React.useState('')
+  // Card key currently saving, so only that card shows a spinner.
+  const [savingPaidKey, setSavingPaidKey] = React.useState<string | null>(null)
 
   const startEditCard = (card: Card) => {
     setEditingId(card.key)
     setEditValue(card.editDefault)
+  }
+
+  // Local calendar day, not toISOString(): a payment logged at 2am is still
+  // "today" to the person logging it, and UTC would say yesterday.
+  const localToday = () => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  const formatPaidDate = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    })
+
+  const setPaid = async (card: Card, value: string | null) => {
+    if (savingPaidKey || !card.submissionId) return
+    setSavingPaidKey(card.key)
+    try {
+      await api.patch(`/submission-links/${id}/submissions/${card.submissionId}`, {
+        paid_at: value,
+      })
+      await mutateSubs()
+      setPaidEditingId(null)
+      toast.success(value ? `Marked paid — ${formatPaidDate(value)}` : 'Marked unpaid')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.detail : 'Could not update paid status')
+    } finally {
+      setSavingPaidKey(null)
+    }
+  }
+
+  // Unpaid: one click stamps today. Paid: open the date editor instead.
+  const onPaidButton = (card: Card) => {
+    if (!card.paidAt) {
+      void setPaid(card, localToday())
+    } else {
+      setPaidEditingId(card.key)
+      setPaidValue(card.paidAt)
+    }
   }
 
   const saveCard = async (card: Card) => {
@@ -809,6 +860,12 @@ export default function RequestDetailPage() {
                     <span className="text-2xs text-text-tertiary">
                       {card.assetCount} file{card.assetCount !== 1 ? 's' : ''}
                     </span>
+                    {card.paidAt && (
+                      <span className="inline-flex items-center gap-1 text-2xs text-status-success">
+                        <Banknote className="h-3 w-3" />
+                        Paid {formatPaidDate(card.paidAt)}
+                      </span>
+                    )}
                   </div>
                 </Link>
 
@@ -823,6 +880,29 @@ export default function RequestDetailPage() {
                   <Pencil className="h-3.5 w-3.5" />
                 </button>
 
+                {/* Paid (submissions only): unpaid → stamp today; paid → edit date/unmark */}
+                {card.kind === 'submission' && (
+                  <button
+                    type="button"
+                    onClick={() => onPaidButton(card)}
+                    disabled={savingPaidKey !== null}
+                    title={card.paidAt ? 'Edit paid date' : 'Mark paid (today)'}
+                    aria-label={card.paidAt ? 'Edit paid date' : 'Mark paid'}
+                    className={cn(
+                      'absolute bottom-2 right-10 flex h-7 w-7 items-center justify-center rounded-md transition-all opacity-0 group-hover:opacity-100',
+                      card.paidAt
+                        ? 'text-status-success hover:bg-bg-hover'
+                        : 'text-text-tertiary hover:bg-bg-hover hover:text-status-success',
+                    )}
+                  >
+                    {savingPaidKey === card.key ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Banknote className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                )}
+
                 {/* Remove (attached projects only) */}
                 {card.kind === 'attached' && (
                   <button
@@ -834,6 +914,48 @@ export default function RequestDetailPage() {
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
+                )}
+
+                {paidEditingId === card.key && (
+                  <div className="absolute inset-x-0 top-0 z-10 flex items-center gap-1 rounded-t-xl border border-accent/40 bg-bg-secondary p-2 shadow-lg">
+                    <input
+                      autoFocus
+                      type="date"
+                      value={paidValue}
+                      onChange={(e) => setPaidValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && paidValue) setPaid(card, paidValue)
+                        if (e.key === 'Escape') setPaidEditingId(null)
+                      }}
+                      className="h-7 min-w-0 flex-1 rounded border border-border bg-bg-primary px-2 text-xs text-text-primary focus:outline-none focus:border-accent"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => paidValue && setPaid(card, paidValue)}
+                      disabled={savingPaidKey !== null || !paidValue}
+                      title="Save paid date"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-status-success hover:bg-bg-hover disabled:opacity-50"
+                    >
+                      {savingPaidKey === card.key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaid(card, null)}
+                      disabled={savingPaidKey !== null}
+                      title="Mark unpaid"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-status-error hover:bg-bg-hover disabled:opacity-50"
+                    >
+                      <Undo2 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaidEditingId(null)}
+                      title="Cancel"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-text-tertiary hover:bg-bg-hover"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 )}
 
                 {isEditing && (

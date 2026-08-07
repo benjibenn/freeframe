@@ -3,7 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { mutate } from 'swr'
-import { ChevronDown, ChevronRight, FileText, Film, Image as ImageIcon } from 'lucide-react'
+import { Banknote, ChevronDown, ChevronRight, FileText, Film, Image as ImageIcon } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn, formatRelativeTime } from '@/lib/utils'
 import type { BriefTaskItem, TaskItem, TaskStage, User } from '@/types'
@@ -128,10 +128,30 @@ export function BriefRow({
               >
                 {brief.title}
               </Link>
-              {(brief.has_brief || brief.has_brief_json) && (
-                <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-text-tertiary">
-                  <FileText className="h-3 w-3" />
-                  Brief
+              {(brief.has_brief || brief.has_brief_json || brief.paid_count > 0) && (
+                <span className="mt-0.5 inline-flex items-center gap-2">
+                  {(brief.has_brief || brief.has_brief_json) && (
+                    <span className="inline-flex items-center gap-1 text-xs text-text-tertiary">
+                      <FileText className="h-3 w-3" />
+                      Brief
+                    </span>
+                  )}
+                  {/* Owner bookkeeping: all editors paid, or how many of them are. */}
+                  {brief.paid_count > 0 && (
+                    <span
+                      className={cn(
+                        'inline-flex items-center gap-1 text-xs',
+                        brief.paid_count === brief.submission_count
+                          ? 'text-status-success'
+                          : 'text-status-warning',
+                      )}
+                    >
+                      <Banknote className="h-3 w-3" />
+                      {brief.paid_count === brief.submission_count
+                        ? 'Paid'
+                        : `${brief.paid_count}/${brief.submission_count} paid`}
+                    </span>
+                  )}
                 </span>
               )}
             </div>

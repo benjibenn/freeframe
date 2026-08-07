@@ -854,6 +854,7 @@ def list_submissions(
             project_id=s.project_id,
             asset_count=len(files),
             files=files,
+            paid_at=s.paid_at,
             created_at=s.created_at,
         ))
     return out
@@ -867,8 +868,10 @@ def update_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Owner sets/clears a submission's handle override, renaming the per-submitter
-    project to "{request title} — {handle}". Blank handle reverts to the account name."""
+    """Owner updates a submission. Only fields present in the body are applied:
+    - display_name: handle override; renames the per-submitter project to
+      "{request title} — {handle}". Blank reverts to the account name.
+    - paid_at: a date marks the submission paid on that day; null unmarks."""
     link = _get_owned_link(db, link_id, current_user)
     sub = db.query(Submission).filter(
         Submission.id == submission_id,
@@ -877,16 +880,18 @@ def update_submission(
     if not sub:
         raise HTTPException(status_code=404, detail="Submission not found")
 
-    handle = (body.display_name or "").strip()
-    sub.display_name = handle or None
-
     u = db.query(User).filter(User.id == sub.user_id).first()
-    label = handle or (u.name if u else "") or (u.email if u else "") or "Submission"
-    project = db.query(Project).filter(Project.id == sub.project_id).first()
-    if project:
-        project.name = _unique_project_name(
-            db, link, f"{link.title} — {label}", exclude_project_id=project.id
-        )
+    if "display_name" in body.model_fields_set:
+        handle = (body.display_name or "").strip()
+        sub.display_name = handle or None
+        label = handle or (u.name if u else "") or (u.email if u else "") or "Submission"
+        project = db.query(Project).filter(Project.id == sub.project_id).first()
+        if project:
+            project.name = _unique_project_name(
+                db, link, f"{link.title} — {label}", exclude_project_id=project.id
+            )
+    if "paid_at" in body.model_fields_set:
+        sub.paid_at = body.paid_at
     db.commit()
     db.refresh(sub)
 
@@ -901,6 +906,7 @@ def update_submission(
         display_name=sub.display_name,
         project_id=sub.project_id,
         asset_count=int(asset_count),
+        paid_at=sub.paid_at,
         created_at=sub.created_at,
     )
 

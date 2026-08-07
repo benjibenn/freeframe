@@ -91,16 +91,17 @@ class Settings(BaseSettings):
     def mcp_oauth_issuer_url(self) -> str:
         """Our own issuer: the bare origin.
 
-        Not `/api`, even though that is the only prefix Traefik routes here by
-        default. RFC 8414 locates an issuer's metadata by inserting /.well-known/
-        at the ROOT — for `https://host/api` that is
+        Not `/api`, even though that is the only prefix a tenant's proxy may route
+        here by default. RFC 8414 locates an issuer's metadata by inserting
+        /.well-known/ at the ROOT — for `https://host/api` that is
         `https://host/.well-known/oauth-authorization-server/api`, which lands on
         the frontend. A client that cannot read the document falls back to
         conventional root paths, which is how claude.ai ended up requesting
         `https://host/authorize` and getting a 404.
 
-        The deployment routes the OAuth paths to this app unstripped so the bare
-        origin is honest — see the oauth router in docker-compose.hetzmet.yml.
+        Each tenant's proxy must therefore route /.well-known/oauth-*, /authorize,
+        /token, /revoke and /register to this app unstripped — on this tenant that
+        is the oauth router in docker-compose.hetzmet.yml.
         """
         return self.frontend_url.rstrip("/")
 
@@ -120,10 +121,10 @@ class Settings(BaseSettings):
     def mcp_resource_metadata_url(self) -> str:
         """Where the RFC 9728 document is served.
 
-        Not at the origin root: `/.well-known/*` there is served by the frontend,
-        since Traefik only routes /api here. Clients are told the real location via
-        the `resource_metadata` parameter on the 401, which the spec allows to be
-        any HTTPS location.
+        At the origin root, where RFC 9728 clients look. The proxy routes
+        /.well-known/oauth-* here rather than to the frontend; the 401 also names
+        this location in its `resource_metadata` parameter so a client never has
+        to guess.
         """
         return f"{self.frontend_url.rstrip('/')}/.well-known/oauth-protected-resource"
 
