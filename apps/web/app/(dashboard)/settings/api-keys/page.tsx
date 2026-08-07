@@ -187,13 +187,14 @@ export default function ApiKeysPage() {
       : "/api/public/v1";
 
   // Read off the browser's own origin so each tenant shows its own host without
-  // a build-time constant. The /api prefix is not decoration: Traefik only routes
-  // PathPrefix(`/api`) to the API container, and the trailing slash avoids a 308
-  // that not every MCP client follows on POST.
+  // a build-time constant. The /api prefix is not decoration — the proxy routes
+  // only that prefix to the API. Either trailing-slash form works; the server
+  // answers /api/mcp directly rather than redirecting, because clients store the
+  // URL exactly as it is typed.
   const mcpUrl =
     typeof window !== "undefined"
-      ? `${window.location.origin}/api/mcp/`
-      : "/api/mcp/";
+      ? `${window.location.origin}/api/mcp`
+      : "/api/mcp";
 
   const mcpConfig = JSON.stringify(
     {
@@ -298,33 +299,84 @@ export default function ApiKeysPage() {
           Connect an AI assistant (MCP)
         </h2>
         <p className="text-sm text-text-secondary">
-          The same key connects an AI assistant, which can then create,
-          duplicate and re-file video requests for you. Paste the config below
-          into your assistant, swapping the placeholder for a key from this
-          page. The key acts as the admin who created it, so revoking it here
-          cuts the assistant off immediately.
+          Claude can read, create, duplicate and re-file video requests for you.
+          How you connect depends on which Claude you are using.
         </p>
 
-        <div className="relative rounded-lg border border-border bg-bg-tertiary">
-          <button
-            type="button"
-            onClick={copyMcpConfig}
-            className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
-            title="Copy MCP config"
-          >
-            <Copy className="h-4 w-4" />
-          </button>
-          <pre className="overflow-x-auto p-3 pr-11 font-mono text-xs leading-relaxed text-text-primary">
-            {mcpConfig}
-          </pre>
+        {/* Claude.ai / Desktop — OAuth. Listed first because it is the one most
+            people mean, and the one where the wrong inputs fail confusingly. */}
+        <div className="space-y-2 rounded-lg border border-border bg-bg-tertiary p-3">
+          <p className="text-sm font-semibold text-text-primary">
+            Claude.ai, Desktop and mobile
+          </p>
+          <p className="text-sm text-text-secondary">
+            Settings → Connectors → Add custom connector. You will be sent here
+            to sign in and approve, then returned to Claude.
+          </p>
+          <dl className="space-y-1.5 text-xs">
+            <div className="flex gap-2">
+              <dt className="w-28 shrink-0 text-text-tertiary">URL</dt>
+              <dd className="break-all font-mono text-text-primary">{mcpUrl}</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="w-28 shrink-0 text-text-tertiary">Client ID</dt>
+              <dd className="text-text-primary">
+                ask an administrator — one is registered per instance
+              </dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="w-28 shrink-0 text-text-tertiary">Client Secret</dt>
+              <dd className="text-text-primary">
+                leave empty — this server uses a public client with PKCE, and a
+                value here will make the connection fail
+              </dd>
+            </div>
+          </dl>
+          <p className="text-xs text-text-tertiary">
+            Approving needs an admin or sub-admin account. The connector then
+            acts as whoever approved it, so it can only reach what that person
+            can.
+          </p>
+        </div>
+
+        {/* Claude Code — API key. Simpler, and the only route that needs no
+            browser round-trip. */}
+        <div className="space-y-2 rounded-lg border border-border bg-bg-tertiary p-3">
+          <p className="text-sm font-semibold text-text-primary">Claude Code</p>
+          <p className="text-sm text-text-secondary">
+            Uses a key from this page instead of signing in. Add it to{" "}
+            <code className="rounded bg-bg-secondary px-1 py-0.5 font-mono text-xs">
+              ~/.claude.json
+            </code>
+            , swapping the placeholder for a key below.
+          </p>
+          <div className="relative rounded-lg border border-border bg-bg-secondary">
+            <button
+              type="button"
+              onClick={copyMcpConfig}
+              className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
+              title="Copy MCP config"
+            >
+              <Copy className="h-4 w-4" />
+            </button>
+            <pre className="overflow-x-auto p-3 pr-11 font-mono text-xs leading-relaxed text-text-primary">
+              {mcpConfig}
+            </pre>
+          </div>
+          <p className="text-xs text-text-tertiary">
+            The key acts as the admin who created it, so revoking it here cuts
+            the assistant off immediately.
+          </p>
         </div>
 
         <p className="text-xs text-text-tertiary">
           Tools:{" "}
           <code className="font-mono">list_briefs</code>,{" "}
           <code className="font-mono">list_destinations</code>,{" "}
+          <code className="font-mono">get_brief</code>,{" "}
           <code className="font-mono">create_brief</code>,{" "}
           <code className="font-mono">duplicate_brief</code>,{" "}
+          <code className="font-mono">set_brief_json</code>,{" "}
           <code className="font-mono">move_brief</code>. Moving a request only
           changes where future submissions are filed — work already uploaded
           keeps the path it was filed under.

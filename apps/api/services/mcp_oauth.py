@@ -13,6 +13,7 @@ exactly as it did before.
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from pydantic import AnyHttpUrl
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -92,7 +93,11 @@ def protected_resource_metadata() -> dict[str, Any]:
     """
     return {
         "resource": settings.mcp_canonical_resource,
-        "authorization_servers": [settings.mcp_oauth_issuer_url],
+        # Normalised through AnyHttpUrl, the same type create_auth_routes renders
+        # the AS document's `issuer` from. The two strings must be byte-identical
+        # or a client treats it as a different authorization server; matching them
+        # by construction avoids a trailing slash silently breaking discovery.
+        "authorization_servers": [str(AnyHttpUrl(settings.mcp_oauth_issuer_url))],
         "scopes_supported": SUPPORTED_SCOPES,
         "bearer_methods_supported": ["header"],
     }

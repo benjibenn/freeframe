@@ -25,10 +25,10 @@ OTHER_TENANT = "https://review.debugged.com.my/api/mcp/"
 def oauth_settings():
     with patch("apps.api.services.mcp_oauth.settings") as s:
         s.mcp_oauth_enabled = True
-        s.mcp_oauth_issuer_url = "https://freeframe.multiadsx.com/api"
+        s.mcp_oauth_issuer_url = "https://freeframe.multiadsx.com"
         s.mcp_canonical_resource = RESOURCE
         s.mcp_resource_metadata_url = (
-            "https://freeframe.multiadsx.com/api/.well-known/oauth-protected-resource"
+            "https://freeframe.multiadsx.com/.well-known/oauth-protected-resource"
         )
         yield s
 
@@ -176,7 +176,9 @@ def test_secrets_are_stored_only_as_hashes():
 def test_protected_resource_metadata_points_at_our_own_issuer():
     md = mcp_oauth.protected_resource_metadata()
     assert md["resource"] == RESOURCE
-    assert md["authorization_servers"] == ["https://freeframe.multiadsx.com/api"]
+    # Trailing slash included: it must match how AnyHttpUrl renders the issuer in
+    # the AS document, or a client sees two different authorization servers.
+    assert md["authorization_servers"] == ["https://freeframe.multiadsx.com/"]
     assert md["scopes_supported"] == ["briefs:read", "briefs:write"]
 
 
@@ -185,7 +187,7 @@ def test_www_authenticate_points_at_the_metadata_document():
     the connection fails with nothing reaching the issuer at all."""
     h = mcp_oauth.www_authenticate_header(scope="briefs:read briefs:write")
     assert h.startswith("Bearer ")
-    assert 'resource_metadata="https://freeframe.multiadsx.com/api/.well-known/oauth-protected-resource"' in h
+    assert 'resource_metadata="https://freeframe.multiadsx.com/.well-known/oauth-protected-resource"' in h
     assert 'scope="briefs:read briefs:write"' in h
 
 
