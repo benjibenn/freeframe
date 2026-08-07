@@ -176,7 +176,9 @@ def test_secrets_are_stored_only_as_hashes():
 def test_protected_resource_metadata_points_at_our_own_issuer():
     md = mcp_oauth.protected_resource_metadata()
     assert md["resource"] == RESOURCE
-    assert md["authorization_servers"] == ["https://freeframe.multiadsx.com"]
+    # Trailing slash included: it must match how AnyHttpUrl renders the issuer in
+    # the AS document, or a client sees two different authorization servers.
+    assert md["authorization_servers"] == ["https://freeframe.multiadsx.com/"]
     assert md["scopes_supported"] == ["briefs:read", "briefs:write"]
 
 
