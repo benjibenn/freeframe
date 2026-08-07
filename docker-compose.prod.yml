@@ -103,6 +103,22 @@ services:
       - traefik.http.routers.api-secure.tls.certresolver=letsencrypt
       - traefik.http.routers.api-secure.middlewares=strip-api-prefix
       - traefik.http.routers.api-secure.service=api
+      # OAuth discovery must live at the origin root, not under /api. RFC 8414
+      # locates an issuer's metadata by inserting /.well-known/ at the root, and a
+      # client that cannot read it falls back to conventional root paths — which
+      # is how claude.ai ended up requesting /authorize and getting the frontend's
+      # 404. These paths therefore reach the API unstripped, above the catch-all
+      # web router. The prefix is /.well-known/oauth- rather than /.well-known/ so
+      # ACME challenges are untouched.
+      - traefik.http.routers.oauth.rule=PathPrefix(`/.well-known/oauth-`) || Path(`/authorize`) || Path(`/token`) || Path(`/revoke`) || Path(`/register`)
+      - traefik.http.routers.oauth.entrypoints=web
+      - traefik.http.routers.oauth.service=api
+      - traefik.http.routers.oauth.priority=100
+      - traefik.http.routers.oauth-secure.rule=PathPrefix(`/.well-known/oauth-`) || Path(`/authorize`) || Path(`/token`) || Path(`/revoke`) || Path(`/register`)
+      - traefik.http.routers.oauth-secure.entrypoints=websecure
+      - traefik.http.routers.oauth-secure.tls.certresolver=letsencrypt
+      - traefik.http.routers.oauth-secure.service=api
+      - traefik.http.routers.oauth-secure.priority=100
       # Shared
       - traefik.http.middlewares.strip-api-prefix.stripprefix.prefixes=/api
       - traefik.http.services.api.loadbalancer.server.port=8000

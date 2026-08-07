@@ -634,3 +634,19 @@ export interface APIKey {
 export interface APIKeyCreated extends APIKey {
   key: string;
 }
+
+/**
+ * An OAuth client, for connecting claude.ai and other hosted assistants.
+ *
+ * Deliberately has no secret: this server registers public clients, so security
+ * rests on PKCE, exact redirect-URI matching and user consent. The client_id is
+ * not sensitive and can be shown in full, unlike an API key.
+ */
+export interface OAuthClient {
+  id: string;
+  client_id: string;
+  client_name: string;
+  redirect_uris: string[];
+  created_at: string | null;
+  revoked_at: string | null;
+}

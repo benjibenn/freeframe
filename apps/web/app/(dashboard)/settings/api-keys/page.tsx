@@ -12,9 +12,10 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { useToast } from "@/components/shared/toast";
 import { useAuthStore } from "@/stores/auth-store";
 import { useRouter } from "next/navigation";
-import type { APIKey, APIKeyCreated } from "@/types";
+import type { APIKey, APIKeyCreated, OAuthClient } from "@/types";
 
 const KEYS_ENDPOINT = "/admin/api-keys";
+const OAUTH_ENDPOINT = "/admin/oauth-clients";
 
 function CreateKeyDialog() {
   const toast = useToast();
@@ -162,6 +163,132 @@ function CreateKeyDialog() {
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/**
+ * OAuth clients for hosted assistants.
+ *
+ * Separate from API keys on purpose: a key authenticates a request, a client id
+ * identifies an application. Pasting one where the other belongs is the mistake
+ * this list exists to prevent — so the id is shown in full and labelled with the
+ * field it goes in.
+ */
+function OAuthClients() {
+  const toast = useToast();
+  const { data: clients, isLoading, error } = useSWR<OAuthClient[]>(
+    OAUTH_ENDPOINT,
+    (url: string) => api.get<OAuthClient[]>(url),
+    // A 404 here means OAuth is not enabled on this instance; retrying will not
+    // change that and the section hides itself instead.
+    { shouldRetryOnError: false },
+  );
+  const [name, setName] = React.useState("");
+  const [creating, setCreating] = React.useState(false);
+
+  // OAuth off (endpoint absent) — say nothing rather than offer a dead form.
+  if (error) return null;
+
+  const create = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setCreating(true);
+    try {
+      await api.post<OAuthClient>(OAUTH_ENDPOINT, { name: trimmed });
+      setName("");
+      mutate(OAUTH_ENDPOINT);
+      toast.success("OAuth client created");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not create client");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const revoke = async (c: OAuthClient) => {
+    if (!confirm(`Revoke "${c.client_name}"? Any assistant connected through it loses access.`))
+      return;
+    try {
+      await api.delete(`${OAUTH_ENDPOINT}/${c.client_id}`);
+      mutate(OAUTH_ENDPOINT);
+      toast.success("Client revoked");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not revoke client");
+    }
+  };
+
+  const copyId = async (c: OAuthClient) => {
+    await navigator.clipboard.writeText(c.client_id);
+    toast.success("Client ID copied");
+  };
+
+  const active = (clients ?? []).filter((c) => !c.revoked_at);
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-text-primary">OAuth clients</h2>
+      </div>
+      <p className="text-sm text-text-secondary">
+        One per assistant you connect from claude.ai. The ID is not a secret — it
+        identifies the application, it does not grant access. Anyone connecting
+        still has to sign in here and approve.
+      </p>
+
+      <div className="flex gap-2">
+        <Input
+          placeholder="Claude (claude.ai)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") create();
+          }}
+        />
+        <Button variant="secondary" onClick={create} disabled={creating || !name.trim()}>
+          <Plus className="h-4 w-4" />
+          Create
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="h-12 animate-pulse rounded-lg bg-bg-tertiary" />
+      ) : active.length === 0 ? (
+        <p className="rounded-lg border border-border bg-bg-secondary p-4 text-sm text-text-tertiary">
+          No OAuth clients yet. Create one to connect claude.ai.
+        </p>
+      ) : (
+        <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-bg-secondary">
+          {active.map((c) => (
+            <div key={c.id} className="flex items-center gap-3 p-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-text-primary">
+                  {c.client_name}
+                </p>
+                <p className="break-all font-mono text-xs text-text-secondary">
+                  {c.client_id}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => copyId(c)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
+                title="Copy Client ID"
+              >
+                <Copy className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => revoke(c)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-tertiary hover:bg-status-error/10 hover:text-status-error transition-colors"
+                title="Revoke"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -321,7 +448,7 @@ export default function ApiKeysPage() {
             <div className="flex gap-2">
               <dt className="w-28 shrink-0 text-text-tertiary">Client ID</dt>
               <dd className="text-text-primary">
-                ask an administrator — one is registered per instance
+                from the OAuth clients list below
               </dd>
             </div>
             <div className="flex gap-2">
@@ -382,6 +509,8 @@ export default function ApiKeysPage() {
           keeps the path it was filed under.
         </p>
       </section>
+
+      <OAuthClients />
 
       {/* Keys table */}
       <section className="space-y-4">
