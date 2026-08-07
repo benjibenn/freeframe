@@ -89,13 +89,20 @@ class Settings(BaseSettings):
 
     @property
     def mcp_oauth_issuer_url(self) -> str:
-        """Our own issuer.
+        """Our own issuer: the bare origin.
 
-        `/api` rather than the origin root because Traefik routes only that prefix
-        to this app; the authorization-server routes and its RFC 8414 metadata all
-        hang off it.
+        Not `/api`, even though that is the only prefix Traefik routes here by
+        default. RFC 8414 locates an issuer's metadata by inserting /.well-known/
+        at the ROOT — for `https://host/api` that is
+        `https://host/.well-known/oauth-authorization-server/api`, which lands on
+        the frontend. A client that cannot read the document falls back to
+        conventional root paths, which is how claude.ai ended up requesting
+        `https://host/authorize` and getting a 404.
+
+        The deployment routes the OAuth paths to this app unstripped so the bare
+        origin is honest — see the oauth router in docker-compose.hetzmet.yml.
         """
-        return f"{self.frontend_url.rstrip('/')}/api"
+        return self.frontend_url.rstrip("/")
 
     @property
     def mcp_oauth_enabled(self) -> bool:
@@ -118,7 +125,7 @@ class Settings(BaseSettings):
         the `resource_metadata` parameter on the 401, which the spec allows to be
         any HTTPS location.
         """
-        return f"{self.frontend_url.rstrip('/')}/api/.well-known/oauth-protected-resource"
+        return f"{self.frontend_url.rstrip('/')}/.well-known/oauth-protected-resource"
 
     # ---- Authentik portal (Phase 2 Shell) ----
     # freeframe's /portal/apps endpoint reads each user's launchable apps from

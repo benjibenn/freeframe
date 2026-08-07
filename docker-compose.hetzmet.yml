@@ -48,6 +48,22 @@ services:
       - traefik.http.routers.api-secure.middlewares=strip-api-prefix
       - traefik.http.routers.api-secure.service=api
       - traefik.http.middlewares.strip-api-prefix.stripprefix.prefixes=/api
+      # OAuth discovery has to live at the origin root, not under /api. RFC 8414
+      # locates an issuer's metadata by inserting /.well-known/ at the root, and
+      # clients that cannot read it fall back to conventional root paths — which
+      # is how claude.ai ended up at https://<host>/authorize and got the
+      # frontend's 404. These paths therefore route to the API unstripped, and
+      # the issuer is the bare origin. The prefix is /.well-known/oauth- rather
+      # than /.well-known/ so ACME challenges still reach Traefik.
+      - traefik.http.routers.oauth-secure.rule=Host(`${DOMAIN}`) && (PathPrefix(`/.well-known/oauth-`) || Path(`/authorize`) || Path(`/token`) || Path(`/revoke`) || Path(`/register`))
+      - traefik.http.routers.oauth-secure.entrypoints=websecure
+      - traefik.http.routers.oauth-secure.tls.certresolver=letsencrypt
+      - traefik.http.routers.oauth-secure.service=api
+      - traefik.http.routers.oauth-secure.priority=100
+      - traefik.http.routers.oauth.rule=Host(`${DOMAIN}`) && (PathPrefix(`/.well-known/oauth-`) || Path(`/authorize`) || Path(`/token`) || Path(`/revoke`) || Path(`/register`))
+      - traefik.http.routers.oauth.entrypoints=web
+      - traefik.http.routers.oauth.service=api
+      - traefik.http.routers.oauth.priority=100
       - traefik.http.services.api.loadbalancer.server.port=8000
 
   web:
