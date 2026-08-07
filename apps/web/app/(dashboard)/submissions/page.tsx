@@ -17,7 +17,7 @@ interface SubmissionLink {
   token: string
   title: string
   instructions: string | null
-  /** Taxonomy this request's output is filed under, e.g. "Phones/Store 1/iPhone 17e". */
+  /** Taxonomy this request's output is filed under, e.g. "Apparel/Store 1/Denim Jacket". */
   home_project_id?: string | null
   home_folder_id?: string | null
   home_path?: string | null
@@ -115,7 +115,7 @@ function MySubmissionsView() {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-// Modelled on the briefs actually written here: a GetHookd reference ad plus a
+// Modelled on the briefs actually written here: a reference ad plus a
 // list of changes, often across language variations. The hook_variations table
 // carries the variations — its columns (variation / script / shot / on_screen_text)
 // fit "which locale, what copy, what scene, what price" without modification.

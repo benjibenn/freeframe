@@ -6,8 +6,8 @@
  * request dialog, request detail) so the starting point cannot drift apart.
  */
 export const SAMPLE_BRIEF_JSON = `{
-  "title": "Static - iPhone",
-  "overview": "Adapt the reference ad below into 2 localised static variations. Layout, composition and product framing stay as-is — only the copy and the price change.\\n\\nReference ad: https://app.gethookd.ai/share/ad/131405144",
+  "title": "Static - Denim Jacket",
+  "overview": "Adapt the reference ad below into 2 localised static variations. Layout, composition and product framing stay as-is — only the copy and the price change.\\n\\nReference ad: (paste a link to the ad being adapted)",
   "output_languages": ["German", "Swedish"],
   "final_deliverable": {
     "label": "2 static images — German and Swedish — matching the reference ad's dimensions",
