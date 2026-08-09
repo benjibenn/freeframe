@@ -27,6 +27,7 @@ import { ProjectCard } from "@/components/projects/project-card";
 import { RequestCard, type VideoRequest } from "@/components/projects/request-card";
 import { HomePicker, type HomeValue } from "@/components/projects/home-picker";
 import { RequestRows } from "@/components/projects/request-rows";
+import { DuplicateRequestDialog } from "@/components/projects/duplicate-request-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -263,6 +264,7 @@ function ProjectSection({
 export default function ProjectsPage() {
   usePageTitle("Projects");
   const router = useRouter();
+  const toast = useToast();
   const { user } = useAuthStore();
   // Only platform admins (superadmin / sub-admin) can create projects or requests.
   // Everyone else joins work through a submission link, so we hide all "New" affordances.
@@ -291,6 +293,9 @@ export default function ProjectsPage() {
     title: "",
     instructions: "",
   });
+
+  // Duplicate opens a pre-filled form (retitle / re-file) rather than cloning blind.
+  const [duplicateSourceId, setDuplicateSourceId] = React.useState<string | null>(null);
 
   const {
     data: projects,
@@ -728,6 +733,7 @@ export default function ProjectsPage() {
               <RequestRows
                 requests={requests ?? []}
                 onDelete={handleDeleteRequest}
+                onDuplicate={canCreate ? setDuplicateSourceId : undefined}
               />
             </div>
           )}
@@ -776,6 +782,20 @@ export default function ProjectsPage() {
           )}
         </div>
       )}
+
+      <DuplicateRequestDialog
+        sourceId={duplicateSourceId}
+        open={duplicateSourceId !== null}
+        onOpenChange={(open) => {
+          if (!open) setDuplicateSourceId(null);
+        }}
+        onDone={(homePath) => {
+          mutateRequests();
+          toast.success(
+            homePath ? `Copy created in ${homePath}` : "Copy created",
+          );
+        }}
+      />
     </div>
   );
 }
