@@ -89,6 +89,10 @@ export function BriefRow({
   const assets = brief.assets.filter((a) => typeFilter === 'all' || a.asset_type === typeFilter)
   const rel = brief.taxonomy_path ? relativePath(brief.taxonomy_path, folderFilter) : ''
 
+  // Admins land on the brief's settings page; editors land on the submit flow,
+  // where their private folder is created. The settings page is admin-only.
+  const briefHref = canAssign ? `/projects/requests/${brief.id}` : (brief.submit_url ?? '/tasks')
+
   const setStage = async (stageId: string | null) => {
     await api.patch(`/submission-links/${brief.id}/task-stage`, { task_stage_id: stageId })
     mutate(BOARD_KEY)
@@ -123,7 +127,7 @@ export function BriefRow({
             </button>
             <div className="min-w-0">
               <Link
-                href={`/projects/requests/${brief.id}`}
+                href={briefHref}
                 className="block truncate text-sm font-medium text-text-primary hover:text-accent"
               >
                 {brief.title}

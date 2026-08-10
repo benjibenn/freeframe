@@ -94,6 +94,9 @@ export interface BriefTaskItem {
    *  payment state is the owner's bookkeeping, not the editor's. */
   paid_count: number;
   submission_count: number;
+  /** Public accept/upload URL — where editors open the brief. The
+   *  /projects/requests settings page is admin-only. */
+  submit_url: string | null;
   created_at: string;
   assets: TaskItem[];
 }

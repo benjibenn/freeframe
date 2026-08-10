@@ -98,6 +98,9 @@ class BriefTaskItem(BaseModel):
     # for non-admin viewers both stay 0, so no payment state leaks to editors.
     paid_count: int = 0
     submission_count: int = 0
+    # Public accept/upload URL. Editors open the brief through this — the
+    # /projects/requests settings page is admin-only.
+    submit_url: Optional[str] = None
     created_at: datetime
     assets: list[TaskItem] = []
 

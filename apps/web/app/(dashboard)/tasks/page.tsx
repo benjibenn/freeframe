@@ -233,7 +233,7 @@ export default function TasksPage() {
           }
         />
       ) : view === 'pipeline' ? (
-        <PipelineBoard briefs={briefs} stages={stageList} folderFilter={folderFilter} />
+        <PipelineBoard briefs={briefs} stages={stageList} folderFilter={folderFilter} canManage={isPlatformAdmin} />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border">
           <table className="w-full min-w-[52rem]">

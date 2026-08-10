@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, false, func, or_
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
@@ -414,6 +415,7 @@ def get_task_board(
             # for non-admins rather than filtered in the UI.
             paid_count=paid_counts.get(l.id, 0) if admin else 0,
             submission_count=sub_counts.get(l.id, 0) if admin else 0,
+            submit_url=f"{settings.frontend_url}/submit/{l.token}",
             created_at=l.created_at,
             assets=by_request.get(l.id, []),
         )
@@ -621,6 +623,7 @@ def _brief_item(db: Session, link: SubmissionLink) -> BriefTaskItem:
         editors=editors,
         has_brief=bool(link.brief_pdf_s3_key),
         has_brief_json=bool(link.brief_json),
+        submit_url=f"{settings.frontend_url}/submit/{link.token}",
         created_at=link.created_at,
         assets=[],
     )

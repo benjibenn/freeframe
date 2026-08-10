@@ -18,17 +18,21 @@ const UNASSIGNED = '__unassigned__'
 function BriefCard({
   brief,
   folderFilter,
+  canManage,
   dragging,
   onDragStart,
   onDragEnd,
 }: {
   brief: BriefTaskItem
   folderFilter: string | null
+  /** Admins open the brief's settings page; editors open the submit flow. */
+  canManage: boolean
   dragging: boolean
   onDragStart: () => void
   onDragEnd: () => void
 }) {
   const rel = brief.taxonomy_path ? relativePath(brief.taxonomy_path, folderFilter) : ''
+  const briefHref = canManage ? `/projects/requests/${brief.id}` : (brief.submit_url ?? '/tasks')
   return (
     <div
       draggable
@@ -44,7 +48,7 @@ function BriefCard({
       )}
     >
       <Link
-        href={`/projects/requests/${brief.id}`}
+        href={briefHref}
         className="block truncate text-sm font-medium text-text-primary hover:text-accent"
       >
         {brief.title}
@@ -89,10 +93,13 @@ export function PipelineBoard({
   briefs,
   stages,
   folderFilter,
+  canManage = true,
 }: {
   briefs: BriefTaskItem[]
   stages: TaskStage[]
   folderFilter: string | null
+  /** Admins open the brief's settings page; editors open the submit flow. */
+  canManage?: boolean
 }) {
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [overColumn, setOverColumn] = React.useState<string | null>(null)
@@ -165,6 +172,7 @@ export function PipelineBoard({
                     key={b.id}
                     brief={b}
                     folderFilter={folderFilter}
+                    canManage={canManage}
                     dragging={draggingId === b.id}
                     onDragStart={() => setDraggingId(b.id)}
                     onDragEnd={() => setDraggingId(null)}
