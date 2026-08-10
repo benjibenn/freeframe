@@ -236,7 +236,7 @@ export default function TasksPage() {
         <PipelineBoard briefs={briefs} stages={stageList} folderFilter={folderFilter} canManage={isPlatformAdmin} />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="w-full min-w-[52rem]">
+          <table className="w-full min-w-[52rem] table-fixed">
             <thead className="bg-bg-secondary">
               <tr className="text-left text-xs font-medium text-text-tertiary">
                 <th className="w-[30%] px-3 py-2.5">Brief</th>
