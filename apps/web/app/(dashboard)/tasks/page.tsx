@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { useAuthStore } from '@/stores/auth-store'
 import { ManageStagesDialog } from '@/components/tasks/manage-stages-dialog'
-import { BriefRow, AssetSubRow, relativePath } from '@/components/tasks/brief-row'
+import { BriefRow, relativePath } from '@/components/tasks/brief-row'
 import { PipelineBoard } from '@/components/tasks/pipeline-board'
 import type { TaskStage, TaskBoardResponse, User } from '@/types'
 
@@ -80,7 +80,6 @@ export default function TasksPage() {
 
   const stageList = stages ?? []
   const allBriefs = board?.briefs ?? []
-  const allUnbriefed = board?.unbriefed ?? []
 
   // Folder filter applies to a brief's own path — an un-started brief has no
   // assets to match through, and it is the row most worth keeping visible.
@@ -98,10 +97,6 @@ export default function TasksPage() {
     if (stageFilter === 'unassigned') return b.task_stage_id === null
     return b.task_stage_id === stageFilter
   })
-
-  const unbriefed = allUnbriefed
-    .filter((a) => inFolder(a.folder_path))
-    .filter((a) => typeFilter === 'all' || a.asset_type === typeFilter)
 
   const crumbs = folderFilter
     ? folderFilter.split('/').map((seg, i, all) => ({ label: seg, path: all.slice(0, i + 1).join('/') }))
@@ -220,13 +215,13 @@ export default function TasksPage() {
             <div key={i} className="h-14 animate-pulse rounded-lg bg-bg-secondary" />
           ))}
         </div>
-      ) : briefs.length === 0 && unbriefed.length === 0 ? (
+      ) : briefs.length === 0 ? (
         <EmptyState
           icon={ListChecks}
           title="Nothing here"
           description={
             folderFilter
-              ? `No briefs or files under ${folderFilter}.`
+              ? `No briefs under ${folderFilter}.`
               : isPlatformAdmin
                 ? 'Create a request to start tracking work.'
                 : 'Nothing is assigned to you yet.'
@@ -259,19 +254,6 @@ export default function TasksPage() {
                   onDrillTo={setFolderFilter}
                 />
               ))}
-
-              {unbriefed.length > 0 && (
-                <>
-                  <tr className="border-t border-border bg-bg-secondary/60">
-                    <td colSpan={5} className="px-3 py-2 text-xs font-medium text-text-tertiary">
-                      Uploaded directly — no brief ({unbriefed.length})
-                    </td>
-                  </tr>
-                  {unbriefed.map((a) => (
-                    <AssetSubRow key={a.asset_id} asset={a} stages={stageList} />
-                  ))}
-                </>
-              )}
             </tbody>
           </table>
         </div>
