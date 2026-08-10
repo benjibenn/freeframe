@@ -69,6 +69,7 @@ def list_assignable_users(
         db.query(User)
         .filter(
             User.deleted_at.is_(None),
+            User.status != UserStatus.deactivated,
             (User.is_superadmin.is_(True))
             | (User.is_subadmin.is_(True))
             | (User.id.in_(editor_ids) if editor_ids else false()),
