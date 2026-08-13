@@ -14,7 +14,8 @@ type Step = 'email' | 'code' | 'password' | 'classic'
 
 export function LoginForm() {
   const router = useRouter()
-  const [step, setStep] = useState<Step>('email')
+  // Password is the default sign-in method; the magic code is the fallback.
+  const [step, setStep] = useState<Step>('classic')
   const [email, setEmail] = useState('')
   const [emailError, setEmailError] = useState('')
   const [code, setCode] = useState(['', '', '', '', '', ''])
@@ -264,15 +265,36 @@ export function LoginForm() {
 
   // ─── Render ──────────────────────────────────────────────────────────────
 
+  // Rendered on whichever screen is the landing step, so SSO stays one click away.
+  const ssoBlock = ssoEnabled && (
+    <>
+      <div className="my-6 flex items-center gap-3">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-xs text-text-tertiary">or</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+      <Button type="button" variant="secondary" size="lg" onClick={handleSso} className="w-full">
+        Continue with SSO
+      </Button>
+    </>
+  )
+
+  // Default step: email + password.
   if (step === 'classic') {
     return (
       <div className="animate-slide-up">
         <div className="mb-8">
-          <h1 className="text-xl font-semibold text-text-primary mb-1">Sign in with password</h1>
+          <h1 className="text-xl font-semibold text-text-primary mb-1">Sign in to FreeFrame</h1>
           <p className="text-sm text-text-secondary">Enter your email and password to continue.</p>
         </div>
 
         <form onSubmit={handleClassicLogin} className="flex flex-col gap-4">
+          {generalError && (
+            <div className="rounded-md border border-status-error/30 bg-status-error/10 px-3 py-2.5 text-sm text-status-error">
+              {generalError}
+            </div>
+          )}
+
           {classicError && (
             <div className="rounded-md border border-status-error/30 bg-status-error/10 px-3 py-2.5 text-sm text-status-error">
               {classicError}
@@ -305,12 +327,14 @@ export function LoginForm() {
         <div className="mt-6 text-center">
           <button
             type="button"
-            onClick={() => { setStep('email'); setClassicError('') }}
+            onClick={() => { setStep('email'); setClassicError(''); setGeneralError('') }}
             className="text-sm text-text-tertiary hover:text-text-secondary transition-colors"
           >
-            Back to magic link
+            Email me a sign-in code instead
           </button>
         </div>
+
+        {ssoBlock}
       </div>
     )
   }
@@ -415,11 +439,11 @@ export function LoginForm() {
     )
   }
 
-  // Step 1: Email
+  // Fallback step: email-only magic code.
   return (
     <div className="animate-slide-up">
       <div className="mb-8">
-        <h1 className="text-xl font-semibold text-text-primary mb-1">Sign in to FreeFrame</h1>
+        <h1 className="text-xl font-semibold text-text-primary mb-1">Sign in with a code</h1>
         <p className="text-sm text-text-secondary">
           Enter your email and we&apos;ll send you a sign-in code.
         </p>
@@ -453,22 +477,9 @@ export function LoginForm() {
           onClick={() => { setStep('classic'); setGeneralError('') }}
           className="text-sm text-text-tertiary hover:text-text-secondary transition-colors"
         >
-          Sign in with password instead
+          Back to password sign-in
         </button>
       </div>
-
-      {ssoEnabled && (
-        <>
-          <div className="my-6 flex items-center gap-3">
-            <div className="h-px flex-1 bg-border" />
-            <span className="text-xs text-text-tertiary">or</span>
-            <div className="h-px flex-1 bg-border" />
-          </div>
-          <Button type="button" variant="secondary" size="lg" onClick={handleSso} className="w-full">
-            Continue with SSO
-          </Button>
-        </>
-      )}
     </div>
   )
 }
