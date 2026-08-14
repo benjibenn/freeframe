@@ -6,7 +6,7 @@ import { api, ApiError } from '@/lib/api'
 import { getAccessToken } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { BriefView } from '@/components/projects/brief-view'
-import { ReferenceImageCarousel, ReferenceVideoList } from '@/components/shared/reference-carousel'
+import { ReferenceImageCarousel, ReferenceVideoList, DownloadAllButton } from '@/components/shared/reference-carousel'
 
 interface SubmissionLinkPublic {
   title: string
@@ -34,6 +34,16 @@ export default function SubmitPage() {
   const [link, setLink] = useState<SubmissionLinkPublic | null>(null)
   const [error, setError] = useState('')
   const accepting = useRef(false)
+
+  // Built once so the players and the download buttons can't drift apart.
+  const referenceImageUrls = Array.from(
+    { length: link?.reference_image_count ?? 0 },
+    (_, i) => `${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/reference-image/${i}`,
+  )
+  const referenceVideoUrls = Array.from(
+    { length: link?.reference_video_count ?? 0 },
+    (_, i) => `${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/reference-video/${i}`,
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -121,30 +131,26 @@ export default function SubmitPage() {
                 📄 View brief (PDF)
               </a>
             )}
-            {link.reference_image_count > 0 && (
+            {referenceImageUrls.length > 0 && (
               <div className="mb-6">
-                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">
-                  Reference image{link.reference_image_count === 1 ? '' : 's'}
-                </p>
-                <ReferenceImageCarousel
-                  urls={Array.from(
-                    { length: link.reference_image_count },
-                    (_, i) => `${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/reference-image/${i}`,
-                  )}
-                />
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">
+                    Reference image{referenceImageUrls.length === 1 ? '' : 's'}
+                  </p>
+                  <DownloadAllButton urls={referenceImageUrls} />
+                </div>
+                <ReferenceImageCarousel urls={referenceImageUrls} />
               </div>
             )}
-            {link.reference_video_count > 0 && (
+            {referenceVideoUrls.length > 0 && (
               <div className="mb-6">
-                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">
-                  Reference video{link.reference_video_count === 1 ? '' : 's'}
-                </p>
-                <ReferenceVideoList
-                  urls={Array.from(
-                    { length: link.reference_video_count },
-                    (_, i) => `${process.env.NEXT_PUBLIC_API_URL || ''}/submit/${token}/reference-video/${i}`,
-                  )}
-                />
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">
+                    Reference video{referenceVideoUrls.length === 1 ? '' : 's'}
+                  </p>
+                  <DownloadAllButton urls={referenceVideoUrls} />
+                </div>
+                <ReferenceVideoList urls={referenceVideoUrls} />
               </div>
             )}
             {link.brief_json && (

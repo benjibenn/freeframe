@@ -33,6 +33,8 @@ from ..models.project import Project, ProjectMember, ProjectRole, ProjectType
 from ..models.folder import Folder
 from ..models.asset import Asset, AssetType, AssetVersion, MediaFile
 from ..models.submission import SubmissionLink, Submission
+from ..models.activity import ActivityAction
+from ..services.activity_service import log_activity
 from ..schemas.submission import (
     SubmissionLinkCreate,
     DuplicateLinkRequest,
@@ -1439,41 +1441,101 @@ def get_submission_brief_pdf(token: str, db: Session = Depends(get_db)):
     return RedirectResponse(url)
 
 
-def _reference_redirect(db: Session, token: str, index: int, kind: str) -> RedirectResponse:
-    """Shared public redirect for indexed reference attachments. Served inline (no
-    download_filename): <video> streams through the redirect (S3 honours Range so
-    seeking works) and <img> renders straight from it."""
+def _reference_redirect(
+    db: Session,
+    token: str,
+    index: int,
+    kind: str,
+    download: bool = False,
+    current_user: Optional[User] = None,
+) -> RedirectResponse:
+    """Shared public redirect for indexed reference attachments.
+
+    Inline by default (no download_filename): <video> streams through the redirect
+    (S3 honours Range so seeking works) and <img> renders straight from it.
+
+    With ``?download=1`` the presign carries Content-Disposition: attachment
+    instead. That is the only thing that reliably forces a save here — an anchor's
+    `download` attribute is ignored cross-origin, and this route redirects to S3.
+    """
     link = _validate_active(
         db.query(SubmissionLink).filter(SubmissionLink.token == token).first()
     )
     keys = _ref_video_keys(link) if kind == "video" else _ref_image_keys(link)
     if not (0 <= index < len(keys)):
         raise HTTPException(status_code=404, detail=f"No reference {kind} at that position")
-    return RedirectResponse(s3_service.generate_presigned_get_url(keys[index], expires_in=3600))
+    if not download:
+        return RedirectResponse(s3_service.generate_presigned_get_url(keys[index], expires_in=3600))
+
+    filename = f"reference-{kind}-{index + 1}{os.path.splitext(keys[index])[1]}"
+    url = s3_service.generate_presigned_get_url(
+        keys[index], expires_in=3600, download_filename=filename
+    )
+    # Logged server-side because the download — not the view — is the auditable
+    # event, and a client can simply skip a /track call. No dedup window: a
+    # "Download all" over five references must leave five rows, or the trail
+    # understates what actually left. user_id is None for guests on /submit.
+    log_activity(
+        db,
+        action=ActivityAction.brief_reference_downloaded.value,
+        user_id=current_user.id if current_user else None,
+        project_id=link.home_project_id,
+        payload={
+            "submission_link_id": str(link.id),
+            "link_title": link.title,
+            "kind": kind,
+            "index": index,
+            "filename": filename,
+        },
+    )
+    db.commit()
+    return RedirectResponse(url)
 
 
 @router.get("/submit/{token}/reference-video/{index}")
-def get_submission_reference_video_at(token: str, index: int, db: Session = Depends(get_db)):
+def get_submission_reference_video_at(
+    token: str,
+    index: int,
+    download: bool = False,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
     """Public: redirect to one of the request's reference videos, by position."""
-    return _reference_redirect(db, token, index, "video")
+    return _reference_redirect(db, token, index, "video", download, current_user)
 
 
 @router.get("/submit/{token}/reference-video")
-def get_submission_reference_video(token: str, db: Session = Depends(get_db)):
+def get_submission_reference_video(
+    token: str,
+    download: bool = False,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
     """Public: the first reference video (kept for old links already in the wild)."""
-    return _reference_redirect(db, token, 0, "video")
+    return _reference_redirect(db, token, 0, "video", download, current_user)
 
 
 @router.get("/submit/{token}/reference-image/{index}")
-def get_submission_reference_image_at(token: str, index: int, db: Session = Depends(get_db)):
+def get_submission_reference_image_at(
+    token: str,
+    index: int,
+    download: bool = False,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
     """Public: redirect to one of the request's reference images, by position."""
-    return _reference_redirect(db, token, index, "image")
+    return _reference_redirect(db, token, index, "image", download, current_user)
 
 
 @router.get("/submit/{token}/reference-image")
-def get_submission_reference_image(token: str, db: Session = Depends(get_db)):
+def get_submission_reference_image(
+    token: str,
+    download: bool = False,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user),
+):
     """Public: the first reference image (kept for old links already in the wild)."""
-    return _reference_redirect(db, token, 0, "image")
+    return _reference_redirect(db, token, 0, "image", download, current_user)
 
 
 @router.post("/submit/{token}/accept", response_model=SubmissionAcceptResponse)
