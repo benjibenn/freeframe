@@ -406,6 +406,134 @@ def test_set_brief_json_rejects_a_non_object(as_admin):
         mcp_router.set_brief_json(link_id=str(uuid.uuid4()), brief_json="just a string")
 
 
+# ── Editing and closing ──────────────────────────────────────────────────────
+
+def _filed(**over):
+    """A brief as get_submission_link hands it back.
+
+    MagicMock invents any attribute asked of it, so the fields update_brief merges
+    from have to carry real values or a test passes on a mock comparing equal to
+    itself.
+    """
+    link = _link(**over)
+    link.instructions = over.get("instructions", "Deliver by Friday")
+    link.expires_at = over.get("expires_at")
+    return link
+
+
+def test_update_brief_keeps_every_field_you_did_not_pass(as_admin):
+    """The endpoint behind this assigns the whole record from the body it is given.
+
+    So a rename that sent nothing but a title would null the instructions, drop the
+    expiry and strip the brief out of the tree — data loss the caller never asked
+    for and would not see until they went looking for the brief.
+    """
+    folder = uuid.uuid4()
+    current = _filed(home_folder_id=folder)
+    current.expires_at = datetime(2026, 12, 1, tzinfo=timezone.utc)
+    with patch.object(
+        mcp_router.submissions_router, "get_submission_link", return_value=current
+    ):
+        with patch.object(
+            mcp_router.submissions_router, "update_submission_link", return_value=_link()
+        ) as upd:
+            mcp_router.update_brief(link_id=str(current.id), title="Renamed")
+    body = upd.call_args.kwargs["body"]
+    assert body.title == "Renamed"
+    assert body.instructions == "Deliver by Friday"
+    assert body.home_project_id == current.home_project_id
+    assert body.home_folder_id == folder
+    assert body.expires_at == current.expires_at
+
+
+def test_update_brief_does_not_carry_a_folder_into_a_new_project(as_admin):
+    """A folder lives inside exactly one project, so it cannot follow a brief out.
+
+    Keeping the old id would file the brief under a folder its new project does not
+    own — the one outcome a caller asking for a move definitely did not want.
+    """
+    current = _filed(home_folder_id=uuid.uuid4())
+    destination = uuid.uuid4()
+    with patch.object(
+        mcp_router.submissions_router, "get_submission_link", return_value=current
+    ):
+        with patch.object(
+            mcp_router.submissions_router, "update_submission_link", return_value=_link()
+        ) as upd:
+            mcp_router.update_brief(
+                link_id=str(current.id), home_project_id=str(destination)
+            )
+    body = upd.call_args.kwargs["body"]
+    assert body.home_project_id == destination
+    assert body.home_folder_id is None
+
+
+def test_update_brief_clears_instructions_with_an_empty_string(as_admin):
+    """Omitting a field has to mean "leave it alone", so removing needs its own signal."""
+    current = _filed()
+    with patch.object(
+        mcp_router.submissions_router, "get_submission_link", return_value=current
+    ):
+        with patch.object(
+            mcp_router.submissions_router, "update_submission_link", return_value=_link()
+        ) as upd:
+            mcp_router.update_brief(link_id=str(current.id), instructions="")
+    assert upd.call_args.kwargs["body"].instructions is None
+
+
+def test_update_brief_on_an_unfiled_brief_says_what_to_do(as_admin):
+    """Legacy links can be filed nowhere.
+
+    Letting that reach pydantic produces "home_project_id: field required", which
+    reads as a bug in the tool rather than something the caller can fix.
+    """
+    current = _filed()
+    current.home_project_id = None
+    with patch.object(
+        mcp_router.submissions_router, "get_submission_link", return_value=current
+    ):
+        with pytest.raises(ValueError, match="pass home_project_id"):
+            mcp_router.update_brief(link_id=str(current.id), title="Renamed")
+
+
+def test_delete_brief_says_the_submitted_work_survives(as_admin):
+    """Closing a brief is a soft delete; the uploads outlive it.
+
+    An agent that reports a bare "deleted" leaves the user believing the editors'
+    files went with it, which is the sort of thing people restore from backups over.
+    """
+    result = MagicMock()
+    result.updated = 2
+    with patch.object(
+        mcp_router.submissions_router, "bulk_delete_submission_links", return_value=result
+    ):
+        out = mcp_router.delete_brief(link_ids=[str(uuid.uuid4()), str(uuid.uuid4())])
+    assert out["deleted"] == 2
+    assert "retained" in out["note"]
+
+
+def test_delete_brief_reports_partial_deletes_honestly(as_admin):
+    """Already-closed ids are skipped, not failed — same as bulk-refile.
+
+    Echoing len(link_ids) would claim to have closed briefs that were never open.
+    """
+    result = MagicMock()
+    result.updated = 1
+    with patch.object(
+        mcp_router.submissions_router, "bulk_delete_submission_links", return_value=result
+    ):
+        out = mcp_router.delete_brief(
+            link_ids=[str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())]
+        )
+    assert out["deleted"] == 1
+    assert out["requested"] == 3
+
+
+def test_delete_brief_rejects_an_empty_selection(as_admin):
+    with pytest.raises(ValueError, match="at least one brief id"):
+        mcp_router.delete_brief(link_ids=[])
+
+
 def test_the_mcp_endpoint_answers_with_or_without_a_trailing_slash():
     """Regression: claude.ai stores the URL exactly as typed.
 

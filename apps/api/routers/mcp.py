@@ -31,6 +31,7 @@ from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE
 from ..models.user import User
 from ..schemas.submission import (
     BriefJsonUpdate,
+    BulkDeleteRequest,
     BulkRefileRequest,
     DuplicateLinkRequest,
     SubmissionLinkCreate,
@@ -374,6 +375,75 @@ def duplicate_brief(
 
 @mcp.tool(
     description=(
+        "Edit a brief in place: rename it, change its instructions, re-file it, or "
+        "change when it expires. Only the fields you pass change — everything else "
+        "is read off the brief and sent back unchanged, so a rename cannot quietly "
+        "blank the instructions or unfile the brief. Pass an empty string to clear "
+        "instructions or expiry. Naming a new home_project_id without a "
+        "home_folder_id files the brief at that project's root, because a folder "
+        "belongs to one project and cannot follow it. The structured brief is not "
+        "touched here — use set_brief_json for that."
+    )
+)
+def update_brief(
+    link_id: str,
+    title: str | None = None,
+    instructions: str | None = None,
+    home_project_id: str | None = None,
+    home_folder_id: str | None = None,
+    expires_at: str | None = None,
+) -> dict[str, Any]:
+    """Args: link_id — the brief to edit. Omitted fields keep their current value.
+
+    expires_at is an ISO 8601 timestamp; "" removes the expiry entirely.
+    """
+    _require_scope(SCOPE_WRITE)
+    uid = _uuid(link_id, "link_id")
+    # Read-merge-write, and not for tidiness: the endpoint behind this assigns
+    # every field of the record from the body it is given. Sending a title on its
+    # own would null the instructions and strip the brief out of the tree.
+    current = _call(submissions_router.get_submission_link, link_id=uid)
+
+    # A folder lives inside exactly one project, so it cannot follow a brief into
+    # a different one — moving project without naming a folder lands at the root.
+    if home_project_id:
+        project = _uuid(home_project_id, "home_project_id")
+        folder = _uuid(home_folder_id, "home_folder_id") if home_folder_id else None
+    else:
+        project = current.home_project_id
+        folder = (
+            _uuid(home_folder_id, "home_folder_id")
+            if home_folder_id
+            else current.home_folder_id
+        )
+
+    if project is None:
+        # Legacy links can be filed nowhere. Pydantic would reject that below with
+        # a message about a missing field, which reads like a bug in the tool.
+        raise ValueError(
+            "This brief is not filed under any project — pass home_project_id to give it one"
+        )
+
+    if expires_at is None:
+        expiry = current.expires_at
+    else:
+        expiry = datetime.fromisoformat(expires_at) if expires_at else None
+
+    body = SubmissionLinkCreate(
+        title=title if title is not None else current.title,
+        # "" is how a caller says "remove this", which is not the same as omitting it.
+        instructions=current.instructions if instructions is None else (instructions or None),
+        home_project_id=project,
+        home_folder_id=folder,
+        expires_at=expiry,
+    )
+    return _brief_summary(
+        _call(submissions_router.update_submission_link, link_id=uid, body=body)
+    )
+
+
+@mcp.tool(
+    description=(
         "Re-file one or more briefs into a different project or folder. "
         "IMPORTANT: this only affects work submitted from here on. Assets already "
         "uploaded keep the path they were stamped with at upload time and do not "
@@ -401,6 +471,34 @@ def move_brief(
         "moved": result.updated,
         "requested": len(link_ids),
         "note": "Already-uploaded assets keep their original stamped path.",
+    }
+
+
+@mcp.tool(
+    description=(
+        "Close one or more briefs. This is a soft delete: the brief stops accepting "
+        "work and disappears from the tree, but every submission already made "
+        "against it — and every file uploaded with those submissions — is left "
+        "alone in its own project. There is no undo through this API. A brief with "
+        "submissions is usually one someone is still working from, so check "
+        "submission_count in list_briefs before closing anything you did not create."
+    )
+)
+def delete_brief(link_ids: list[str]) -> dict[str, Any]:
+    """Args: link_ids — one or more brief ids; all are closed together."""
+    _require_scope(SCOPE_WRITE)
+    if not link_ids:
+        raise ValueError("link_ids must contain at least one brief id")
+    result = _call(
+        submissions_router.bulk_delete_submission_links,
+        body=BulkDeleteRequest(link_ids=[_uuid(i, "link_ids") for i in link_ids]),
+    )
+    # Same honesty as move_brief: ids that were already closed are skipped rather
+    # than failing the batch, so report what changed instead of what was asked for.
+    return {
+        "deleted": result.updated,
+        "requested": len(link_ids),
+        "note": "Soft delete: submissions and their uploaded files are retained.",
     }
 
 
