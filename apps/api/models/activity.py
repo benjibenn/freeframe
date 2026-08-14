@@ -21,14 +21,19 @@ class ActivityAction(str, PyEnum):
     asset_clicked = "asset_clicked"
     asset_viewed = "asset_viewed"
     asset_downloaded = "asset_downloaded"
+    # A brief's reference image/video pulled down from the brief popup or the public
+    # submit page. Deliberately not asset_downloaded: references live as bare S3 keys
+    # on the submission link, so these rows carry no asset_id.
+    brief_reference_downloaded = "brief_reference_downloaded"
 
-# The three passive-tracking actions, as opposed to team actions (created/commented/
+# The passive-tracking actions, as opposed to team actions (created/commented/
 # approved/shared/…). Shared so callers that need to include or exclude tracking noise
 # (retention pruning, the unread-activity badge) don't redefine this list separately.
 TRACKING_ACTIONS = (
     ActivityAction.asset_clicked.value,
     ActivityAction.asset_viewed.value,
     ActivityAction.asset_downloaded.value,
+    ActivityAction.brief_reference_downloaded.value,
 )
 
 class NotificationType(str, PyEnum):

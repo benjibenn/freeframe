@@ -2,8 +2,8 @@
 
 WHY (the whole point of scoping this job): activity_logs also holds the team audit
 trail — comments, approvals, shares. A blanket 90-day purge would destroy that
-history. This test fails loudly if the delete ever stops filtering by the three
-tracking actions, which is exactly the mistake that would erase the audit trail.
+history. This test fails loudly if the delete ever stops filtering by the tracking
+actions, which is exactly the mistake that would erase the audit trail.
 """
 from unittest.mock import MagicMock, patch
 
@@ -21,7 +21,14 @@ def test_prune_filters_to_tracking_actions_and_age():
         deleted = rt.prune_asset_activity()
 
     assert deleted == 3
-    assert set(rt.TRACKING_ACTIONS) == {"asset_clicked", "asset_viewed", "asset_downloaded"}
+    # Exact set, not a subset: the danger is a team action (commented/approved/shared)
+    # drifting into TRACKING_ACTIONS and silently becoming 90-day-disposable.
+    assert set(rt.TRACKING_ACTIONS) == {
+        "asset_clicked",
+        "asset_viewed",
+        "asset_downloaded",
+        "brief_reference_downloaded",
+    }
     assert query.delete.called
     db.commit.assert_called_once()
 
