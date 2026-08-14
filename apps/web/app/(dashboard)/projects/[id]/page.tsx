@@ -59,7 +59,7 @@ import { NameDialog } from "@/components/projects/name-dialog";
 import { ShareCreateDialog } from "@/components/projects/share-create-dialog";
 import { BucketImportDialog } from "@/components/projects/bucket-import-dialog";
 import { BriefView } from "@/components/projects/brief-view";
-import { ReferenceImageCarousel, ReferenceVideoList } from "@/components/shared/reference-carousel";
+import { ReferenceImageCarousel, ReferenceVideoList, DownloadAllButton } from "@/components/shared/reference-carousel";
 import { ProjectMembersDialog } from "@/components/projects/project-members-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -190,6 +190,23 @@ export default function ProjectDetailPage() {
   const { data: project, isLoading: loadingProject } = useSWR<Project>(
     `/projects/${projectId}`,
     () => api.get<Project>(`/projects/${projectId}`),
+  );
+
+  // The API returns reference paths relative to itself. Absolutised once here so the
+  // brief popup's players and its download buttons can't drift apart.
+  const referenceImageUrls = React.useMemo(
+    () =>
+      (project?.reference_image_urls ?? []).map(
+        (u) => `${process.env.NEXT_PUBLIC_API_URL || ""}${u}`,
+      ),
+    [project?.reference_image_urls],
+  );
+  const referenceVideoUrls = React.useMemo(
+    () =>
+      (project?.reference_video_urls ?? []).map(
+        (u) => `${process.env.NEXT_PUBLIC_API_URL || ""}${u}`,
+      ),
+    [project?.reference_video_urls],
   );
 
   // Register project name for header breadcrumb + page title
@@ -1692,28 +1709,26 @@ export default function ProjectDetailPage() {
               </Dialog.Close>
             </div>
             <div className="flex flex-col gap-5 overflow-y-auto px-5 py-4">
-              {(project?.reference_image_urls?.length ?? 0) > 0 && (
+              {referenceImageUrls.length > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">
-                    Reference image{project!.reference_image_urls!.length === 1 ? '' : 's'}
-                  </p>
-                  <ReferenceImageCarousel
-                    urls={project!.reference_image_urls!.map(
-                      (u) => `${process.env.NEXT_PUBLIC_API_URL || ''}${u}`,
-                    )}
-                  />
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">
+                      Reference image{referenceImageUrls.length === 1 ? '' : 's'}
+                    </p>
+                    <DownloadAllButton urls={referenceImageUrls} />
+                  </div>
+                  <ReferenceImageCarousel urls={referenceImageUrls} />
                 </div>
               )}
-              {(project?.reference_video_urls?.length ?? 0) > 0 && (
+              {referenceVideoUrls.length > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-text-tertiary">
-                    Reference video{project!.reference_video_urls!.length === 1 ? '' : 's'}
-                  </p>
-                  <ReferenceVideoList
-                    urls={project!.reference_video_urls!.map(
-                      (u) => `${process.env.NEXT_PUBLIC_API_URL || ''}${u}`,
-                    )}
-                  />
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">
+                      Reference video{referenceVideoUrls.length === 1 ? '' : 's'}
+                    </p>
+                    <DownloadAllButton urls={referenceVideoUrls} />
+                  </div>
+                  <ReferenceVideoList urls={referenceVideoUrls} />
                 </div>
               )}
               {project?.brief_json && <BriefView data={project.brief_json} />}
