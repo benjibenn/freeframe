@@ -258,6 +258,102 @@ def get_brief(link_id: str) -> dict[str, Any]:
 
 @mcp.tool(
     description=(
+        "Attach a reference image or video to a brief by URL. The server fetches "
+        "the URL itself, so it must be publicly reachable — a local file path will "
+        "not work, and neither will a private or internal address. Use this for the "
+        "'adapt this ad' examples shown on the brief page. kind defaults to auto, "
+        "which picks image or video from what the URL actually serves. Images up to "
+        "15 MB (JPEG, PNG, WebP, GIF), videos up to 50 MB; larger videos have to go "
+        "through the web UI. At most 10 of each per brief. Signed URLs work but must "
+        "still be valid at the moment of the call."
+    )
+)
+def add_brief_reference(link_id: str, url: str, kind: str = "auto") -> dict[str, Any]:
+    """Args: url — a public http(s) URL; kind — auto, image or video."""
+    _require_scope(SCOPE_WRITE)
+    wanted = (kind or "auto").strip().lower()
+    if wanted not in ("auto", "image", "video"):
+        raise ValueError(f"kind must be auto, image or video, got {kind!r}")
+
+    link_uuid = _uuid(link_id, "link_id")
+    body = submissions_router.ReferenceFromUrlRequest(url=url)
+
+    # "auto" tries image first and falls back to video, because the image route
+    # rejects on content type before storing anything — so a video URL costs one
+    # wasted fetch, never a wrong attachment.
+    attempts = ["image", "video"] if wanted == "auto" else [wanted]
+    last_error: Optional[str] = None
+    for attempt in attempts:
+        fn = (
+            submissions_router.add_reference_image_from_url
+            if attempt == "image"
+            else submissions_router.add_reference_video_from_url
+        )
+        try:
+            updated = _call(fn, link_id=link_uuid, body=body)
+        except ValueError as exc:
+            last_error = str(exc)
+            continue
+        out = _brief_summary(updated)
+        out["attached"] = attempt
+        out["reference_image_count"] = updated.reference_image_count
+        out["reference_video_count"] = updated.reference_video_count
+        return out
+
+    raise ValueError(last_error or "Could not attach that URL")
+
+
+@mcp.tool(
+    description=(
+        "Detach reference media from a brief. Pass an index to remove one item "
+        "(0-based, in the order get_brief reports them), or omit it to remove every "
+        "reference of that kind. The stored file is deleted; submissions and their "
+        "uploaded work are untouched. There is no undo."
+    )
+)
+def remove_brief_reference(
+    link_id: str, kind: str, index: Optional[int] = None
+) -> dict[str, Any]:
+    """Args: kind — image or video; index — which one, or omit for all of that kind."""
+    _require_scope(SCOPE_WRITE)
+    wanted = (kind or "").strip().lower()
+    if wanted not in ("image", "video"):
+        raise ValueError(f"kind must be image or video, got {kind!r}")
+
+    link_uuid = _uuid(link_id, "link_id")
+    if index is None:
+        fn = (
+            submissions_router.delete_reference_images
+            if wanted == "image"
+            else submissions_router.delete_reference_videos
+        )
+        _call(fn, link_id=link_uuid)
+        removed = "all"
+    else:
+        if index < 0:
+            raise ValueError("index must be 0 or greater")
+        fn = (
+            submissions_router.delete_reference_image_at
+            if wanted == "image"
+            else submissions_router.delete_reference_video_at
+        )
+        _call(fn, link_id=link_uuid, index=index)
+        removed = str(index)
+
+    # The delete routes return 204, so re-read to report the resulting state
+    # rather than asserting a count we did not observe.
+    link = _call(submissions_router.get_submission_link, link_id=link_uuid)
+    return {
+        "id": str(link.id),
+        "kind": wanted,
+        "removed": removed,
+        "reference_image_count": link.reference_image_count,
+        "reference_video_count": link.reference_video_count,
+    }
+
+
+@mcp.tool(
+    description=(
         "Set or replace the structured brief on an existing request. This "
         "REPLACES the whole object rather than merging — call get_brief first and "
         "send the full brief back with your edits. Pass null to remove the brief. "
