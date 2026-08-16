@@ -58,6 +58,7 @@ from ..schemas.submission import (
 )
 from ..services.share_service import build_default_project_share_link
 from ..services import s3_service
+from ..services.url_fetch import RemoteFetchError, fetch_remote_file
 from ..services import brief_import_service
 from ..services.permissions import require_platform_admin, is_platform_admin, can_view_project, require_asset_access
 from ..services.folder_paths import link_home_paths, resolve_link_home_path
@@ -630,6 +631,60 @@ def _link_response_with_flags(db: Session, link: SubmissionLink) -> SubmissionLi
     return resp
 
 
+_MAX_REFERENCE_IMAGE_BYTES = 15 * 1024 * 1024
+# A URL-ingested video is buffered in memory, unlike the browser's presigned
+# upload which streams straight to S3. This cap is what stops one request pinning
+# a worker's memory; anything larger still goes through the UI's presigned path.
+_MAX_REFERENCE_VIDEO_URL_BYTES = 50 * 1024 * 1024
+
+
+def _attach_reference_image(
+    db: Session, link: SubmissionLink, data: bytes, content_type: str
+) -> SubmissionLinkResponse:
+    """Store image bytes against a link and return the refreshed response.
+
+    Shared by the multipart upload and the URL ingest so both enforce one set of
+    limits — two copies of a size cap is one copy that eventually disagrees.
+    """
+    keys = _ref_image_keys(link)
+    if len(keys) >= _MAX_REFERENCE_ATTACHMENTS:
+        raise HTTPException(status_code=400, detail=f"At most {_MAX_REFERENCE_ATTACHMENTS} reference images per request")
+    if content_type not in _IMAGE_EXT:
+        raise HTTPException(status_code=400, detail="Reference image must be JPEG, PNG, WebP, or GIF")
+    if not data:
+        raise HTTPException(status_code=400, detail="The image is empty")
+    if len(data) > _MAX_REFERENCE_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Reference image must be 15 MB or smaller")
+    # Unique per upload so several images can coexist in order.
+    s3_key = f"briefs/manual/{link.id}-reference-image-{uuid.uuid4().hex[:8]}{_IMAGE_EXT[content_type]}"
+    s3_service.put_object(s3_key, data, content_type=content_type)
+    link.brief_reference_image_s3_keys = [*keys, s3_key]
+    db.commit()
+    db.refresh(link)
+    return _link_response_with_flags(db, link)
+
+
+def _attach_reference_video(
+    db: Session, link: SubmissionLink, data: bytes, content_type: str
+) -> SubmissionLinkResponse:
+    """Store video bytes against a link. Only used by the URL ingest — the browser
+    still presigns and uploads direct to S3, which is why there is no size check
+    on that path."""
+    keys = _ref_video_keys(link)
+    if len(keys) >= _MAX_REFERENCE_ATTACHMENTS:
+        raise HTTPException(status_code=400, detail=f"At most {_MAX_REFERENCE_ATTACHMENTS} reference videos per request")
+    if not content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="Reference must be a video file")
+    if not data:
+        raise HTTPException(status_code=400, detail="The video is empty")
+    s3_key = f"{_reference_video_prefix(link.id)}-{uuid.uuid4().hex[:8]}{_VIDEO_EXT.get(content_type, '.mp4')}"
+    s3_service.put_object(s3_key, data, content_type=content_type)
+    link.brief_reference_video_s3_keys = [*keys, s3_key]
+    db.commit()
+    db.refresh(link)
+    return _link_response_with_flags(db, link)
+
+
 @router.post("/submission-links/{link_id}/reference-image", response_model=SubmissionLinkResponse)
 async def upload_reference_image(
     link_id: uuid.UUID,
@@ -641,24 +696,9 @@ async def upload_reference_image(
     pictures for static briefs, shown as a carousel on the brief page. Served to
     submitters through the public GET /submit/{token}/reference-image/{index} route."""
     link = _get_owned_link(db, link_id, current_user)
-    keys = _ref_image_keys(link)
-    if len(keys) >= _MAX_REFERENCE_ATTACHMENTS:
-        raise HTTPException(status_code=400, detail=f"At most {_MAX_REFERENCE_ATTACHMENTS} reference images per request")
-    content_type = (file.content_type or "").lower()
-    if content_type not in _IMAGE_EXT:
-        raise HTTPException(status_code=400, detail="Reference image must be JPEG, PNG, WebP, or GIF")
-    data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="The uploaded image is empty")
-    if len(data) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Reference image must be 15 MB or smaller")
-    # Unique per upload so several images can coexist in order.
-    s3_key = f"briefs/manual/{link.id}-reference-image-{uuid.uuid4().hex[:8]}{_IMAGE_EXT[content_type]}"
-    s3_service.put_object(s3_key, data, content_type=content_type)
-    link.brief_reference_image_s3_keys = [*keys, s3_key]
-    db.commit()
-    db.refresh(link)
-    return _link_response_with_flags(db, link)
+    return _attach_reference_image(
+        db, link, await file.read(), (file.content_type or "").lower()
+    )
 
 
 @router.delete("/submission-links/{link_id}/reference-image/{index}", status_code=status.HTTP_204_NO_CONTENT)
@@ -698,6 +738,59 @@ def delete_reference_images(
             s3_service.delete_object(key)
         except Exception:
             pass  # object may already be gone; the row is what matters
+
+
+class ReferenceFromUrlRequest(BaseModel):
+    url: str
+
+
+@router.post("/submission-links/{link_id}/reference-image/from-url", response_model=SubmissionLinkResponse)
+def add_reference_image_from_url(
+    link_id: uuid.UUID,
+    body: ReferenceFromUrlRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner/admin: attach a reference image by URL, fetched server-side.
+
+    Exists because an agent over MCP has JSON and no file handle, so multipart is
+    not reachable from there. Ownership is checked before the fetch: an unauthorised
+    caller must not be able to use this as a URL prober.
+    """
+    link = _get_owned_link(db, link_id, current_user)
+    try:
+        data, content_type = fetch_remote_file(
+            body.url,
+            allowed_content_types=tuple(_IMAGE_EXT.keys()),
+            max_bytes=_MAX_REFERENCE_IMAGE_BYTES,
+        )
+    except RemoteFetchError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _attach_reference_image(db, link, data, content_type)
+
+
+@router.post("/submission-links/{link_id}/reference-video/from-url", response_model=SubmissionLinkResponse)
+def add_reference_video_from_url(
+    link_id: uuid.UUID,
+    body: ReferenceFromUrlRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Owner/admin: attach a reference video by URL, fetched server-side.
+
+    Buffers in memory, so it is capped well below what the presigned browser path
+    accepts. Same ownership-before-fetch ordering as the image route.
+    """
+    link = _get_owned_link(db, link_id, current_user)
+    try:
+        data, content_type = fetch_remote_file(
+            body.url,
+            allowed_content_types=("video/",),
+            max_bytes=_MAX_REFERENCE_VIDEO_URL_BYTES,
+        )
+    except RemoteFetchError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _attach_reference_video(db, link, data, content_type)
 
 
 class ReferenceFromAssetRequest(BaseModel):
