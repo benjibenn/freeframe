@@ -305,6 +305,34 @@ def add_brief_reference(link_id: str, url: str, kind: str = "auto") -> dict[str,
 
 @mcp.tool(
     description=(
+        "Submit finished work against a brief — the deliverable an editor would "
+        "upload, not an 'adapt this' example (that is add_brief_reference). The "
+        "server fetches the URL itself, so it must be publicly reachable; a local "
+        "path or private address will not work. Signed URLs work but must still be "
+        "valid at the moment of the call. Images and videos up to 200 MB; anything "
+        "larger has to go through the web UI. When the brief prescribes deliverable "
+        "names (its hook_variations), asset_name must be exactly one of them — "
+        "call get_brief first to read them. Submitting the same name twice adds a "
+        "new version to that deliverable rather than a second one beside it."
+    )
+)
+def submit_work(link_id: str, url: str, asset_name: Optional[str] = None) -> dict[str, Any]:
+    """Args: url — a public http(s) URL; asset_name — which deliverable this is."""
+    _require_scope(SCOPE_WRITE)
+    link_uuid = _uuid(link_id, "link_id")
+    body = submissions_router.SubmitWorkFromUrlRequest(url=url, asset_name=asset_name)
+    result = _call(submissions_router.submit_work_from_url, link_id=link_uuid, body=body)
+    return {
+        "submission_project_id": str(result.submission_project_id),
+        "asset_id": str(result.asset_id),
+        "asset_name": result.asset_name,
+        "version_number": result.version_number,
+        "status": result.status,
+    }
+
+
+@mcp.tool(
+    description=(
         "Detach reference media from a brief. Pass an index to remove one item "
         "(0-based, in the order get_brief reports them), or omit it to remove every "
         "reference of that kind. The stored file is deleted; submissions and their "
