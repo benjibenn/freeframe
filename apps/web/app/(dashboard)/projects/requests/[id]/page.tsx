@@ -24,6 +24,8 @@ import {
   ImageIcon,
   Upload,
   Banknote,
+  Maximize2,
+  Braces,
 } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -40,6 +42,7 @@ import {
   attachReferenceAsset,
 } from '@/components/projects/use-reference-picker'
 import { SAMPLE_BRIEF_JSON, languagesFromBrief, withLanguages } from '@/lib/sample-brief'
+import { useAuthStore } from '@/stores/auth-store'
 import type { VideoRequest } from '@/components/projects/request-card'
 
 interface SubmissionItem {
@@ -86,6 +89,14 @@ export default function RequestDetailPage() {
   const router = useRouter()
   const toast = useToast()
   const id = params.id
+
+  // Settings page is admin-only. The API already 403s everyone else; this just
+  // lands editors somewhere useful (their task list) instead of a broken page.
+  const { user } = useAuthStore()
+  const isPlatformAdmin = !!(user?.is_superadmin || user?.is_subadmin)
+  React.useEffect(() => {
+    if (user && !isPlatformAdmin) router.replace('/tasks')
+  }, [user, isPlatformAdmin, router])
 
   const { data: request, mutate: mutateRequest } = useSWR<VideoRequest>(
     id ? `/submission-links/${id}` : null,
@@ -381,6 +392,7 @@ export default function RequestDetailPage() {
   const [briefLoaded, setBriefLoaded] = React.useState(false)
   const [savingBriefJson, setSavingBriefJson] = React.useState(false)
   const [briefPreviewOpen, setBriefPreviewOpen] = React.useState(false)
+  const [briefExpanded, setBriefExpanded] = React.useState(false)
   React.useEffect(() => {
     if (request && !briefLoaded) {
       setBriefText(request.brief_json ? JSON.stringify(request.brief_json, null, 2) : '')
@@ -423,11 +435,32 @@ export default function RequestDetailPage() {
     }
   }
 
+  // Pretty-print in place. Deliberately does not run withLanguages() — formatting
+  // should never change what gets saved, only how it reads.
+  const formatBriefJson = () => {
+    const text = briefText.trim()
+    if (!text) return
+    try {
+      setBriefText(JSON.stringify(JSON.parse(text), null, 2))
+    } catch {
+      toast.error('Brief is not valid JSON')
+    }
+  }
+
   let briefPreview: Record<string, unknown> | null = null
   try {
     briefPreview = briefText.trim() ? JSON.parse(briefText) : null
   } catch {
     briefPreview = null
+  }
+
+  // Shared between the inline editor and the fullscreen dialog so the two can
+  // never drift apart.
+  const briefEditorProps = {
+    placeholder: SAMPLE_BRIEF_JSON,
+    value: briefText,
+    onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => setBriefText(e.target.value),
+    spellCheck: false,
   }
 
   const referenceEnabled = !!request?.reference_project_id
@@ -757,6 +790,24 @@ export default function RequestDetailPage() {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={formatBriefJson}
+              disabled={!briefText.trim()}
+              title="Pretty-print the JSON"
+            >
+              <Braces className="h-4 w-4" />
+              Format
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setBriefExpanded(true)}
+              title="Edit fullscreen"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </Button>
             {briefPreview && (
               <Button variant="secondary" size="sm" onClick={() => setBriefPreviewOpen(true)}>
                 Preview
@@ -782,13 +833,51 @@ export default function RequestDetailPage() {
           </p>
         </div>
         <textarea
-          className="mt-3 flex min-h-[140px] w-full rounded-md border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-          placeholder={SAMPLE_BRIEF_JSON}
-          value={briefText}
-          onChange={(e) => setBriefText(e.target.value)}
-          spellCheck={false}
+          {...briefEditorProps}
+          className="mt-3 flex min-h-[360px] w-full resize-y rounded-md border border-border bg-bg-primary px-3 py-2 font-mono text-xs leading-relaxed text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
         />
       </div>
+
+      {/* Fullscreen brief editor */}
+      <Dialog.Root open={briefExpanded} onOpenChange={setBriefExpanded}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex h-[90vh] w-full max-w-5xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-bg-secondary shadow-xl">
+            <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+              <Dialog.Title className="text-sm font-semibold text-text-primary">
+                Structured brief (JSON)
+              </Dialog.Title>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={formatBriefJson}
+                  disabled={!briefText.trim()}
+                >
+                  <Braces className="h-4 w-4" />
+                  Format
+                </Button>
+                <Button size="sm" onClick={saveBriefJson} disabled={savingBriefJson || !request}>
+                  {savingBriefJson && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Save
+                </Button>
+                <Dialog.Close asChild>
+                  <button className="flex h-6 w-6 items-center justify-center rounded text-text-tertiary hover:bg-bg-hover hover:text-text-primary">
+                    <X className="h-4 w-4" />
+                  </button>
+                </Dialog.Close>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden p-4">
+              <textarea
+                {...briefEditorProps}
+                autoFocus
+                className="h-full w-full resize-none rounded-md border border-border bg-bg-primary px-3 py-2 font-mono text-xs leading-relaxed text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+              />
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {/* Structured brief preview */}
       <Dialog.Root open={briefPreviewOpen} onOpenChange={setBriefPreviewOpen}>
