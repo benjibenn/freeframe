@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { DM_Sans } from "next/font/google";
 import { ToastProvider } from "@/components/shared/toast";
 import { ThemeInitializer } from "@/components/shared/theme-initializer";
+import { APP_TITLE } from "@/lib/constants";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -13,7 +14,7 @@ const dmSans = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "FreeFrame",
+  title: APP_TITLE,
   description: "Collaborative media review and approval platform",
 };
 

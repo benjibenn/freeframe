@@ -18,6 +18,7 @@ import {
   ArrowLeft,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { APP_TITLE } from '@/lib/constants'
 import type {
   SharePermission,
   ShareLinkAppearance,
@@ -1087,8 +1088,8 @@ export function FolderShareViewer({
 
   // Set page title
   React.useEffect(() => {
-    document.title = title ? `${title} – FreeFrame` : 'FreeFrame'
-    return () => { document.title = 'FreeFrame' }
+    document.title = title || APP_TITLE
+    return () => { document.title = APP_TITLE }
   }, [title])
   const [selectedAsset, setSelectedAsset] = React.useState<FolderShareAssetItem | null>(null)
 
@@ -1352,7 +1353,7 @@ export function FolderShareViewer({
               className="flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-bold text-text-primary shrink-0"
               style={{ backgroundColor: accentColor }}
             >
-              {(branding?.custom_title ?? folderName ?? 'FF').substring(0, 2).toUpperCase()}
+              {(branding?.custom_title ?? folderName ?? '').substring(0, 2).toUpperCase()}
             </div>
           )}
 

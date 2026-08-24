@@ -169,9 +169,15 @@ class Settings(BaseSettings):
     # Email settings - supports AWS SES or any SMTP server
     # If mail_provider is "ses", uses AWS SES with aws_mail_* credentials
     # If mail_provider is "smtp", uses standard SMTP with smtp_* settings
+    # Name this deployment refers to itself by in outbound email ("invited you
+    # to join <org_name>"). There is no org record in the DB — workspace naming
+    # lives client-side in Settings → Branding, which the API cannot read — so
+    # each tenant sets ORG_NAME in its environment.
+    org_name: str = "the team"
+
     mail_provider: str = "ses"  # "ses" or "smtp"
     mail_from_address: str = "noreply@example.com"
-    mail_from_name: str = "FreeFrame"
+    mail_from_name: str = "Notifications"
     
     # AWS SES settings
     aws_mail_access_key_id: str | None = None
