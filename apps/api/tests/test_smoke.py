@@ -3,6 +3,8 @@ Smoke tests: verify the app starts, /health works, and OpenAPI schema is populat
 These tests do not require a real database or S3.
 """
 
+import json
+
 
 def test_app_starts(client):
     resp = client.get("/health")
@@ -23,15 +25,17 @@ def test_openapi_title(client):
     resp = client.get("/openapi.json")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["info"]["title"] == "FreeFrame API"
+    assert data["info"]["title"] == "API"
 
 
-def test_openapi_contact(client):
+def test_openapi_carries_no_vendor_branding(client):
+    """The API ships unbranded: every tenant white-labels this deployment, so
+    /openapi.json must not leak a vendor name or an upstream repo URL."""
     resp = client.get("/openapi.json")
     assert resp.status_code == 200
-    data = resp.json()
-    assert "contact" in data["info"]
-    assert data["info"]["contact"]["name"] == "FreeFrame"
+    info = resp.json()["info"]
+    assert "contact" not in info
+    assert "freeframe" not in json.dumps(info).lower()
 
 
 def test_openapi_license(client):

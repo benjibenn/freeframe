@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { Palette, Upload, X, Check, RotateCcw, Moon, Sun } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
-import { useBrandingStore } from '@/stores/branding-store'
+import { useBrandingStore, DEFAULT_ORG_NAME } from '@/stores/branding-store'
 import { useThemeStore } from '@/stores/theme-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -104,7 +104,7 @@ export default function BrandingPage() {
   }
 
   const isAdmin = user?.is_superadmin
-  const hasCustomBranding = orgName !== 'FreeFrame' || orgLogoDark !== null || orgLogoLight !== null
+  const hasCustomBranding = orgName !== DEFAULT_ORG_NAME || orgLogoDark !== null || orgLogoLight !== null
 
   // Which logo is active right now
   const activeLogo = theme === 'light' ? (orgLogoLight ?? orgLogoDark) : (orgLogoDark ?? orgLogoLight)
@@ -146,7 +146,7 @@ export default function BrandingPage() {
             <p className="text-sm text-text-secondary">{orgName}</p>
           )}
           <p className="text-xs text-text-tertiary">
-            Shown in the sidebar. Defaults to &ldquo;FreeFrame&rdquo;.
+            Shown in the sidebar. Defaults to &ldquo;{DEFAULT_ORG_NAME}&rdquo;.
           </p>
         </div>
       </section>
@@ -199,12 +199,10 @@ export default function BrandingPage() {
               // eslint-disable-next-line @next/next/no-img-element
               <img src={activeLogo} alt={orgName} className="h-full w-full object-contain" />
             ) : (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/logo-icon.png" alt="FreeFrame" className="h-6 w-6 object-contain logo-dark" />
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/logo-icon-dark.png" alt="FreeFrame" className="h-6 w-6 object-contain logo-light" />
-              </>
+              // No bundled fallback logo — stand in with the name's initial.
+              <span className="text-xs font-semibold text-text-tertiary">
+                {orgName.charAt(0).toUpperCase()}
+              </span>
             )}
           </div>
           <span className="text-sm font-semibold text-text-primary tracking-tight">{orgName}</span>
@@ -218,7 +216,7 @@ export default function BrandingPage() {
             variant="ghost"
             size="sm"
             className="text-status-error hover:text-status-error hover:bg-status-error/10 gap-1.5"
-            onClick={() => { resetAll(); setNameValue('FreeFrame') }}
+            onClick={() => { resetAll(); setNameValue(DEFAULT_ORG_NAME) }}
           >
             <RotateCcw className="h-3.5 w-3.5" />
             Reset to defaults
