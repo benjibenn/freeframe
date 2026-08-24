@@ -105,29 +105,15 @@ export function Sidebar({ collapsed: collapsedProp, onToggle, mobileOpen = false
           collapsed ? 'justify-center px-0' : 'px-4 gap-2.5',
         )}
       >
-        {/* Logo: theme-aware custom logo, or default FreeFrame icons */}
-        {customLogo ? (
+        {/* Logo: the org's own theme-aware logo, if one has been uploaded.
+            There is no bundled default — an org with no logo shows only its name. */}
+        {customLogo && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={customLogo}
             alt={orgName}
             className="h-7 w-7 shrink-0 object-contain rounded"
           />
-        ) : (
-          <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/logo-icon.png"
-              alt={orgName}
-              className="h-7 w-7 shrink-0 object-contain logo-dark"
-            />
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/logo-icon-dark.png"
-              alt={orgName}
-              className="h-7 w-7 shrink-0 object-contain logo-light"
-            />
-          </>
         )}
         {!collapsed && (
           <span className="text-sm font-semibold text-text-primary tracking-tight">

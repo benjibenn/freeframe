@@ -19,6 +19,7 @@ import {
   Music,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { APP_TITLE } from '@/lib/constants'
 import { Button } from '@/components/ui/button'
 import { GuestCommentInput } from '@/components/review/guest-comment-input'
 import { FolderShareViewer } from '@/components/share/folder-share-viewer'
@@ -417,7 +418,7 @@ function ShareTopBar({
               }}
             />
           ) : (
-            'FF'
+            shareName.substring(0, 2).toUpperCase()
           )}
         </div>
 
@@ -811,7 +812,7 @@ function ShareViewer({
       .finally(() => setStreamLoading(false))
   }, [token, asset.asset_type, asset.stream_url, asset.id, selectedVersionId])
 
-  const displayName = shareName || branding?.custom_title || 'FreeFrame'
+  const displayName = shareName || branding?.custom_title || APP_TITLE
 
   return (
     <div className="absolute inset-0 flex flex-col bg-zinc-950 text-white overflow-hidden">

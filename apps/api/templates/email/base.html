@@ -24,15 +24,6 @@
             padding: 32px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
         }
-        .logo {
-            text-align: center;
-            margin-bottom: 24px;
-        }
-        .logo h1 {
-            color: #4F46E5;
-            font-size: 24px;
-            margin: 0;
-        }
         h2 {
             color: #1a1a1a;
             font-size: 20px;
@@ -90,15 +81,11 @@
 <body>
     <div class="container">
         <div class="card">
-            <div class="logo">
-                <h1>FreeFrame</h1>
-            </div>
             {% block content %}{% endblock %}
         </div>
         <div class="footer">
-            <p>© {{ year }} FreeFrame. All rights reserved.</p>
             <p class="muted">
-                You're receiving this email because you have an account on FreeFrame.
+                You're receiving this email because you have an account here.
             </p>
         </div>
     </div>

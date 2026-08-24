@@ -96,7 +96,7 @@ function ConsentScreen() {
           </div>
           <div>
             <h1 className="text-lg font-semibold text-text-primary">
-              Connect to Freeframe
+              Authorize access
             </h1>
             {user && (
               <p className="text-sm text-text-secondary">Signed in as {user.email}</p>
@@ -115,7 +115,7 @@ function ConsentScreen() {
           <>
             <p className="text-sm text-text-secondary">
               <span className="font-medium text-text-primary">{info.client_name}</span>{" "}
-              wants to act on your behalf in Freeframe.
+              wants to act on your behalf.
             </p>
 
             <div className="space-y-2 rounded-lg border border-border bg-bg-tertiary p-3">
