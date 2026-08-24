@@ -1,0 +1,6 @@
+Keeps apps/web/public/ in git even while it holds no assets.
+
+Dockerfile.prod does `COPY --from=builder /app/public ./public`, which fails the
+image build outright if the directory does not exist. Removing the last file
+from public/ therefore breaks deploys even though `next build` still succeeds
+locally — the local build never touches this directory. Do not delete.
