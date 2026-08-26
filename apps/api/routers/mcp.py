@@ -36,9 +36,12 @@ from ..schemas.submission import (
     DuplicateLinkRequest,
     SubmissionLinkCreate,
 )
+from ..schemas.task_stage import BriefAssigneeAssign, TaskStageAssign
 from . import folders as folders_router
 from . import projects as projects_router
 from . import submissions as submissions_router
+from . import tasks as tasks_router
+from . import users as users_router
 
 # Set by the ASGI wrapper below, read by the tools. Safe because a stateless
 # streamable-HTTP request is handled start-to-finish in one task.
@@ -500,6 +503,104 @@ def delete_brief(link_ids: list[str]) -> dict[str, Any]:
         "requested": len(link_ids),
         "note": "Soft delete: submissions and their uploaded files are retained.",
     }
+
+
+# ── Task pipeline ────────────────────────────────────────────────────────────
+
+def _stage_summary(stage: Any) -> dict[str, Any]:
+    return {
+        "id": str(stage.id),
+        "name": stage.name,
+        "position": stage.position,
+        "color": stage.color,
+        "is_default": stage.is_default,
+    }
+
+
+@mcp.tool(
+    description=(
+        "List the pipeline stages a brief moves through (e.g. Pending, In "
+        "Progress, Review, Done), in board order. Call this before "
+        "set_brief_task_stage — it needs a real stage id."
+    )
+)
+def list_task_stages() -> list[dict[str, Any]]:
+    _require_scope(SCOPE_READ)
+    return [_stage_summary(s) for s in _call(tasks_router.list_task_stages)]
+
+
+@mcp.tool(
+    description=(
+        "List everyone who can own a brief: platform admins plus any editor who "
+        "has accepted a submission link. Call this before assign_brief_owner — "
+        "it needs a real user id."
+    )
+)
+def list_assignable_users() -> list[dict[str, Any]]:
+    _require_scope(SCOPE_READ)
+    return [
+        {"id": str(u.id), "name": u.name, "email": u.email}
+        for u in _call(users_router.list_assignable_users)
+    ]
+
+
+def _brief_task_summary(item: Any) -> dict[str, Any]:
+    # Mirrors what the board shows for one brief, without the nested asset list —
+    # these tools change one field on one brief and hand back what changed, not
+    # the file tree underneath it.
+    return {
+        "id": str(item.id),
+        "title": item.title,
+        "taxonomy_path": item.taxonomy_path,
+        "task_stage_id": str(item.task_stage_id) if item.task_stage_id else None,
+        "assignee_id": str(item.assignee_id) if item.assignee_id else None,
+        "assignee_name": item.assignee_name,
+        "submit_url": item.submit_url,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
+
+
+@mcp.tool(
+    description=(
+        "Move a brief to a different pipeline stage, or pass null to clear its "
+        "stage. Get a real stage id from list_task_stages first. Platform admins "
+        "may move any brief; anyone else only a brief they own."
+    )
+)
+def set_brief_task_stage(link_id: str, task_stage_id: str | None) -> dict[str, Any]:
+    """Args: link_id — the brief to move. task_stage_id — a stage id from
+    list_task_stages, or null to clear the stage."""
+    _require_scope(SCOPE_WRITE)
+    updated = _call(
+        tasks_router.set_brief_task_stage,
+        link_id=_uuid(link_id, "link_id"),
+        body=TaskStageAssign(
+            task_stage_id=_uuid(task_stage_id, "task_stage_id") if task_stage_id else None
+        ),
+    )
+    return _brief_task_summary(updated)
+
+
+@mcp.tool(
+    description=(
+        "Set the internal owner of a brief — whose desk it sits on — or pass "
+        "null to unassign it. Distinct from the editors who accepted the link, "
+        "which is derived and not settable here. Get a real user id from "
+        "list_assignable_users first. Platform-admin only."
+    )
+)
+def assign_brief_owner(link_id: str, assignee_id: str | None) -> dict[str, Any]:
+    """Args: link_id — the brief to reassign. assignee_id — a user id from
+    list_assignable_users, or null to unassign."""
+    _require_scope(SCOPE_WRITE)
+    updated = _call(
+        tasks_router.set_brief_assignee,
+        link_id=_uuid(link_id, "link_id"),
+        body=BriefAssigneeAssign(
+            assignee_id=_uuid(assignee_id, "assignee_id") if assignee_id else None
+        ),
+    )
+    return _brief_task_summary(updated)
 
 
 # ── ASGI ─────────────────────────────────────────────────────────────────────
