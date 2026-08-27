@@ -14,6 +14,7 @@ Stateless by design: `stateless_http=True` means every request carries its own a
 and completes in its own task, so the resolved user propagates cleanly through a
 ContextVar and the app stays safe to run behind more than one worker.
 """
+import secrets
 import uuid
 from contextvars import ContextVar
 from datetime import datetime
@@ -27,8 +28,9 @@ from ..config import settings
 from ..database import SessionLocal
 from ..middleware.api_key import resolve_api_key_user
 from ..services import mcp_oauth
-from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE
+from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE, SCOPE_USERS_ADMIN
 from ..models.user import User
+from ..schemas.auth import AdminSetPasswordRequest, InviteRequest
 from ..schemas.submission import (
     BriefJsonUpdate,
     BulkDeleteRequest,
@@ -37,6 +39,7 @@ from ..schemas.submission import (
     SubmissionLinkCreate,
 )
 from ..schemas.task_stage import BriefAssigneeAssign, TaskStageAssign
+from . import admin as admin_router
 from . import folders as folders_router
 from . import projects as projects_router
 from . import submissions as submissions_router
@@ -72,6 +75,20 @@ def _require_scope(scope: str) -> None:
         raise ValueError(
             f"This token is missing the {scope} scope; it holds {held or 'no scopes'}"
         )
+
+
+def _require_admin() -> None:
+    """Enforce that the resolved caller is a platform admin.
+
+    users_router.invite_user's real gate is Depends(require_admin) — a FastAPI
+    dependency that only runs when the route is invoked through the app, not when
+    _call() invokes the function directly with current_user already supplied.
+    Without this, any MCP caller could invite a user regardless of their own
+    admin status.
+    """
+    if not _user().is_superadmin:
+        raise ValueError("Admin access required")
+
 
 mcp = FastMCP(
     name="freeframe",
@@ -601,6 +618,72 @@ def assign_brief_owner(link_id: str, assignee_id: str | None) -> dict[str, Any]:
         ),
     )
     return _brief_task_summary(updated)
+
+
+# ── User management ──────────────────────────────────────────────────────────
+
+def _user_summary(user: Any) -> dict[str, Any]:
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "name": user.name,
+        "status": user.status.value if hasattr(user.status, "value") else user.status,
+        "email_verified": user.email_verified,
+    }
+
+
+@mcp.tool(
+    description=(
+        "Invite a new user by email. Creates the account in a pending-invite "
+        "state and emails them a link to set their own password; nothing here "
+        "sets one. Fails if the email is already registered. Platform-admin only."
+    )
+)
+def invite_user(email: str, name: str) -> dict[str, Any]:
+    """Args: email — the address to invite. name — display name for the new account."""
+    _require_scope(SCOPE_USERS_ADMIN)
+    _require_admin()
+    created = _call(users_router.invite_user, body=InviteRequest(email=email, name=name))
+    return _user_summary(created)
+
+
+@mcp.tool(
+    description=(
+        "Force-activate a user still waiting on email verification or an invite, "
+        "without them completing that flow. Vouches for their email and burns any "
+        "outstanding invite token. Deactivated users need reactivation instead, "
+        "not this. Platform-admin only."
+    )
+)
+def activate_user(user_id: str) -> dict[str, Any]:
+    """Args: user_id — the user to activate."""
+    _require_scope(SCOPE_USERS_ADMIN)
+    updated = _call(admin_router.activate_user, user_id=_uuid(user_id, "user_id"))
+    return _user_summary(updated)
+
+
+@mcp.tool(
+    description=(
+        "Reset a user's password to a freshly generated random one and return it "
+        "once in this result — there is no other way to retrieve it afterwards. "
+        "Takes no password argument by design: a caller-supplied password would "
+        "sit in plaintext in this request's tool-call log. Does not activate a "
+        "pending account; call activate_user separately if needed. "
+        "Platform-admin only."
+    )
+)
+def reset_user_password(user_id: str) -> dict[str, Any]:
+    """Args: user_id — the user whose password to reset."""
+    _require_scope(SCOPE_USERS_ADMIN)
+    new_password = secrets.token_urlsafe(18)
+    updated = _call(
+        admin_router.set_user_password,
+        user_id=_uuid(user_id, "user_id"),
+        body=AdminSetPasswordRequest(password=new_password),
+    )
+    out = _user_summary(updated)
+    out["password"] = new_password
+    return out
 
 
 # ── ASGI ─────────────────────────────────────────────────────────────────────
