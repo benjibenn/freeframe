@@ -534,6 +534,128 @@ def test_delete_brief_rejects_an_empty_selection(as_admin):
         mcp_router.delete_brief(link_ids=[])
 
 
+# ── Task pipeline ────────────────────────────────────────────────────────────
+
+def _stage(**over):
+    s = MagicMock()
+    s.id = over.get("id", uuid.uuid4())
+    s.name = over.get("name", "In Progress")
+    s.position = over.get("position", 1)
+    s.color = over.get("color", "#00ff00")
+    s.is_default = over.get("is_default", False)
+    return s
+
+
+def _owner(**over):
+    u = MagicMock()
+    u.id = over.get("id", uuid.uuid4())
+    u.name = over.get("name", "Jamie Cho")
+    u.email = over.get("email", "jamie@example.com")
+    return u
+
+
+def _brief_task(**over):
+    item = MagicMock()
+    item.id = over.get("id", uuid.uuid4())
+    item.title = over.get("title", "Spring campaign")
+    item.taxonomy_path = over.get("taxonomy_path", "ecom/Phones")
+    item.task_stage_id = over.get("task_stage_id")
+    item.assignee_id = over.get("assignee_id")
+    item.assignee_name = over.get("assignee_name")
+    item.submit_url = over.get("submit_url", "https://x.test/submit/tok")
+    item.created_at = over.get("created_at", datetime.now(timezone.utc))
+    return item
+
+
+def test_list_task_stages_reports_board_order(as_admin):
+    stages = [_stage(name="Pending", position=1), _stage(name="Done", position=2)]
+    with patch.object(mcp_router.tasks_router, "list_task_stages", return_value=stages):
+        out = mcp_router.list_task_stages()
+    assert [s["name"] for s in out] == ["Pending", "Done"]
+
+
+def test_list_assignable_users_reports_id_name_email(as_admin):
+    owner = _owner(name="Jamie Cho", email="jamie@example.com")
+    with patch.object(mcp_router.users_router, "list_assignable_users", return_value=[owner]):
+        out = mcp_router.list_assignable_users()
+    assert out == [{"id": str(owner.id), "name": "Jamie Cho", "email": "jamie@example.com"}]
+
+
+def test_set_brief_task_stage_passes_the_stage_id_through(as_admin):
+    stage_id = uuid.uuid4()
+    link_id = uuid.uuid4()
+    with patch.object(
+        mcp_router.tasks_router,
+        "set_brief_task_stage",
+        return_value=_brief_task(id=link_id, task_stage_id=stage_id),
+    ) as moved:
+        out = mcp_router.set_brief_task_stage(link_id=str(link_id), task_stage_id=str(stage_id))
+    assert moved.call_args.kwargs["link_id"] == link_id
+    assert moved.call_args.kwargs["body"].task_stage_id == stage_id
+    assert out["task_stage_id"] == str(stage_id)
+
+
+def test_set_brief_task_stage_null_clears_the_stage(as_admin):
+    """Passing null must reach the endpoint as None, not the string "None"."""
+    link_id = uuid.uuid4()
+    with patch.object(
+        mcp_router.tasks_router,
+        "set_brief_task_stage",
+        return_value=_brief_task(id=link_id, task_stage_id=None),
+    ) as moved:
+        mcp_router.set_brief_task_stage(link_id=str(link_id), task_stage_id=None)
+    assert moved.call_args.kwargs["body"].task_stage_id is None
+
+
+def test_set_brief_task_stage_surfaces_the_owned_brief_check(as_admin):
+    """_owned_brief_or_403 backs this endpoint — a non-owner must see why, not a bare 500."""
+    with patch.object(
+        mcp_router.tasks_router,
+        "set_brief_task_stage",
+        side_effect=HTTPException(status_code=404, detail="Request not found"),
+    ):
+        with pytest.raises(ValueError, match="Request not found"):
+            mcp_router.set_brief_task_stage(link_id=str(uuid.uuid4()), task_stage_id=str(uuid.uuid4()))
+
+
+def test_assign_brief_owner_passes_the_assignee_id_through(as_admin):
+    link_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    with patch.object(
+        mcp_router.tasks_router,
+        "set_brief_assignee",
+        return_value=_brief_task(id=link_id, assignee_id=owner_id, assignee_name="Jamie Cho"),
+    ) as assigned:
+        out = mcp_router.assign_brief_owner(link_id=str(link_id), assignee_id=str(owner_id))
+    assert assigned.call_args.kwargs["link_id"] == link_id
+    assert assigned.call_args.kwargs["body"].assignee_id == owner_id
+    assert out["assignee_name"] == "Jamie Cho"
+
+
+def test_assign_brief_owner_null_unassigns(as_admin):
+    link_id = uuid.uuid4()
+    with patch.object(
+        mcp_router.tasks_router,
+        "set_brief_assignee",
+        return_value=_brief_task(id=link_id, assignee_id=None),
+    ) as assigned:
+        mcp_router.assign_brief_owner(link_id=str(link_id), assignee_id=None)
+    assert assigned.call_args.kwargs["body"].assignee_id is None
+
+
+def test_assign_brief_owner_is_platform_admin_only(as_admin):
+    """set_brief_assignee itself calls require_platform_admin — assigning ownership,
+    unlike moving a stage, has no self-service path. This asserts the 403 reaches
+    the caller as an actionable message, same guarantee as every other write tool."""
+    with patch.object(
+        mcp_router.tasks_router,
+        "set_brief_assignee",
+        side_effect=HTTPException(status_code=403, detail="Platform admin required"),
+    ):
+        with pytest.raises(ValueError, match="Platform admin required"):
+            mcp_router.assign_brief_owner(link_id=str(uuid.uuid4()), assignee_id=str(uuid.uuid4()))
+
+
 def test_the_mcp_endpoint_answers_with_or_without_a_trailing_slash():
     """Regression: claude.ai stores the URL exactly as typed.
 
