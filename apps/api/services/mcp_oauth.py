@@ -26,7 +26,12 @@ from ..services.permissions import is_platform_admin
 # tools split cleanly along that line.
 SCOPE_READ = "briefs:read"
 SCOPE_WRITE = "briefs:write"
-SUPPORTED_SCOPES = [SCOPE_READ, SCOPE_WRITE]
+# Separate from briefs:write on purpose: a connector that manages briefs has no
+# reason to also create accounts or reset passwords, and the REST endpoints these
+# tools wrap are superadmin-only regardless — this scope is defense in depth for
+# OAuth callers, not the only gate.
+SCOPE_USERS_ADMIN = "users:admin"
+SUPPORTED_SCOPES = [SCOPE_READ, SCOPE_WRITE, SCOPE_USERS_ADMIN]
 
 # An issuer's discovery document and signing keys are stable, so cache per issuer.
 # Keyed by issuer rather than global because the MCP issuer may differ from the
