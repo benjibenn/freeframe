@@ -139,3 +139,80 @@ describe('BriefOverviewTable — reference media', () => {
     expect(screen.queryByText(/^references$/i)).toBeNull()
   })
 })
+
+/**
+ * Filters and the jump-to-review link.
+ *
+ * These encode the working habit the feature exists for: an admin sweeping 98
+ * briefs needs to cut down to the ones with actual work in them, find one by the
+ * name on screen, and open that upload where it can be commented on — without
+ * leaving this page to do any of it.
+ */
+describe('BriefOverviewTable — filters', () => {
+  it('narrows to briefs that actually have files when "Has files" is ticked', async () => {
+    const user = userEvent.setup()
+    render(<BriefOverviewTable rows={ROWS} />)
+
+    await user.click(screen.getByLabelText(/has files/i))
+
+    expect(screen.getByRole('button', { name: /The test report/ })).toBeInTheDocument()
+    // Zero-file brief is gone from the list. Its title survives nowhere else,
+    // since the detail pane falls through to the first visible brief.
+    expect(screen.queryByRole('button', { name: /Pick your side/ })).toBeNull()
+  })
+
+  it('matches the name search against the title and the folder path', async () => {
+    const user = userEvent.setup()
+    render(<BriefOverviewTable rows={ROWS} />)
+    const search = screen.getByLabelText(/search briefs by name/i)
+
+    await user.type(search, 'pick your side')
+    expect(screen.queryByRole('button', { name: /The test report/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Pick your side/ })).toBeInTheDocument()
+
+    // The path is shown on the row, so it is fair game for the same box.
+    await user.clear(search)
+    await user.type(search, 'Iphone 17')
+    expect(screen.getAllByRole('button', { name: /Iphone 17 Pro Max/ })).toHaveLength(2)
+  })
+
+  it('excludes briefs created outside the date range', async () => {
+    const user = userEvent.setup()
+    render(<BriefOverviewTable rows={ROWS} />)
+
+    // Both briefs were created on 2026-09-10; a later "from" must empty the list
+    // rather than silently ignoring the bound.
+    await user.type(screen.getByLabelText(/created from/i), '2026-09-11')
+    expect(screen.getByText(/no briefs match these filters/i)).toBeInTheDocument()
+  })
+
+  it('keeps a brief the filters hide from staying selected in the detail pane', async () => {
+    const user = userEvent.setup()
+    render(<BriefOverviewTable rows={ROWS} />)
+
+    await user.click(screen.getByRole('button', { name: /Pick your side/ }))
+    expect(screen.getByText(/no submissions yet/i)).toBeInTheDocument()
+
+    // "Has files" hides the selected brief — the pane must move on, not keep
+    // showing a brief that is no longer in the list.
+    await user.click(screen.getByLabelText(/has files/i))
+    expect(screen.queryByText(/no submissions yet/i)).toBeNull()
+    expect(screen.getByText('Ada Editor')).toBeInTheDocument()
+  })
+})
+
+describe('BriefOverviewTable — opening an upload', () => {
+  it('links each uploaded file to its review screen with a route back here', async () => {
+    const user = userEvent.setup()
+    render(<BriefOverviewTable rows={ROWS} />)
+    await user.click(screen.getByRole('button', { name: /The test report/ }))
+
+    const link = screen.getByRole('link', { name: /battery-report-v3\.png/ })
+    // project id comes from the SUBMISSION, asset id from the file: the review
+    // route needs both, and the submitter's project is not the brief's home.
+    expect(link).toHaveAttribute(
+      'href',
+      '/projects/p1/assets/f1?from=/admin/briefs',
+    )
+  })
+})
