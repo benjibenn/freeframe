@@ -101,3 +101,41 @@ describe('BriefOverviewTable', () => {
     expect(screen.getByText(/no submissions yet/i)).toBeInTheDocument()
   })
 })
+
+describe('BriefOverviewTable — reference media', () => {
+  it('renders the owner-uploaded reference images the brief was built from', async () => {
+    const user = userEvent.setup()
+    render(<BriefOverviewTable rows={ROWS} />)
+    await user.click(screen.getByRole('button', { name: /The test report/ }))
+
+    // Reference media is served by position off the public submit route, so the
+    // count is the only thing the payload needs to carry.
+    const refs = screen.getAllByAltText(/reference \d/i)
+    expect(refs).toHaveLength(2)
+    expect(refs[0]).toHaveAttribute('src', '/submit/tok-a1/reference-image/0')
+    expect(refs[1]).toHaveAttribute('src', '/submit/tok-a1/reference-image/1')
+  })
+
+  it('renders a player per reference video', async () => {
+    const user = userEvent.setup()
+    const withVideo: BriefOverviewRow[] = [
+      { ...ROWS[0], reference_image_count: 0, reference_video_count: 1 },
+    ]
+    const { container } = render(<BriefOverviewTable rows={withVideo} />)
+    await user.click(screen.getByRole('button', { name: /The test report/ }))
+
+    const videos = container.querySelectorAll('video')
+    expect(videos).toHaveLength(1)
+    expect(videos[0].getAttribute('src')).toBe('/submit/tok-a1/reference-video/0')
+  })
+
+  it('says nothing about references when the brief has none', async () => {
+    const user = userEvent.setup()
+    const bare: BriefOverviewRow[] = [
+      { ...ROWS[0], reference_image_count: 0, reference_video_count: 0 },
+    ]
+    render(<BriefOverviewTable rows={bare} />)
+    await user.click(screen.getByRole('button', { name: /The test report/ }))
+    expect(screen.queryByText(/^references$/i)).toBeNull()
+  })
+})

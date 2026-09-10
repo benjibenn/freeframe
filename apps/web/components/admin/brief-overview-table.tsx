@@ -55,6 +55,17 @@ export type BriefOverviewRow = {
   submissions: BriefOverviewSubmission[]
 }
 
+const API = process.env.NEXT_PUBLIC_API_URL || ''
+
+/**
+ * Reference media is stored as an ordered S3 key list and served by POSITION off
+ * the public submit route, so the payload only carries a count. Rebuild the same
+ * indexed URLs the submit page uses rather than inventing a second scheme.
+ */
+function referenceUrls(token: string, kind: 'image' | 'video', count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `${API}/submit/${token}/reference-${kind}/${i}`)
+}
+
 function Chip({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center rounded-md bg-bg-secondary px-1.5 py-0.5 text-2xs text-text-tertiary">
@@ -127,6 +138,46 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
               <p className="mt-4 border-t border-border pt-4 text-sm text-text-tertiary">
                 No structured brief attached.
               </p>
+            )}
+
+            {(selected.reference_image_count > 0 || selected.reference_video_count > 0) && (
+              <div className="mt-5 border-t border-border pt-4">
+                <h3 className="text-sm font-medium text-text-secondary">References</h3>
+                {selected.reference_image_count > 0 && (
+                  <ul className="mt-2 flex flex-wrap gap-2">
+                    {referenceUrls(selected.token, 'image', selected.reference_image_count).map(
+                      (url, i) => (
+                        <li key={url}>
+                          <a href={url} target="_blank" rel="noreferrer">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={url}
+                              alt={`Reference ${i + 1}`}
+                              className="h-28 w-28 rounded border border-border object-cover transition-opacity hover:opacity-80"
+                            />
+                          </a>
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                )}
+                {selected.reference_video_count > 0 && (
+                  <ul className="mt-2 flex flex-wrap gap-2">
+                    {referenceUrls(selected.token, 'video', selected.reference_video_count).map(
+                      (url) => (
+                        <li key={url}>
+                          <video
+                            src={url}
+                            controls
+                            preload="metadata"
+                            className="h-40 w-64 rounded border border-border bg-black object-contain"
+                          />
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                )}
+              </div>
             )}
 
             <div className="mt-5 border-t border-border pt-4">
