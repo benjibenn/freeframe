@@ -15,6 +15,7 @@ import {
   ChevronsLeft,
   Activity,
   ListChecks,
+  ClipboardList,
   Library,
   BookOpen,
 } from 'lucide-react'
@@ -63,6 +64,10 @@ export function Sidebar({ collapsed: collapsedProp, onToggle, mobileOpen = false
     fetchUnreadCount: fetchActivityUnread,
   } = useActivityStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
+  // Deliberately NOT isPlatformAdmin: the brief overview spans every owner's
+  // briefs and submitters, so it stays superadmin-only. The API enforces the
+  // same rule.
+  const isSuperAdmin = Boolean(user?.is_superadmin)
   const { orgName, orgLogoDark, orgLogoLight } = useBrandingStore()
   const { theme } = useThemeStore()
   // Pick logo based on resolved theme; fall back to the other if only one is set
@@ -201,6 +206,32 @@ export function Sidebar({ collapsed: collapsedProp, onToggle, mobileOpen = false
             {!collapsed && (
               <span className={cn('text-[13px]', pathname.startsWith('/tasks') && 'font-medium')}>
                 Tasks
+              </span>
+            )}
+          </Link>
+        )}
+
+        {/* Brief overview — superadmins only (not sub-admins) */}
+        {isSuperAdmin && (
+          <Link
+            href="/admin/briefs"
+            onClick={() => setNotifOpen(false)}
+            className={cn(
+              'group relative flex items-center rounded-md transition-colors duration-100',
+              collapsed ? 'justify-center h-9 w-9 mx-auto' : 'gap-2.5 px-2.5 h-9',
+              pathname.startsWith('/admin/briefs')
+                ? 'bg-bg-hover text-text-primary'
+                : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
+            )}
+            title={collapsed ? 'Brief overview' : undefined}
+          >
+            <ClipboardList
+              className="h-[18px] w-[18px] shrink-0"
+              strokeWidth={pathname.startsWith('/admin/briefs') ? 2 : 1.5}
+            />
+            {!collapsed && (
+              <span className={cn('text-[13px]', pathname.startsWith('/admin/briefs') && 'font-medium')}>
+                Brief overview
               </span>
             )}
           </Link>

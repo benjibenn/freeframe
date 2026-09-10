@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
-from .routers import auth, oidc, users, projects, upload, events, assets, me, comments, approvals, share, metadata, branding, notifications, admin, setup, folders, hls_proxy, submissions, activity, tasks, public_api, portal, import_router, frame_tags, tag_palette, drive_sync, library, brief_template
+from .routers import auth, oidc, users, projects, upload, events, assets, me, comments, approvals, share, metadata, branding, notifications, admin, setup, folders, hls_proxy, submissions, activity, tasks, public_api, portal, import_router, frame_tags, tag_palette, drive_sync, library, brief_template, brief_overview
 from .routers import mcp as mcp_router
 from .services import mcp_oauth
 from .services.s3_service import ensure_bucket_exists
@@ -101,6 +101,7 @@ app.include_router(tag_palette.router)
 app.include_router(drive_sync.router)
 app.include_router(library.router)
 app.include_router(brief_template.router)
+app.include_router(brief_overview.router)
 
 # Mounted rather than included: the MCP transport is its own ASGI app, not a
 # collection of routes. Its auth is the X-API-Key header, checked inside the mount.
