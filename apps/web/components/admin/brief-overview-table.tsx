@@ -10,8 +10,9 @@
  * project. Pure props — the page owns fetching, this owns presentation.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { Check, Copy } from 'lucide-react'
 import { BriefView } from '@/components/projects/brief-view'
 
 export type BriefOverviewFile = {
@@ -88,6 +89,60 @@ function localDay(iso: string): string {
   const m = `${d.getMonth() + 1}`.padStart(2, '0')
   const day = `${d.getDate()}`.padStart(2, '0')
   return `${d.getFullYear()}-${m}-${day}`
+}
+
+/**
+ * The token-gated page an editor actually submits against. Built from
+ * window.location.origin rather than NEXT_PUBLIC_API_URL: this is the web route
+ * a human opens, not the API that serves reference media. Mirrors the helper in
+ * projects/request-card.tsx, which is where admins copy the same link today.
+ */
+function submitUrl(token: string): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  return `${origin}/submit/${token}`
+}
+
+function CopyBriefLink({ token }: { token: string }) {
+  const [copied, setCopied] = useState(false)
+
+  // Self-clearing rather than a bare setTimeout: the parent remounts this on
+  // every brief switch (key={selected.id}), so a dangling timer would outlive
+  // the component it was meant to reset.
+  useEffect(() => {
+    if (!copied) return
+    const t = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(t)
+  }, [copied])
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(submitUrl(token))
+      setCopied(true)
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title="Copy the submission link to send to an editor"
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+    >
+      {copied ? (
+        <>
+          <Check className="h-3.5 w-3.5 text-status-success" />
+          Copied
+        </>
+      ) : (
+        <>
+          <Copy className="h-3.5 w-3.5" />
+          Copy brief link
+        </>
+      )}
+    </button>
+  )
 }
 
 type Filters = { query: string; from: string; to: string; withFiles: boolean }
@@ -235,10 +290,15 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
           <p className="text-sm text-text-tertiary">Select a brief.</p>
         ) : (
           <>
-            <h2 className="text-base font-semibold text-text-primary">{selected.title}</h2>
-            {selected.home_path && (
-              <p className="mt-0.5 text-xs text-text-tertiary">{selected.home_path}</p>
-            )}
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-text-primary">{selected.title}</h2>
+                {selected.home_path && (
+                  <p className="mt-0.5 text-xs text-text-tertiary">{selected.home_path}</p>
+                )}
+              </div>
+              <CopyBriefLink key={selected.id} token={selected.token} />
+            </div>
 
             {selected.brief_json ? (
               <div className="mt-4 border-t border-border pt-4">
@@ -322,10 +382,17 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
                               {/* The upload's own review screen — comments, annotations,
                                   versions. ?from returns the back arrow here rather than
                                   stranding the admin in a submitter's project folder. */}
+                              {/* New tab on purpose: the overview is a sweeping
+                                  view, and an admin opening six uploads in a row
+                                  should not lose their filters and scroll each
+                                  time. ?from still gives the new tab a sane back
+                                  target if they navigate on from there. */}
                               <Link
                                 href={`/projects/${s.project_id}/assets/${f.asset_id}?from=/admin/briefs`}
+                                target="_blank"
+                                rel="noreferrer"
                                 className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                                title={`Open ${f.name}`}
+                                title={`Open ${f.name} in a new tab`}
                               >
                                 {f.thumbnail_url ? (
                                   <img

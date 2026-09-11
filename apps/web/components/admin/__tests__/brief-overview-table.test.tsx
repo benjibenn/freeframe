@@ -215,4 +215,39 @@ describe('BriefOverviewTable — opening an upload', () => {
       '/projects/p1/assets/f1?from=/admin/briefs',
     )
   })
+
+  it('opens uploads in a new tab so the sweep keeps its filters and scroll', async () => {
+    const user = userEvent.setup()
+    render(<BriefOverviewTable rows={ROWS} />)
+    await user.click(screen.getByRole('button', { name: /The test report/ }))
+
+    const link = screen.getByRole('link', { name: /battery-report-v3\.png/ })
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noreferrer')
+  })
+})
+
+describe('BriefOverviewTable — sharing a brief with editors', () => {
+  // userEvent.setup() installs its own clipboard stub, so these assert on what
+  // actually landed on the clipboard rather than on the call that put it there.
+  it('copies the token-gated submit URL, not an admin-only route', async () => {
+    const user = userEvent.setup()
+    render(<BriefOverviewTable rows={ROWS} />)
+    await user.click(screen.getByRole('button', { name: /The test report/ }))
+    await user.click(screen.getByRole('button', { name: /copy brief link/i }))
+
+    // An editor has no dashboard account, so the link must be the public
+    // /submit/<token> page — anything under /admin or /projects would 404 them.
+    expect(await navigator.clipboard.readText()).toBe('http://localhost:3000/submit/tok-a1')
+    expect(await screen.findByText(/copied/i)).toBeInTheDocument()
+  })
+
+  it('offers the link of whichever brief is selected, not the first one', async () => {
+    const user = userEvent.setup()
+    render(<BriefOverviewTable rows={ROWS} />)
+    await user.click(screen.getByRole('button', { name: /Pick your side/ }))
+    await user.click(screen.getByRole('button', { name: /copy brief link/i }))
+
+    expect(await navigator.clipboard.readText()).toBe('http://localhost:3000/submit/tok-b2')
+  })
 })
