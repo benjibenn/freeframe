@@ -87,7 +87,9 @@ describe('BriefOverviewTable', () => {
 
     await user.click(screen.getByRole('button', { name: /The test report/ }))
 
-    expect(screen.getByText('Ada Editor')).toBeInTheDocument()
+    // 'Ada Editor' also appears as an <option> in the submitter filter, so
+    // scope to the detail pane's own paragraph.
+    expect(screen.getByText('Ada Editor', { selector: 'p' })).toBeInTheDocument()
     expect(screen.getByText('ada@example.com')).toBeInTheDocument()
 
     const thumb = screen.getByAltText('battery-report-v3.png')
@@ -197,7 +199,7 @@ describe('BriefOverviewTable — filters', () => {
     // showing a brief that is no longer in the list.
     await user.click(screen.getByLabelText(/has files/i))
     expect(screen.queryByText(/no submissions yet/i)).toBeNull()
-    expect(screen.getByText('Ada Editor')).toBeInTheDocument()
+    expect(screen.getByText('Ada Editor', { selector: 'p' })).toBeInTheDocument()
   })
 })
 
