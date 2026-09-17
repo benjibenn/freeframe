@@ -26,6 +26,7 @@ import { useReview } from "./review-provider";
 import { useDrawing } from "@/hooks/use-drawing";
 import { useAuth } from "@/hooks/use-auth";
 import { api } from "@/lib/api";
+import { displayName } from "@/lib/display-name";
 import type { User } from "@/types";
 
 // Comment visibility tiers and their UI treatment. `admin` is only offered to
@@ -157,7 +158,7 @@ function MentionDropdown({
 
   const filtered = members.filter(
     (u) =>
-      u.name.toLowerCase().includes(query.toLowerCase()) ||
+      displayName(u).toLowerCase().includes(query.toLowerCase()) ||
       u.email.toLowerCase().includes(query.toLowerCase()),
   );
 
@@ -189,10 +190,10 @@ function MentionDropdown({
           }}
         >
           <div className="h-6 w-6 rounded-full bg-accent flex items-center justify-center text-[10px] text-text-primary font-semibold shrink-0">
-            {user.name.charAt(0).toUpperCase()}
+            {displayName(user).charAt(0).toUpperCase()}
           </div>
           <div className="flex-1 text-left min-w-0">
-            <div className="font-medium truncate text-[13px]">{user.name}</div>
+            <div className="font-medium truncate text-[13px]">{displayName(user)}</div>
             <div className="text-[11px] text-text-tertiary truncate">
               {user.email}
             </div>
@@ -325,7 +326,7 @@ export function CommentInput({
   function handleMentionSelect(user: User) {
     const before = body.slice(0, mentionStart);
     const after = body.slice(mentionStart + 1 + (mentionQuery?.length ?? 0));
-    setBody(`${before}@${user.name} ${after}`);
+    setBody(`${before}@${displayName(user)} ${after}`);
     setMentionUserIds((prev) =>
       prev.includes(user.id) ? prev : [...prev, user.id],
     );

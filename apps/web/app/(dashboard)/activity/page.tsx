@@ -11,6 +11,7 @@ import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/shared/empty-state'
 import { ActivityRow } from '@/components/shared/activity-row'
+import { displayName } from '@/lib/display-name'
 import type { User } from '@/types'
 
 const CATEGORIES: { label: string; value: string | null }[] = [
@@ -95,7 +96,7 @@ export default function ActivityPage() {
             <option value="">All users</option>
             {users.map((u) => (
               <option key={u.id} value={u.id}>
-                {u.name}
+                {displayName(u)}
               </option>
             ))}
           </select>

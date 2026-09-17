@@ -944,7 +944,7 @@ def list_submissions(
         out.append(SubmissionItem(
             id=s.id,
             user_id=s.user_id,
-            user_name=(u.name if u else "") or "",
+            user_name=(u.display_name if u else "") or "",
             user_email=(u.email if u else "") or "",
             display_name=s.display_name,
             project_id=s.project_id,
@@ -980,7 +980,7 @@ def update_submission(
     if "display_name" in body.model_fields_set:
         handle = (body.display_name or "").strip()
         sub.display_name = handle or None
-        label = handle or (u.name if u else "") or (u.email if u else "") or "Submission"
+        label = handle or (u.display_name if u else "") or (u.email if u else "") or "Submission"
         project = db.query(Project).filter(Project.id == sub.project_id).first()
         if project:
             project.name = _unique_project_name(
@@ -997,7 +997,7 @@ def update_submission(
     return SubmissionItem(
         id=sub.id,
         user_id=sub.user_id,
-        user_name=(u.name if u else "") or "",
+        user_name=(u.display_name if u else "") or "",
         user_email=(u.email if u else "") or "",
         display_name=sub.display_name,
         project_id=sub.project_id,
@@ -1408,7 +1408,7 @@ def pre_create_submission(
         return SubmissionItem(
             id=existing.id,
             user_id=existing.user_id,
-            user_name=user.name or "",
+            user_name=user.display_name or "",
             user_email=user.email,
             display_name=existing.display_name,
             project_id=existing.project_id,
@@ -1416,7 +1416,7 @@ def pre_create_submission(
             created_at=existing.created_at,
         )
 
-    submitter_label = (body.display_name or user.name or email.split("@")[0]).strip()
+    submitter_label = (body.display_name or user.display_name or email.split("@")[0]).strip()
     project = Project(
         name=_unique_project_name(db, link, f"{link.title} — {submitter_label}"),
         description=f"Submission for \"{link.title}\".",
@@ -1471,7 +1471,7 @@ def pre_create_submission(
             return SubmissionItem(
                 id=existing.id,
                 user_id=existing.user_id,
-                user_name=user.name or "",
+                user_name=user.display_name or "",
                 user_email=user.email,
                 display_name=existing.display_name,
                 project_id=existing.project_id,
@@ -1483,7 +1483,7 @@ def pre_create_submission(
     return SubmissionItem(
         id=submission.id,
         user_id=user.id,
-        user_name=user.name or "",
+        user_name=user.display_name or "",
         user_email=user.email,
         display_name=submission.display_name,
         project_id=project.id,

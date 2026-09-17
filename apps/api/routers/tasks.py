@@ -240,7 +240,7 @@ def _build_task_items(db: Session, assets: list[Asset]) -> list[TaskItem]:
             request_title=req.title if req else None,
             task_stage_id=a.task_stage_id,
             run_as_ad=a.run_as_ad,
-            submitter_name=(submitter.name if submitter else None),
+            submitter_name=(submitter.display_name if submitter else None),
             submitter_email=(submitter.email if submitter else None),
             thumbnail_url=generate_presigned_get_url(thumb_key) if thumb_key else None,
             latest_version_number=version.version_number if version else None,
@@ -394,7 +394,7 @@ def get_task_board(
         )
         for link_id, paid_at, user in rows:
             editors_by_link.setdefault(link_id, []).append(
-                BriefEditor(id=user.id, name=user.name, email=user.email)
+                BriefEditor(id=user.id, name=user.display_name, email=user.email)
             )
             sub_counts[link_id] = sub_counts.get(link_id, 0) + 1
             if paid_at is not None:
@@ -407,7 +407,7 @@ def get_task_board(
             taxonomy_path=link_path.get(l.id),
             task_stage_id=l.task_stage_id,
             assignee_id=l.assignee_id,
-            assignee_name=(owners[l.assignee_id].name if l.assignee_id in owners else None),
+            assignee_name=(owners[l.assignee_id].display_name if l.assignee_id in owners else None),
             editors=editors_by_link.get(l.id, []),
             has_brief=bool(l.brief_pdf_s3_key),
             has_brief_json=bool(l.brief_json),
@@ -477,7 +477,7 @@ def set_asset_task_stage(
         request_title=(req.title if req else None),
         task_stage_id=asset.task_stage_id,
         run_as_ad=asset.run_as_ad,
-        submitter_name=(submitter.name if submitter else None),
+        submitter_name=(submitter.display_name if submitter else None),
         submitter_email=(submitter.email if submitter else None),
         thumbnail_url=None,
         latest_version_number=None,
@@ -547,7 +547,7 @@ def set_asset_run_as_ad(
         request_title=(req.title if req else None),
         task_stage_id=asset.task_stage_id,
         run_as_ad=asset.run_as_ad,
-        submitter_name=(submitter.name if submitter else None),
+        submitter_name=(submitter.display_name if submitter else None),
         submitter_email=(submitter.email if submitter else None),
         thumbnail_url=None,
         latest_version_number=None,
@@ -607,7 +607,7 @@ def _brief_item(db: Session, link: SubmissionLink) -> BriefTaskItem:
     board just changed, and the board already holds the nested files."""
     owner = db.query(User).filter(User.id == link.assignee_id).first() if link.assignee_id else None
     editors = [
-        BriefEditor(id=u.id, name=u.name, email=u.email)
+        BriefEditor(id=u.id, name=u.display_name, email=u.email)
         for _, u in db.query(Submission.submission_link_id, User)
         .join(User, User.id == Submission.user_id)
         .filter(Submission.submission_link_id == link.id)

@@ -45,7 +45,7 @@ def list_notifications(
                 if comment.author_id:
                     author = db.query(User).filter(User.id == comment.author_id).first()
                     if author:
-                        actor_name = author.name
+                        actor_name = author.display_name
 
         results.append(NotificationResponse(
             id=n.id,

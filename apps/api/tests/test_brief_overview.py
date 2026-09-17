@@ -21,6 +21,7 @@ def _make_user(*, is_superadmin=False, is_subadmin=False, name="User"):
     u.id = uuid.uuid4()
     u.email = f"{name.replace(' ', '.').lower()}@example.com"
     u.name = name
+    u.display_name = name
     u.status = UserStatus.active
     u.is_superadmin = is_superadmin
     u.is_subadmin = is_subadmin

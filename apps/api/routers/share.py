@@ -292,7 +292,7 @@ def validate_share_link_endpoint(
 
     if log_open:
         actor_email = current_user.email if current_user else "anonymous"
-        actor_name = current_user.name if current_user else None
+        actor_name = current_user.display_name if current_user else None
         _log_share_activity(db, link.id, ShareActivityAction.opened, actor_email=actor_email, actor_name=actor_name)
 
     # Build asset details for asset shares
@@ -1436,7 +1436,7 @@ def get_share_stream_url(
     _log_share_activity(
         db, link.id, activity_action,
         actor_email=current_user.email if current_user else "anonymous",
-        actor_name=current_user.name if current_user else None,
+        actor_name=current_user.display_name if current_user else None,
         asset_id=asset.id,
         asset_name=asset.name,
     )
