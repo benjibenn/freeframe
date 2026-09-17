@@ -27,6 +27,7 @@ import * as Switch from '@radix-ui/react-switch'
 import { cn, endOfDayISO } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
+import { displayName } from '@/lib/display-name'
 import type { AssetResponse, Folder, ShareLink, ShareLinkAppearance } from '@/types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -110,7 +111,7 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 
 // ─── Share Invite Input (autocomplete for user search) ──────────────────────
 
-interface InviteUser { id: string; name: string; email: string }
+interface InviteUser { id: string; name: string; nickname?: string | null; email: string }
 
 function ShareInviteInput({ token, shareLink }: { token: string; shareLink: { asset_id: string | null; folder_id: string | null; project_id?: string | null; permission: string } }) {
   const [query, setQuery] = React.useState('')
@@ -208,10 +209,10 @@ function ShareInviteInput({ token, shareLink }: { token: string; shareLink: { as
               className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-bg-hover transition-colors"
             >
               <div className="h-6 w-6 rounded-full bg-accent/20 flex items-center justify-center shrink-0">
-                <span className="text-2xs font-medium text-accent">{(u.name || u.email).charAt(0).toUpperCase()}</span>
+                <span className="text-2xs font-medium text-accent">{displayName(u).charAt(0).toUpperCase()}</span>
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm text-text-primary truncate">{u.name}</p>
+                <p className="text-sm text-text-primary truncate">{displayName(u)}</p>
                 <p className="text-2xs text-text-tertiary truncate">{u.email}</p>
               </div>
             </button>
@@ -227,9 +228,9 @@ function ShareInviteInput({ token, shareLink }: { token: string; shareLink: { as
           {invitedUsers.map((u) => (
             <div key={u.id} className="flex items-center gap-2 rounded-md bg-bg-tertiary px-2.5 py-1.5">
               <div className="h-5 w-5 rounded-full bg-accent/20 flex items-center justify-center shrink-0">
-                <span className="text-2xs font-medium text-accent">{(u.name || u.email).charAt(0).toUpperCase()}</span>
+                <span className="text-2xs font-medium text-accent">{displayName(u).charAt(0).toUpperCase()}</span>
               </div>
-              <span className="text-xs text-text-primary truncate flex-1">{u.name || u.email}</span>
+              <span className="text-xs text-text-primary truncate flex-1">{displayName(u)}</span>
               <span className="text-2xs text-text-tertiary shrink-0">{u.email}</span>
               <button
                 onClick={() => setInvitedUsers(prev => prev.filter(p => p.id !== u.id))}

@@ -41,6 +41,13 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    @property
+    def display_name(self) -> str:
+        """What to show for this user everywhere in the app: the admin-set
+        nickname when there is one, else the account name (often just the
+        email's local part — see auth/oidc signup)."""
+        return self.nickname or self.name
+
 class GuestUser(Base):
     __tablename__ = "guest_users"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

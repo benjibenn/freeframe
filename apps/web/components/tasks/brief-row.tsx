@@ -6,6 +6,7 @@ import { mutate } from 'swr'
 import { Banknote, ChevronDown, ChevronRight, FileText, Film, Image as ImageIcon } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn, formatRelativeTime } from '@/lib/utils'
+import { displayName } from '@/lib/display-name'
 import type { BriefTaskItem, TaskItem, TaskStage, User } from '@/types'
 
 const BOARD_KEY = '/task-board'
@@ -192,7 +193,7 @@ export function BriefRow({
             <option value="">Unassigned</option>
             {owners.map((u) => (
               <option key={u.id} value={u.id}>
-                {u.name || u.email}
+                {displayName(u)}
               </option>
             ))}
           </select>

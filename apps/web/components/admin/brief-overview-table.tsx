@@ -90,7 +90,7 @@ function localDay(iso: string): string {
   return `${d.getFullYear()}-${m}-${day}`
 }
 
-type Filters = { query: string; from: string; to: string; withFiles: boolean }
+type Filters = { query: string; from: string; to: string; withFiles: boolean; userId: string }
 
 /**
  * Name search spans the title AND the folder path because both are rendered on
@@ -99,6 +99,7 @@ type Filters = { query: string; from: string; to: string; withFiles: boolean }
  */
 function matches(r: BriefOverviewRow, f: Filters): boolean {
   if (f.withFiles && r.asset_count === 0) return false
+  if (f.userId && !r.submissions.some((s) => s.user_id === f.userId)) return false
 
   const day = localDay(r.created_at)
   if (f.from && day < f.from) return false
@@ -109,7 +110,7 @@ function matches(r: BriefOverviewRow, f: Filters): boolean {
   return `${r.title} ${r.home_path ?? ''}`.toLowerCase().includes(q)
 }
 
-const NO_FILTERS: Filters = { query: '', from: '', to: '', withFiles: false }
+const NO_FILTERS: Filters = { query: '', from: '', to: '', withFiles: false, userId: '' }
 
 export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
@@ -117,17 +118,40 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
 
   const visible = useMemo(() => rows.filter((r) => matches(r, filters)), [rows, filters])
 
+  // Every distinct submitter across all briefs, sorted for a stable dropdown.
+  const submitters = useMemo(() => {
+    const byId = new Map<string, string>()
+    for (const r of rows) {
+      for (const s of r.submissions) byId.set(s.user_id, s.user_name || s.user_email)
+    }
+    return Array.from(byId, ([id, label]) => ({ id, label })).sort((a, b) =>
+      a.label.localeCompare(b.label),
+    )
+  }, [rows])
+
   // Selection is DERIVED, not stored-and-corrected. Narrowing the filters can
   // hide whatever was selected; falling through to the first visible brief keeps
   // the detail pane populated without an effect that would flash the old brief
   // for a frame before resetting it.
   const selected = visible.find((r) => r.id === selectedId) ?? visible[0] ?? null
+  // When a submitter filter is active, the detail pane shows only THEIR
+  // submissions — that's what "view submissions by user" means once a brief
+  // is open, not every submitter's work on that brief.
+  const selectedSubmissions = selected
+    ? filters.userId
+      ? selected.submissions.filter((s) => s.user_id === filters.userId)
+      : selected.submissions
+    : []
   const set = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }))
   // Judged on whether a control is SET, not on whether the count changed: a
   // date bound that happens to admit every brief is still an active filter, and
   // the admin needs the Clear affordance to see that.
   const isFiltered =
-    filters.query.trim() !== '' || filters.from !== '' || filters.to !== '' || filters.withFiles
+    filters.query.trim() !== '' ||
+    filters.from !== '' ||
+    filters.to !== '' ||
+    filters.withFiles ||
+    filters.userId !== ''
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
@@ -172,6 +196,21 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
               />
               Has files
             </label>
+            {submitters.length > 0 && (
+              <select
+                value={filters.userId}
+                onChange={(e) => set({ userId: e.target.value })}
+                aria-label="Filter by submitter"
+                className="rounded-md border border-border bg-bg-secondary px-2.5 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus cursor-pointer max-w-[12rem]"
+              >
+                <option value="">All submitters</option>
+                {submitters.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.label}
+                  </option>
+                ))}
+              </select>
+            )}
             {isFiltered && (
               <button
                 type="button"
@@ -292,13 +331,16 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
 
             <div className="mt-5 border-t border-border pt-4">
               <h3 className="text-sm font-medium text-text-secondary">
-                Submissions ({selected.submission_count})
+                Submissions ({selectedSubmissions.length}
+                {filters.userId ? ` of ${selected.submission_count}` : ''})
               </h3>
-              {selected.submissions.length === 0 ? (
-                <p className="mt-2 text-sm text-text-tertiary">No submissions yet.</p>
+              {selectedSubmissions.length === 0 ? (
+                <p className="mt-2 text-sm text-text-tertiary">
+                  {filters.userId ? 'No submissions from this user on this brief.' : 'No submissions yet.'}
+                </p>
               ) : (
                 <ul className="mt-2 flex flex-col gap-3">
-                  {selected.submissions.map((s) => (
+                  {selectedSubmissions.map((s) => (
                     <li key={s.id} className="rounded-md border border-border p-3">
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
                         <div className="min-w-0">

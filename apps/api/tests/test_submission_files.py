@@ -25,7 +25,7 @@ def test_list_submissions_includes_files(_owned, client, mock_db, auth_headers):
     link.id = uuid.uuid4()
     _owned.return_value = link
     sub = _sub(pid, uid)
-    user = MagicMock(); user.id = uid; user.name = "Ada"; user.email = "ada@x.co"
+    user = MagicMock(); user.id = uid; user.name = "Ada"; user.email = "ada@x.co"; user.display_name = "Ada"
     aid1, aid2 = uuid.uuid4(), uuid.uuid4()
 
     # list_submissions runs three queries in order: submissions, asset rows, users.

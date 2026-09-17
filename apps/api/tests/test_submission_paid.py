@@ -23,7 +23,7 @@ def test_mark_paid_sets_date_and_keeps_handle(_owned, client, mock_db, auth_head
     link = MagicMock(); link.id = uuid.uuid4()
     _owned.return_value = link
     sub = _sub(link.id)
-    user = MagicMock(); user.name = "Ada"; user.email = "ada@x.co"
+    user = MagicMock(); user.name = "Ada"; user.email = "ada@x.co"; user.display_name = "Ada"
     # Queries: submission, user. No Project query — a paid-only PATCH must not
     # touch the rename path.
     mock_db.first.side_effect = [sub, user]
@@ -47,7 +47,7 @@ def test_explicit_null_unmarks_paid(_owned, client, mock_db, auth_headers):
     _owned.return_value = link
     sub = _sub(link.id)
     sub.paid_at = date(2026, 8, 1)
-    user = MagicMock(); user.name = "Ada"; user.email = "ada@x.co"
+    user = MagicMock(); user.name = "Ada"; user.email = "ada@x.co"; user.display_name = "Ada"
     mock_db.first.side_effect = [sub, user]
     mock_db.scalar.return_value = 0
 
@@ -67,7 +67,7 @@ def test_rename_alone_does_not_touch_paid(_owned, client, mock_db, auth_headers)
     _owned.return_value = link
     sub = _sub(link.id)
     sub.paid_at = date(2026, 8, 1)
-    user = MagicMock(); user.name = "Ada"; user.email = "ada@x.co"
+    user = MagicMock(); user.name = "Ada"; user.email = "ada@x.co"; user.display_name = "Ada"
     project = MagicMock()
     mock_db.first.side_effect = [sub, user, project]
     mock_db.scalar.return_value = 0
@@ -89,7 +89,7 @@ def test_list_submissions_returns_paid_at(_owned, client, mock_db, auth_headers)
     _owned.return_value = link
     sub = _sub(link.id)
     sub.paid_at = date(2026, 7, 15)
-    user = MagicMock(); user.id = sub.user_id; user.name = "Ada"; user.email = "ada@x.co"
+    user = MagicMock(); user.id = sub.user_id; user.name = "Ada"; user.email = "ada@x.co"; user.display_name = "Ada"
 
     mock_db.order_by.return_value = mock_db
     mock_db.all.side_effect = [
@@ -116,8 +116,8 @@ def _board_link():
 
 
 def _editor_rows(link_id):
-    u1 = MagicMock(); u1.id = uuid.uuid4(); u1.name = "Ada"; u1.email = "ada@x.co"
-    u2 = MagicMock(); u2.id = uuid.uuid4(); u2.name = "Bob"; u2.email = "bob@x.co"
+    u1 = MagicMock(); u1.id = uuid.uuid4(); u1.name = "Ada"; u1.email = "ada@x.co"; u1.display_name = "Ada"
+    u2 = MagicMock(); u2.id = uuid.uuid4(); u2.name = "Bob"; u2.email = "bob@x.co"; u2.display_name = "Bob"
     return [(link_id, date(2026, 8, 1), u1), (link_id, None, u2)]
 
 

@@ -31,6 +31,7 @@ import {
   Clock,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatBytes } from "@/lib/utils";
+import { displayName } from "@/lib/display-name";
 import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/shared/toast";
@@ -413,10 +414,10 @@ export default function ProjectDetailPage() {
   const authorNames = React.useMemo(() => {
     const map: Record<string, string> = {};
     if (authorUsers) {
-      for (const u of authorUsers) map[u.id] = u.name;
+      for (const u of authorUsers) map[u.id] = displayName(u);
     }
     // Fallback: current user
-    if (user) map[user.id] = user.name;
+    if (user) map[user.id] = displayName(user);
     return map;
   }, [authorUsers, user]);
 
