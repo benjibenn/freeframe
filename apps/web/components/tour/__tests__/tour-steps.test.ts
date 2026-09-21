@@ -1,66 +1,112 @@
 /**
- * Tour look-ahead — which step the overlay is allowed to skip forward to when
- * the current step's target isn't on screen.
+ * Tour step metadata — where each step's target lives, and which steps a given
+ * context can actually reach.
  *
  * Intent encoded:
- * - a target that lives in persistent layout chrome (the sidebar) is present on
- *   every dashboard page, so finding it proves nothing about where the user is;
- *   look-ahead must ignore those steps or it strands the tour on them;
- * - a page-scoped target being present DOES mean the user navigated there, so
- *   look-ahead must still follow them — that's the feature, not a bug;
- * - look-ahead never moves backwards, so a user who clicks Back into a step
- *   whose target is off-page stays put and reads its `waitingFor` copy.
- *
- * Regression: the tour auto-started on step 'library' instead of 'upload'.
- * `sidebar-library` is rendered by the dashboard layout outside `{children}`,
- * so it matched immediately while step 0's `upload-button` was still gated
- * behind `canUpload` and the project's first fetch. Back then bounced forward
- * again on the next poll, making the tour impossible to rewind.
+ * - a step's page is what makes navigation possible; 'asset' cannot resolve
+ *   without an assetId, so it must yield null rather than a broken URL;
+ * - the two asset steps are dropped when the target project has no assets, so
+ *   the tour never parks on a page that cannot exist;
+ * - the library step deliberately has no page: it spotlights the sidebar link
+ *   from wherever the user already is, and navigating would contradict its copy.
  */
 import { describe, it, expect } from 'vitest'
 
-import { TOUR_STEPS, lookAheadIndex } from '../tour-steps'
+import {
+  TOUR_STEPS,
+  lookAheadByRoute,
+  stepHref,
+  visibleSteps,
+  type TourContext,
+} from '../tour-steps'
 
-const indexOfStep = (id: string) => TOUR_STEPS.findIndex((s) => s.id === id)
+const WITH_ASSET: TourContext = { projectId: 'p1', assetId: 'a1' }
+const NO_ASSET: TourContext = { projectId: 'p1', assetId: null }
 
-/** Builds an `isPresent` predicate from the set of targets currently in the DOM. */
-const present = (...targets: string[]) => (target: string) => targets.includes(target)
-
-describe('lookAheadIndex', () => {
-  it('does not jump to a sidebar step just because the sidebar is mounted', () => {
-    // The exact production case: tour starts at step 0 on a project page before
-    // the upload button has rendered. The only matching target anywhere is the
-    // always-mounted sidebar link.
-    expect(lookAheadIndex(0, present('sidebar-library'))).toBe(-1)
+describe('stepHref', () => {
+  it('resolves the project page', () => {
+    expect(stepHref('project', WITH_ASSET)).toBe('/projects/p1')
   })
 
-  it('stays put when Back lands on an off-page step and only the sidebar matches', () => {
-    // Back from 'library' to 'comments'. `comments-tab` never exists on a project
-    // page, so without this the next poll re-jumped to 'library' within 250ms.
-    const comments = indexOfStep('comments')
-    expect(lookAheadIndex(comments, present('sidebar-library'))).toBe(-1)
+  it('resolves the asset page', () => {
+    expect(stepHref('asset', WITH_ASSET)).toBe('/projects/p1/assets/a1')
   })
 
-  it('still follows the user to a page-scoped target that has appeared', () => {
-    // User navigated to an asset page while the tour sat on step 0.
-    expect(lookAheadIndex(0, present('comments-tab'))).toBe(indexOfStep('comments'))
+  it('resolves the library page', () => {
+    expect(stepHref('library', NO_ASSET)).toBe('/library')
   })
 
-  it('never looks backwards', () => {
-    const library = indexOfStep('library')
-    expect(lookAheadIndex(library, present('upload-button'))).toBe(-1)
+  it('returns null for an asset page with no asset', () => {
+    expect(stepHref('asset', NO_ASSET)).toBeNull()
+  })
+})
+
+describe('visibleSteps', () => {
+  it('keeps every step when an asset exists', () => {
+    expect(visibleSteps(WITH_ASSET)).toHaveLength(TOUR_STEPS.length)
   })
 
-  it('picks the nearest matching page-scoped step when several are present', () => {
-    expect(lookAheadIndex(0, present('comments-tab', 'library-keywords'))).toBe(
-      indexOfStep('comments'),
+  it('drops exactly the asset steps when there is no asset', () => {
+    const ids = visibleSteps(NO_ASSET).map((s) => s.id)
+    expect(ids).not.toContain('new-version')
+    expect(ids).not.toContain('comments')
+    expect(ids).toHaveLength(TOUR_STEPS.length - 2)
+  })
+
+  it('preserves step order when filtering', () => {
+    const ids = visibleSteps(NO_ASSET).map((s) => s.id)
+    expect(ids).toEqual(['upload', 'grid', 'library', 'keywords', 'video-labels', 'done'])
+  })
+})
+
+describe('lookAheadByRoute', () => {
+  const steps = visibleSteps(WITH_ASSET)
+  const idx = (id: string) => steps.findIndex((s) => s.id === id)
+
+  it('stays put while the user is on the page the current step wants', () => {
+    // Regression: two steps share the 'project' page. Matching on pathname alone
+    // would skip 'upload' the instant the tour opened on the project page.
+    expect(lookAheadByRoute('/projects/p1', idx('upload'), steps, WITH_ASSET)).toBe(-1)
+  })
+
+  it('follows the user who navigated ahead to the asset page', () => {
+    expect(lookAheadByRoute('/projects/p1/assets/a1', idx('upload'), steps, WITH_ASSET)).toBe(
+      idx('new-version'),
     )
   })
 
-  it('marks exactly the sidebar step as always-mounted', () => {
-    // Guards the data: if a future step targets layout chrome it must opt in too,
-    // and no page-scoped step should be excluded from look-ahead by accident.
-    const flagged = TOUR_STEPS.filter((s) => s.alwaysMounted).map((s) => s.id)
-    expect(flagged).toEqual(['library'])
+  it('follows the user from the page-less library step into the library', () => {
+    expect(lookAheadByRoute('/library', idx('library'), steps, WITH_ASSET)).toBe(idx('keywords'))
+  })
+
+  it('never looks backwards', () => {
+    expect(lookAheadByRoute('/projects/p1', idx('keywords'), steps, WITH_ASSET)).toBe(-1)
+  })
+
+  it('stays put when the pathname matches no later step', () => {
+    expect(lookAheadByRoute('/settings', idx('upload'), steps, WITH_ASSET)).toBe(-1)
+  })
+
+  it('ignores asset steps that cannot resolve a href', () => {
+    const noAssetSteps = visibleSteps(NO_ASSET)
+    expect(lookAheadByRoute('/library', 0, noAssetSteps, NO_ASSET)).toBe(
+      noAssetSteps.findIndex((s) => s.id === 'keywords'),
+    )
+  })
+})
+
+describe('TOUR_STEPS page metadata', () => {
+  it('assigns the page where each target actually lives', () => {
+    const pages = Object.fromEntries(TOUR_STEPS.map((s) => [s.id, s.page]))
+    expect(pages).toEqual({
+      upload: 'project',
+      grid: 'project',
+      'new-version': 'asset',
+      comments: 'asset',
+      library: undefined,
+      keywords: 'library',
+      'video-labels': 'library',
+      done: undefined,
+    })
   })
 })

@@ -1,11 +1,12 @@
 'use client'
 
 import * as React from 'react'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { TOUR_STEPS, lookAheadIndex } from '@/components/tour/tour-steps'
+import { lookAheadByRoute, stepHref } from '@/components/tour/tour-steps'
+import { loadTourContext } from '@/lib/tour-context'
 import { useTourStore } from '@/stores/tour-store'
 import { cn } from '@/lib/utils'
 
@@ -43,25 +44,40 @@ function cardPosition(rect: DOMRect | null) {
 }
 
 export function TourOverlay() {
-  const { active, stepIndex, next, back, jumpTo, finish } = useTourStore()
+  const { active, stepIndex, steps, ctx, next, back, jumpTo, finish } = useTourStore()
   const [rect, setRect] = React.useState<DOMRect | null>(null)
   const pathname = usePathname()
+  const router = useRouter()
 
-  const step = TOUR_STEPS[stepIndex]
-  const isLast = stepIndex === TOUR_STEPS.length - 1
+  const step = steps[stepIndex]
+  const isLast = stepIndex === steps.length - 1
 
   // Auto-start once, on a project page — that's where a new submitter lands
-  // after accepting a request link, and where step 1's target lives. The delay
-  // covers both persist rehydration (`seen` reads false for a tick after a
-  // reload) and the project's first data fetch, so `seen` is re-read on fire.
+  // after accepting a request link. The delay covers both persist rehydration
+  // (`seen` reads false for a tick after a reload) and the project's first data
+  // fetch, so `seen` is re-read on fire. No editor project means no tour.
   React.useEffect(() => {
     if (!/^\/projects\/[^/]+/.test(pathname)) return
-    const timer = window.setTimeout(() => {
+    const timer = window.setTimeout(async () => {
       const state = useTourStore.getState()
-      if (!state.seen && !state.active) state.start()
+      if (state.seen || state.active) return
+      const resolved = await loadTourContext()
+      if (!resolved) return
+      useTourStore.getState().start(resolved)
     }, 800)
     return () => window.clearTimeout(timer)
   }, [pathname])
+
+  // Take the user to the page this step describes. Keyed on stepIndex alone so
+  // it fires once per step, not every time the route changes underneath it —
+  // otherwise a user who navigates away would be pushed straight back.
+  React.useEffect(() => {
+    if (!active || !ctx) return
+    const target = steps[stepIndex]
+    if (!target?.page) return
+    const href = stepHref(target.page, ctx)
+    if (href && window.location.pathname !== href) router.push(href)
+  }, [active, stepIndex, ctx, steps, router])
 
   // Track the spotlight target. When the current step's element isn't on this
   // page, look ahead: if a later step's page-scoped element is present the user
@@ -71,15 +87,20 @@ export function TourOverlay() {
     if (!active) return
 
     function measure() {
-      const current = TOUR_STEPS[useTourStore.getState().stepIndex]
-      const el = findTarget(current.target)
+      const current = steps[useTourStore.getState().stepIndex]
+      const el = findTarget(current?.target ?? null)
       if (el) {
         setRect(el.getBoundingClientRect())
         return
       }
       setRect(null)
-      if (!current.target) return
-      const ahead = lookAheadIndex(useTourStore.getState().stepIndex, (t) => !!findTarget(t))
+      if (!current?.target || !ctx) return
+      const ahead = lookAheadByRoute(
+        window.location.pathname,
+        useTourStore.getState().stepIndex,
+        steps,
+        ctx,
+      )
       if (ahead !== -1) jumpTo(ahead)
     }
 
@@ -92,12 +113,12 @@ export function TourOverlay() {
       window.removeEventListener('resize', measure)
       window.removeEventListener('scroll', measure, true)
     }
-  }, [active, jumpTo])
+  }, [active, jumpTo, steps, ctx])
 
   // Bring the target into view when the step changes.
   React.useEffect(() => {
     if (!active) return
-    findTarget(TOUR_STEPS[stepIndex]?.target ?? null)?.scrollIntoView({
+    findTarget(steps[stepIndex]?.target ?? null)?.scrollIntoView({
       block: 'center',
       behavior: 'smooth',
     })
@@ -160,8 +181,8 @@ export function TourOverlay() {
         )}
 
         <div className="mt-4 flex items-center justify-between">
-          <div className="flex items-center gap-1.5" aria-label={`Step ${stepIndex + 1} of ${TOUR_STEPS.length}`}>
-            {TOUR_STEPS.map((s, i) => (
+          <div className="flex items-center gap-1.5" aria-label={`Step ${stepIndex + 1} of ${steps.length}`}>
+            {steps.map((s, i) => (
               <span
                 key={s.id}
                 className={cn(

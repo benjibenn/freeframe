@@ -98,10 +98,10 @@ function Step({ children }: { children: React.ReactNode }) {
 function Tree() {
   const rows: { indent: number; name: string; role: string }[] = [
     { indent: 0, name: 'ecom', role: 'project (base folder)' },
-    { indent: 1, name: 'Apparel', role: 'category' },
+    { indent: 1, name: 'Phones', role: 'category' },
     { indent: 2, name: 'Store 1', role: 'store' },
-    { indent: 3, name: 'Denim Jacket', role: 'product' },
-    { indent: 4, name: 'Denim Jacket - Static - Sale', role: 'request — the ad brief' },
+    { indent: 3, name: 'iPhone 15', role: 'product' },
+    { indent: 4, name: 'iPhone 15 - Static - Sale', role: 'request — the ad brief' },
   ]
 
   return (
@@ -183,12 +183,12 @@ export default function HelpPage() {
           </Step>
           <Step>
             <strong className="font-medium text-text-primary">Product</strong> — the
-            item the ad is for, e.g. <Ui>Denim Jacket</Ui>. This is the last folder you
+            item the ad is for, e.g. <Ui>iPhone 15</Ui>. This is the last folder you
             make; requests go inside it.
           </Step>
           <Step>
             <strong className="font-medium text-text-primary">Request</strong> — the
-            ad brief itself, e.g. <Ui>Denim Jacket - Static - Sale</Ui>. One request per
+            ad brief itself, e.g. <Ui>iPhone 15 - Static - Sale</Ui>. One request per
             ad you want made. It is not a folder — you create it with{' '}
             <Ui>New Request</Ui> and the videos an editor submits against it land
             underneath.
@@ -198,7 +198,7 @@ export default function HelpPage() {
 
         <Note>
           The full path is written as{' '}
-          <Ui>ecom/Apparel/Store 1/Denim Jacket</Ui> and appears in the{' '}
+          <Ui>ecom/Phones/Store 1/iPhone 15</Ui> and appears in the{' '}
           <Ui>Category</Ui> column on the Tasks page. Click it to filter the whole
           list down to that branch, then use the breadcrumb to come back up. It is
           derived from the folder, never typed, so renaming a folder moves every
@@ -258,7 +258,7 @@ export default function HelpPage() {
             Give it a <Ui>Request name</Ui>. This is what everyone sees in the task
             list, so name it the way you want the finished work labelled. The house
             pattern is product, format, then angle:{' '}
-            <Ui>Denim Jacket - Static - Sale</Ui>.
+            <Ui>iPhone 15 - Static - Sale</Ui>.
           </Step>
           <Step>
             Add <Ui>Instructions</Ui> if the editor needs a brief. Editors read this

@@ -11,6 +11,7 @@ Two surfaces:
   * Visitor-facing: GET /submit/{token} (resolve), POST /submit/{token}/accept
     (auth required — provisions the per-submitter project).
 """
+import mimetypes
 import os
 import secrets
 import uuid
@@ -1631,24 +1632,20 @@ def get_submission_reference_image(
     return _reference_redirect(db, token, 0, "image", download, current_user)
 
 
-@router.post("/submit/{token}/accept", response_model=SubmissionAcceptResponse)
-def accept_submission_link(
-    token: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Provision (or return) the current user's private project for this link."""
-    link = _validate_active(
-        db.query(SubmissionLink).filter(SubmissionLink.token == token).first()
-    )
+def _provision_submission_project(db: Session, link: SubmissionLink, current_user: User) -> uuid.UUID:
+    """Return the user's private project for this link, creating it if absent.
 
-    # Idempotent: already accepted → return the existing project.
+    Idempotent, and safe against a concurrent caller: the unique constraint on
+    (link, user) decides the winner and the loser returns the winner's project.
+    Extracted so submitting work can provision the same slot the accept route
+    does — a submitter arriving over MCP has no browser to click accept in.
+    """
     existing = db.query(Submission).filter(
         Submission.submission_link_id == link.id,
         Submission.user_id == current_user.id,
     ).first()
     if existing:
-        return SubmissionAcceptResponse(project_id=existing.project_id)
+        return existing.project_id
 
     submitter_label = (current_user.name or current_user.email or "Submission").strip()
     project = Project(
@@ -1706,6 +1703,206 @@ def accept_submission_link(
             Submission.user_id == current_user.id,
         ).first()
         if existing:
-            return SubmissionAcceptResponse(project_id=existing.project_id)
+            return existing.project_id
         raise
-    return SubmissionAcceptResponse(project_id=project.id)
+    return project.id
+
+
+@router.post("/submit/{token}/accept", response_model=SubmissionAcceptResponse)
+def accept_submission_link(
+    token: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Provision (or return) the current user's private project for this link."""
+    link = _validate_active(
+        db.query(SubmissionLink).filter(SubmissionLink.token == token).first()
+    )
+    return SubmissionAcceptResponse(project_id=_provision_submission_project(db, link, current_user))
+
+
+class SubmitWorkFromUrlRequest(BaseModel):
+    url: str
+    asset_name: Optional[str] = None
+
+
+class SubmitWorkResponse(BaseModel):
+    submission_project_id: uuid.UUID
+    asset_id: uuid.UUID
+    version_id: uuid.UUID
+    asset_name: str
+    version_number: int
+    status: str
+
+
+# Submitted work, unlike a brief reference, is capped well below the browser
+# path's 10 GB: this route buffers the whole file in memory to hand it to S3 in
+# one put, so it is sized for statics and short cuts, not masters.
+_MAX_SUBMIT_WORK_BYTES = 200 * 1024 * 1024
+
+
+def resolve_submitted_asset_name(brief_json, requested: Optional[str]) -> Optional[str]:
+    """Decide what to call submitted work, or None to auto-number it "Hook N".
+
+    A brief that lists deliverables is a contract about what comes back, so work
+    has to claim one of the listed names rather than invent its own — otherwise
+    review cannot tell which variation it is looking at, which is the whole point
+    of naming them. The rejection names the allowed values because the caller is
+    usually an agent that can retry immediately with a correct one.
+
+    Briefs predating the naming scheme list nothing; there, any requested name is
+    honoured and the absence of one means auto-numbering.
+    """
+    from ..services.hook_naming import variation_names
+
+    allowed = variation_names(brief_json)
+    if allowed:
+        if not requested:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This brief prescribes deliverable names; asset_name must be one of: {allowed}",
+            )
+        if requested not in allowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"asset_name must be one of the brief's deliverable names: {allowed}",
+            )
+        return requested
+    return requested or None
+
+
+@router.post("/submission-links/{link_id}/submit-work/from-url", response_model=SubmitWorkResponse)
+def submit_work_from_url(
+    link_id: uuid.UUID,
+    body: SubmitWorkFromUrlRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Submit finished work against a brief by URL, fetched server-side.
+
+    The browser path is initiate → presign-part → complete, which needs a file
+    handle an agent over MCP does not have. This is that flow collapsed into one
+    call: provision the submitter's project, fetch, store, register the asset.
+
+    Deliberately routed through the same naming rule as the browser: when the
+    brief prescribes deliverable names, work must claim one of them. Re-submitting
+    a name that already exists adds a version rather than a second asset, so a
+    revised cut threads under the original in review instead of appearing beside it.
+    """
+    from ..models.asset import FileType, ProcessingStatus
+    from ..models.activity import ActivityLog, ActivityAction
+    from ..models.task_stage import TaskStage
+    from ..schemas.upload import ALLOWED_MIME_TYPES, mime_to_asset_type
+    from ..services.hook_naming import next_hook_name, variation_names
+    from ..services import brief_import_service
+
+    link = _validate_active(
+        db.query(SubmissionLink).filter(SubmissionLink.id == link_id).first()
+    )
+    project_id = _provision_submission_project(db, link, current_user)
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Submission project not found")
+
+    try:
+        data, content_type = fetch_remote_file(
+            body.url,
+            allowed_content_types=("image/", "video/"),
+            max_bytes=_MAX_SUBMIT_WORK_BYTES,
+        )
+    except RemoteFetchError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}")
+    asset_type = mime_to_asset_type(content_type)
+
+    name = resolve_submitted_asset_name(link.brief_json, body.asset_name)
+    if name is None:
+        db.query(Project).filter(Project.id == project.id).with_for_update().first()
+        name = next_hook_name(db, project.id)
+
+    # A repeat submission of the same deliverable is a revision, not a rival.
+    asset = db.query(Asset).filter(
+        Asset.project_id == project.id,
+        Asset.name == name,
+        Asset.deleted_at.is_(None),
+    ).first()
+    if asset is None:
+        asset = Asset(
+            project_id=project.id,
+            name=name,
+            asset_type=asset_type,
+            created_by=current_user.id,
+            taxonomy_path=resolve_link_home_path(db, link),
+            **brief_import_service.cf_ids_for_project(db, project),
+        )
+        default_stage = db.query(TaskStage).filter(
+            TaskStage.is_default.is_(True),
+            TaskStage.deleted_at.is_(None),
+        ).first()
+        if default_stage:
+            asset.task_stage_id = default_stage.id
+        db.add(asset)
+        db.flush()
+
+    last_version = db.query(AssetVersion).filter(
+        AssetVersion.asset_id == asset.id,
+        AssetVersion.deleted_at.is_(None),
+    ).order_by(AssetVersion.version_number.desc()).first()
+    version = AssetVersion(
+        asset_id=asset.id,
+        version_number=(last_version.version_number + 1) if last_version else 1,
+        processing_status=ProcessingStatus.uploading,
+        created_by=current_user.id,
+    )
+    db.add(version)
+    db.flush()
+
+    ext = _IMAGE_EXT.get(content_type) or mimetypes.guess_extension(content_type) or ".bin"
+    s3_key = f"raw/{project.id}/{asset.id}/{version.id}/original{ext}"
+    s3_service.put_object(s3_key, data, content_type=content_type)
+
+    media_file = MediaFile(
+        version_id=version.id,
+        file_type=FileType.image if asset_type == AssetType.image else FileType.video,
+        original_filename=f"{name}{ext}",
+        mime_type=content_type,
+        file_size_bytes=len(data),
+        s3_key_raw=s3_key,
+    )
+    # Video needs HLS before it can be played back; an image is servable as
+    # uploaded, but still needs the pass that makes its WebP and thumbnail.
+    needs_transcode = asset_type == AssetType.video
+    if needs_transcode:
+        version.processing_status = ProcessingStatus.processing
+    else:
+        version.processing_status = ProcessingStatus.ready
+        media_file.s3_key_processed = s3_key
+    db.add(media_file)
+
+    db.add(ActivityLog(
+        user_id=current_user.id,
+        asset_id=asset.id,
+        project_id=project.id,
+        action=ActivityAction.created,
+        payload={
+            "version_number": version.version_number,
+            "is_new_asset": version.version_number == 1,
+            "filename": media_file.original_filename,
+        },
+    ))
+    db.commit()
+
+    from ..tasks.transcode_tasks import process_asset
+    from ..tasks.celery_app import send_task_safe
+    send_task_safe(process_asset, str(asset.id), str(version.id))
+
+    return SubmitWorkResponse(
+        submission_project_id=project.id,
+        asset_id=asset.id,
+        version_id=version.id,
+        asset_name=name,
+        version_number=version.version_number,
+        status="processing" if needs_transcode else "ready",
+    )

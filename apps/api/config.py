@@ -100,7 +100,8 @@ class Settings(BaseSettings):
         `https://host/authorize` and getting a 404.
 
         Each tenant's proxy must therefore route /.well-known/oauth-*, /authorize,
-        /token, /revoke and /register to this app unstripped.
+        /token, /revoke and /register to this app unstripped — on this tenant that
+        is the oauth router in docker-compose.hetzmet.yml.
         """
         return self.frontend_url.rstrip("/")
 
@@ -120,10 +121,10 @@ class Settings(BaseSettings):
     def mcp_resource_metadata_url(self) -> str:
         """Where the RFC 9728 document is served.
 
-        Not at the origin root: `/.well-known/*` there is served by the frontend,
-        since Traefik only routes /api here. Clients are told the real location via
-        the `resource_metadata` parameter on the 401, which the spec allows to be
-        any HTTPS location.
+        At the origin root, where RFC 9728 clients look. The proxy routes
+        /.well-known/oauth-* here rather than to the frontend; the 401 also names
+        this location in its `resource_metadata` parameter so a client never has
+        to guess.
         """
         return f"{self.frontend_url.rstrip('/')}/.well-known/oauth-protected-resource"
 

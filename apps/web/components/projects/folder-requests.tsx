@@ -170,7 +170,7 @@ export function NewRequestDialog({
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Denim Jacket - Static - Sale"
+                placeholder="e.g. Static - iPhone 17e"
                 autoFocus
               />
             </div>
