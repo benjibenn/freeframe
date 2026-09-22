@@ -3,24 +3,33 @@
 /**
  * Four readings of one pipeline: totals, per brief, per person, per file.
  *
- * The filter bar sits ABOVE the tabs and applies to all of them, so switching tab
- * re-cuts the same question rather than starting a new one. Each tab filters its
- * own rows against its own natural date field — a brief by when it was created, a
- * file by when it was uploaded — instead of deriving every tab from the filtered
- * file list. That matters for one number in particular: "awaiting work" counts
- * briefs with no files, and briefs with no files vanish from a file-derived view.
+ * THE RULE THIS FILE EXISTS TO ENFORCE: every number on screen is derived from
+ * the same scoped file list that decides which rows are on screen. The first
+ * version filtered rows by date but rendered counts straight off the API, so a
+ * two-day range kept a person whose last upload fell inside it and printed their
+ * lifetime totals beside the filter. Never read a count that was computed
+ * somewhere the filter is not.
  *
- * Pure props. The page owns fetching; this owns presentation.
+ * Two kinds of filter, deliberately not the same thing:
+ *   SCOPE  (date range, submitter) — re-scopes every count. A number always
+ *          means "in this window, for this person".
+ *   SEARCH (the text box) — hides rows. It never changes what a number means,
+ *          because searching "Ali" should not silently redefine a file count.
+ *
+ * A brief appears on the By brief tab when it received files in the window —
+ * briefs created in the window with nothing uploaded are empty folders, not
+ * work. The one number that ignores the window is "awaiting work": "has never
+ * received a file" is not a question a date range can ask.
+ *
+ * Pure props. The page owns fetching, this owns presentation.
  */
 
 import { useMemo, useState } from 'react'
 
-export type ReportTotals = {
-  brief_count: number
-  submission_count: number
-  file_count: number
-  submitter_count: number
-  briefs_awaiting_work: number
+export type ReportSubmitter = {
+  user_id: string
+  name: string
+  submitted_at: string
 }
 
 export type ReportBriefRow = {
@@ -31,20 +40,13 @@ export type ReportBriefRow = {
   is_enabled: boolean
   persona_label: string | null
   angle_label: string | null
-  submission_count: number
-  file_count: number
-  submitter_ids: string[]
-  submitter_names: string[]
-  last_upload_at: string | null
+  submitters: ReportSubmitter[]
 }
 
 export type ReportUserRow = {
   user_id: string
   name: string
   email: string
-  brief_count: number
-  file_count: number
-  last_upload_at: string | null
 }
 
 export type ReportFileRow = {
@@ -59,7 +61,6 @@ export type ReportFileRow = {
 }
 
 export type ReportPayload = {
-  totals: ReportTotals
   briefs: ReportBriefRow[]
   users: ReportUserRow[]
   files: ReportFileRow[]
@@ -70,6 +71,28 @@ export type Filters = { query: string; from: string; to: string; userId: string 
 export const NO_FILTERS: Filters = { query: '', from: '', to: '', userId: '' }
 
 type Tab = 'summary' | 'briefs' | 'users' | 'files'
+
+/** What a row shows once the window has been applied to it. */
+export type ScopedBrief = ReportBriefRow & {
+  file_count: number
+  submitter_count: number
+  uploader_names: string[]
+  last_upload_at: string | null
+}
+
+export type ScopedUser = ReportUserRow & {
+  brief_count: number
+  file_count: number
+  last_upload_at: string | null
+}
+
+export type Totals = {
+  brief_count: number
+  submission_count: number
+  file_count: number
+  submitter_count: number
+  briefs_awaiting_work: number
+}
 
 /**
  * A timestamp's calendar day in the VIEWER's timezone, as YYYY-MM-DD.
@@ -86,14 +109,9 @@ export function localDay(iso: string): string {
   return `${d.getFullYear()}-${m}-${day}`
 }
 
-function inRange(iso: string | null, f: Filters): boolean {
-  // A row with no date (nothing uploaded yet) survives an unset range and is
-  // excluded by any set one — it cannot be claimed to fall inside a window.
-  if (!f.from && !f.to) return true
-  if (!iso) return false
-  const day = localDay(iso)
-  if (f.from && day < f.from) return false
-  if (f.to && day > f.to) return false
+function inWindow(iso: string, f: Filters): boolean {
+  if (f.from && localDay(iso) < f.from) return false
+  if (f.to && localDay(iso) > f.to) return false
   return true
 }
 
@@ -102,50 +120,125 @@ function hits(haystack: string, query: string): boolean {
   return !q || haystack.toLowerCase().includes(q)
 }
 
-export function filterBriefs(rows: ReportBriefRow[], f: Filters): ReportBriefRow[] {
-  return rows.filter((r) => {
-    if (f.userId && !r.submitter_ids.includes(f.userId)) return false
-    if (!inRange(r.created_at, f)) return false
-    // Search the line the admin can actually read: title, folder path, and who
-    // is on it — not a single field they have to guess.
-    return hits(`${r.title} ${r.home_path ?? ''} ${r.submitter_names.join(' ')}`, f.query)
-  })
-}
-
-export function filterUsers(rows: ReportUserRow[], f: Filters): ReportUserRow[] {
-  return rows.filter((r) => {
-    if (f.userId && r.user_id !== f.userId) return false
-    if (!inRange(r.last_upload_at, f)) return false
-    return hits(`${r.name} ${r.email}`, f.query)
-  })
-}
-
-export function filterFiles(rows: ReportFileRow[], f: Filters): ReportFileRow[] {
-  return rows.filter((r) => {
-    if (f.userId && r.user_id !== f.userId) return false
-    if (!inRange(r.created_at, f)) return false
-    return hits(`${r.name} ${r.brief_title} ${r.user_name}`, f.query)
-  })
+function newer(a: string | null, b: string): string {
+  return a === null || b > a ? b : a
 }
 
 /**
- * Totals for what is currently on screen.
+ * The files the window is asking about. Everything else is counted from this.
  *
- * Recomputed from the filtered rows rather than read off the payload: tiles that
- * kept showing platform-wide numbers while the tables below them were narrowed
- * would be actively misleading.
+ * Search is excluded on purpose: it decides what is worth LOOKING at, not what
+ * counts as work done.
  */
-export function visibleTotals(
+export function scopeFiles(files: ReportFileRow[], f: Filters): ReportFileRow[] {
+  return files.filter((r) => {
+    if (f.userId && r.user_id !== f.userId) return false
+    return inWindow(r.created_at, f)
+  })
+}
+
+export function scopeBriefs(
   briefs: ReportBriefRow[],
+  scoped: ReportFileRow[],
+  f: Filters,
+): ScopedBrief[] {
+  const byBrief = new Map<string, { files: number; last: string | null; names: Set<string> }>()
+  for (const file of scoped) {
+    const acc = byBrief.get(file.brief_id) ?? { files: 0, last: null, names: new Set<string>() }
+    acc.files += 1
+    acc.last = newer(acc.last, file.created_at)
+    acc.names.add(file.user_name)
+    byBrief.set(file.brief_id, acc)
+  }
+
+  const out: ScopedBrief[] = []
+  for (const b of briefs) {
+    const acc = byBrief.get(b.id)
+    // Received nothing in the window: an empty folder, not work.
+    if (!acc) continue
+    out.push({
+      ...b,
+      file_count: acc.files,
+      // People who ACCEPTED this brief inside the window. Distinct from the
+      // uploaders beside it: accepting in March and delivering in September is
+      // one submission and one upload, in different windows.
+      submitter_count: b.submitters.filter(
+        (s) => (!f.userId || s.user_id === f.userId) && inWindow(s.submitted_at, f),
+      ).length,
+      uploader_names: Array.from(acc.names).filter(Boolean).sort(),
+      last_upload_at: acc.last,
+    })
+  }
+  out.sort((a, z) => z.file_count - a.file_count)
+  return out
+}
+
+export function scopeUsers(
   users: ReportUserRow[],
+  scoped: ReportFileRow[],
+  f: Filters,
+): ScopedUser[] {
+  const byUser = new Map<string, { files: number; briefs: Set<string>; last: string | null }>()
+  for (const file of scoped) {
+    const acc = byUser.get(file.user_id) ?? { files: 0, briefs: new Set<string>(), last: null }
+    acc.files += 1
+    acc.briefs.add(file.brief_id)
+    acc.last = newer(acc.last, file.created_at)
+    byUser.set(file.user_id, acc)
+  }
+
+  const out: ScopedUser[] = []
+  for (const u of users) {
+    if (f.userId && u.user_id !== f.userId) continue
+    const acc = byUser.get(u.user_id)
+    if (!acc) continue
+    out.push({
+      ...u,
+      // Briefs they actually uploaded into — not briefs they merely accepted.
+      brief_count: acc.briefs.size,
+      file_count: acc.files,
+      last_upload_at: acc.last,
+    })
+  }
+  // Busiest first: the reason to open this tab is to see who is carrying the
+  // work, so the answer should not need a click to sort.
+  out.sort((a, z) => z.file_count - a.file_count || a.name.localeCompare(z.name))
+  return out
+}
+
+/**
+ * Briefs that have never received a single file, ever.
+ *
+ * Deliberately NOT windowed. A date range narrows to briefs that DID get work,
+ * so counting "no work" inside one always yields zero. The submitter filter does
+ * apply: "briefs this person accepted and never delivered on" is a real question.
+ */
+export function awaitingWork(
+  briefs: ReportBriefRow[],
+  allFiles: ReportFileRow[],
+  f: Filters,
+): number {
+  const withFiles = new Set(
+    allFiles.filter((x) => !f.userId || x.user_id === f.userId).map((x) => x.brief_id),
+  )
+  return briefs.filter((b) => {
+    if (f.userId && !b.submitters.some((s) => s.user_id === f.userId)) return false
+    return !withFiles.has(b.id)
+  }).length
+}
+
+export function totalsFor(
+  briefs: ScopedBrief[],
+  users: ScopedUser[],
   files: ReportFileRow[],
-): ReportTotals {
+  awaiting: number,
+): Totals {
   return {
     brief_count: briefs.length,
-    submission_count: briefs.reduce((n, b) => n + b.submission_count, 0),
+    submission_count: briefs.reduce((n, b) => n + b.submitter_count, 0),
     file_count: files.length,
     submitter_count: users.length,
-    briefs_awaiting_work: briefs.filter((b) => b.file_count === 0).length,
+    briefs_awaiting_work: awaiting,
   }
 }
 
@@ -158,7 +251,17 @@ function fmtDate(iso: string | null): string {
   })
 }
 
-function Tile({ label, value, tone }: { label: string; value: number; tone?: 'warn' }) {
+function Tile({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string
+  value: number
+  hint?: string
+  tone?: 'warn'
+}) {
   return (
     <div className="rounded-lg border border-border bg-bg-secondary px-4 py-3">
       <div
@@ -171,6 +274,7 @@ function Tile({ label, value, tone }: { label: string; value: number; tone?: 'wa
         {value}
       </div>
       <div className="mt-0.5 text-xs text-text-tertiary">{label}</div>
+      {hint && <div className="mt-0.5 text-[11px] text-text-tertiary/70">{hint}</div>}
     </div>
   )
 }
@@ -221,13 +325,29 @@ export function ReportsView({ data }: { data: ReportPayload }) {
   const [tab, setTab] = useState<Tab>('summary')
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
 
-  const briefs = useMemo(() => filterBriefs(data.briefs, filters), [data.briefs, filters])
-  const users = useMemo(() => filterUsers(data.users, filters), [data.users, filters])
-  const files = useMemo(() => filterFiles(data.files, filters), [data.files, filters])
-  const totals = useMemo(() => visibleTotals(briefs, users, files), [briefs, users, files])
+  const scoped = useMemo(() => scopeFiles(data.files, filters), [data.files, filters])
+  const briefs = useMemo(() => scopeBriefs(data.briefs, scoped, filters), [data.briefs, scoped, filters])
+  const users = useMemo(() => scopeUsers(data.users, scoped, filters), [data.users, scoped, filters])
+  const awaiting = useMemo(
+    () => awaitingWork(data.briefs, data.files, filters),
+    [data.briefs, data.files, filters],
+  )
+  const totals = useMemo(
+    () => totalsFor(briefs, users, scoped, awaiting),
+    [briefs, users, scoped, awaiting],
+  )
+
+  // Search hides rows; it is applied here, after every count is settled.
+  const q = filters.query
+  const shownBriefs = briefs.filter((b) =>
+    hits(`${b.title} ${b.home_path ?? ''} ${b.uploader_names.join(' ')}`, q),
+  )
+  const shownUsers = users.filter((u) => hits(`${u.name} ${u.email}`, q))
+  const shownFiles = scoped.filter((f) => hits(`${f.name} ${f.brief_title} ${f.user_name}`, q))
 
   const set = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }))
   const dirty = JSON.stringify(filters) !== JSON.stringify(NO_FILTERS)
+  const windowed = Boolean(filters.from || filters.to)
 
   const field =
     'rounded-md border border-border bg-bg-secondary px-2.5 py-1.5 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-border-focus'
@@ -283,6 +403,13 @@ export function ReportsView({ data }: { data: ReportPayload }) {
         )}
       </div>
 
+      {windowed && (
+        <p className="text-xs text-text-tertiary">
+          Counting uploads between {filters.from || 'the beginning'} and {filters.to || 'today'}.
+          Briefs with no uploads in that window are not listed.
+        </p>
+      )}
+
       <div className="flex items-center gap-1 border-b border-border">
         {TABS.map((t) => (
           <button
@@ -303,11 +430,16 @@ export function ReportsView({ data }: { data: ReportPayload }) {
 
       {tab === 'summary' && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <Tile label="Briefs" value={totals.brief_count} />
-          <Tile label="Submissions" value={totals.submission_count} />
+          <Tile label="Briefs worked on" value={totals.brief_count} />
+          <Tile label="New submissions" value={totals.submission_count} />
           <Tile label="Files" value={totals.file_count} />
           <Tile label="Submitters" value={totals.submitter_count} />
-          <Tile label="Awaiting work" value={totals.briefs_awaiting_work} tone="warn" />
+          <Tile
+            label="Awaiting work"
+            value={totals.briefs_awaiting_work}
+            hint="all time"
+            tone="warn"
+          />
         </div>
       )}
 
@@ -317,17 +449,17 @@ export function ReportsView({ data }: { data: ReportPayload }) {
             <>
               <Th>Brief</Th>
               <Th>Folder</Th>
-              <Th>Submitters</Th>
+              <Th>Uploaded by</Th>
               <Th>Files</Th>
               <Th>Created</Th>
               <Th>Last upload</Th>
             </>
           }
         >
-          {briefs.length === 0 ? (
-            <Empty>No briefs match these filters.</Empty>
+          {shownBriefs.length === 0 ? (
+            <Empty>No briefs received files in this window.</Empty>
           ) : (
-            briefs.map((b) => (
+            shownBriefs.map((b) => (
               <tr key={b.id} className="hover:bg-bg-hover/40">
                 <Td>
                   <span className="text-text-primary">{b.title}</span>
@@ -338,14 +470,8 @@ export function ReportsView({ data }: { data: ReportPayload }) {
                   )}
                 </Td>
                 <Td>{b.home_path || '—'}</Td>
-                <Td>
-                  {b.submission_count === 0 ? '—' : b.submitter_names.join(', ')}
-                </Td>
-                <Td>
-                  <span className={b.file_count === 0 ? 'text-status-warning' : undefined}>
-                    {b.file_count}
-                  </span>
-                </Td>
+                <Td>{b.uploader_names.join(', ') || '—'}</Td>
+                <Td>{b.file_count}</Td>
                 <Td>{fmtDate(b.created_at)}</Td>
                 <Td>{fmtDate(b.last_upload_at)}</Td>
               </tr>
@@ -360,16 +486,16 @@ export function ReportsView({ data }: { data: ReportPayload }) {
             <>
               <Th>Person</Th>
               <Th>Email</Th>
-              <Th>Briefs</Th>
+              <Th>Briefs uploaded into</Th>
               <Th>Files</Th>
               <Th>Last upload</Th>
             </>
           }
         >
-          {users.length === 0 ? (
-            <Empty>No submitters match these filters.</Empty>
+          {shownUsers.length === 0 ? (
+            <Empty>Nobody uploaded anything in this window.</Empty>
           ) : (
-            users.map((u) => (
+            shownUsers.map((u) => (
               <tr key={u.user_id} className="hover:bg-bg-hover/40">
                 <Td>
                   <span className="text-text-primary">{u.name || '—'}</span>
@@ -395,10 +521,10 @@ export function ReportsView({ data }: { data: ReportPayload }) {
             </>
           }
         >
-          {files.length === 0 ? (
+          {shownFiles.length === 0 ? (
             <Empty>No files match these filters.</Empty>
           ) : (
-            files.map((f) => (
+            shownFiles.map((f) => (
               <tr key={f.asset_id} className="hover:bg-bg-hover/40">
                 <Td>
                   <a

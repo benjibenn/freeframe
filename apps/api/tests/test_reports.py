@@ -6,10 +6,12 @@ Intent encoded:
 - a file belongs to a person only via the per-submitter PROJECT (assets carry no
   uploader column), so the join has to resolve through Submission.project_id —
   getting this wrong silently credits work to the wrong editor;
-- "awaiting work" counts on FILES, not on submissions: someone accepting a brief
-  and never delivering is precisely the case an admin opens this page to find;
 - an asset in a project that is not a submitter project is not submitted work and
-  must not inflate any count.
+  must not reach the payload;
+- the endpoint returns FACTS and no counts. The page applies the date window, so
+  the page derives every number; a count computed here could not know the window
+  and would end up printed beside a filter it does not obey. That is exactly the
+  bug this endpoint shipped with and no longer can.
 """
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -35,12 +37,13 @@ def _link(title, **kw):
     )
 
 
-def _sub(link, user_id):
+def _sub(link, user_id, created_at=NOW):
     return SimpleNamespace(
         id=uuid.uuid4(),
         submission_link_id=link.id,
         user_id=user_id,
         project_id=uuid.uuid4(),
+        created_at=created_at,
     )
 
 
@@ -57,7 +60,7 @@ def test_non_superadmin_is_refused(test_user):
     assert exc.value.status_code == 403
 
 
-def test_counts_resolve_files_through_the_submitter_project():
+def test_files_resolve_to_a_person_through_the_submitter_project():
     from apps.api.routers.reports import build_report
 
     alice = _user("Alice A", "alice@example.com", nickname="Ali")
@@ -74,27 +77,38 @@ def test_counts_resolve_files_through_the_submitter_project():
         (uuid.uuid4(), uuid.uuid4(), "stray.mp4", NOW),
     ]
 
-    r = build_report(
-        [brief], [a_sub, b_sub], assets, {alice.id: alice, bob.id: bob}, {}
-    )
+    r = build_report([brief], [a_sub, b_sub], assets, {alice.id: alice, bob.id: bob}, {})
 
-    assert r.totals.file_count == 3
-    assert r.totals.submission_count == 2
-    assert r.totals.submitter_count == 2
-    assert r.briefs[0].file_count == 3
-    assert r.briefs[0].submission_count == 2
-
-    by_user = {u.user_id: u for u in r.users}
-    assert by_user[alice.id].file_count == 2
-    assert by_user[bob.id].file_count == 1
-    # Nickname wins over the account name, so one person reads the same everywhere.
-    assert by_user[alice.id].name == "Ali"
-    assert by_user[bob.id].name == "Bob B"
-    assert set(r.briefs[0].submitter_names) == {"Ali", "Bob B"}
     assert {f.name for f in r.files} == {"alice-1.mp4", "alice-2.mp4", "bob-1.mp4"}
+    by_name = {f.name: f for f in r.files}
+    assert by_name["alice-1.mp4"].user_id == alice.id
+    # Nickname wins over the account name, so one person reads the same everywhere.
+    assert by_name["alice-1.mp4"].user_name == "Ali"
+    assert by_name["bob-1.mp4"].user_name == "Bob B"
+    assert by_name["alice-1.mp4"].brief_title == "Hook test"
 
 
-def test_accepted_but_undelivered_brief_still_counts_as_awaiting_work():
+def test_submitters_carry_the_day_they_accepted():
+    """Without this date the page cannot tell an accept inside the window from one
+    that happened months earlier, which is what left a lifetime number beside a
+    two-day filter."""
+    from apps.api.routers.reports import build_report
+
+    alice = _user("Alice", "alice@example.com")
+    bob = _user("Bob", "bob@example.com")
+    brief = _link("Shared")
+    early = _sub(brief, alice.id, created_at=NOW)
+    late = _sub(brief, bob.id, created_at=NOW + timedelta(days=30))
+
+    r = build_report([brief], [early, late], [], {alice.id: alice, bob.id: bob}, {})
+
+    accepted = {s.name: s.submitted_at for s in r.briefs[0].submitters}
+    assert accepted == {"Alice": NOW, "Bob": NOW + timedelta(days=30)}
+
+
+def test_a_brief_nobody_delivered_on_still_reaches_the_page():
+    """The page needs it to answer "awaiting work"; dropping it here would make
+    that question unanswerable no matter what the page does."""
     from apps.api.routers.reports import build_report
 
     carol = _user("Carol", "carol@example.com")
@@ -110,40 +124,24 @@ def test_accepted_but_undelivered_brief_still_counts_as_awaiting_work():
         {},
     )
 
-    assert r.totals.brief_count == 3
-    # B was accepted but nothing was uploaded — it is still awaiting work.
-    assert r.totals.briefs_awaiting_work == 2
-    assert {b.title: b.file_count for b in r.briefs} == {"A": 1, "B": 0, "C": 0}
-    # One person, two briefs, one file.
-    assert len(r.users) == 1
-    assert r.users[0].brief_count == 2
-    assert r.users[0].file_count == 1
+    assert {b.title for b in r.briefs} == {"A", "B", "C"}
+    assert len(r.files) == 1
+    # Carol accepted two briefs and delivered on one; she is in the roster either way.
+    assert [u.name for u in r.users] == ["Carol"]
+    assert {b.title: len(b.submitters) for b in r.briefs} == {"A": 1, "B": 1, "C": 0}
 
 
-def test_last_upload_tracks_the_newest_file_and_users_sort_busiest_first():
+def test_every_submitter_appears_once_even_across_many_briefs():
     from apps.api.routers.reports import build_report
 
-    quiet = _user("Quiet", "q@example.com")
-    busy = _user("Busy", "b@example.com")
-    brief = _link("Shared")
-    q_sub, b_sub = _sub(brief, quiet.id), _sub(brief, busy.id)
-    latest = NOW + timedelta(days=3)
+    dave = _user("Dave", "dave@example.com")
+    one, two = _link("One"), _link("Two")
 
     r = build_report(
-        [brief],
-        [q_sub, b_sub],
-        [
-            (uuid.uuid4(), q_sub.project_id, "q.mp4", NOW),
-            (uuid.uuid4(), b_sub.project_id, "b1.mp4", NOW + timedelta(days=1)),
-            (uuid.uuid4(), b_sub.project_id, "b2.mp4", latest),
-        ],
-        {quiet.id: quiet, busy.id: busy},
-        {},
+        [one, two], [_sub(one, dave.id), _sub(two, dave.id)], [], {dave.id: dave}, {}
     )
 
-    assert r.briefs[0].last_upload_at == latest
-    assert [u.name for u in r.users] == ["Busy", "Quiet"]
-    assert r.users[0].last_upload_at == latest
+    assert [u.user_id for u in r.users] == [dave.id]
 
 
 def test_home_path_prefers_the_derived_folder_path_over_the_stored_string():
@@ -166,11 +164,9 @@ def test_missing_user_row_degrades_instead_of_breaking_the_report():
     ghost_id = uuid.uuid4()
     s = _sub(brief, ghost_id)
 
-    r = build_report(
-        [brief], [s], [(uuid.uuid4(), s.project_id, "f.mp4", NOW)], {}, {}
-    )
+    r = build_report([brief], [s], [(uuid.uuid4(), s.project_id, "f.mp4", NOW)], {}, {})
 
     assert r.files[0].user_name == ""
     assert r.users[0].name == ""
     assert r.users[0].email == ""
-    assert r.totals.file_count == 1
+    assert len(r.files) == 1
