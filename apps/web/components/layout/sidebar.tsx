@@ -17,6 +17,7 @@ import {
   ListChecks,
   Library,
   BookOpen,
+  BarChart3,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useIsDesktop } from '@/hooks/use-media-query'
@@ -63,6 +64,9 @@ export function Sidebar({ collapsed: collapsedProp, onToggle, mobileOpen = false
     fetchUnreadCount: fetchActivityUnread,
   } = useActivityStore()
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
+  // Reports span every owner's briefs and every submitter's uploads, so they are
+  // superadmin-only — a narrower gate than the platform-admin links above.
+  const isSuperAdmin = Boolean(user?.is_superadmin)
   const { orgName, orgLogoDark, orgLogoLight } = useBrandingStore()
   const { theme } = useThemeStore()
   // Pick logo based on resolved theme; fall back to the other if only one is set
@@ -201,6 +205,32 @@ export function Sidebar({ collapsed: collapsedProp, onToggle, mobileOpen = false
             {!collapsed && (
               <span className={cn('text-[13px]', pathname.startsWith('/tasks') && 'font-medium')}>
                 Tasks
+              </span>
+            )}
+          </Link>
+        )}
+
+        {/* Reports — superadmin only */}
+        {isSuperAdmin && (
+          <Link
+            href="/admin/reports"
+            onClick={() => setNotifOpen(false)}
+            className={cn(
+              'group relative flex items-center rounded-md transition-colors duration-100',
+              collapsed ? 'justify-center h-9 w-9 mx-auto' : 'gap-2.5 px-2.5 h-9',
+              pathname.startsWith('/admin/reports')
+                ? 'bg-bg-hover text-text-primary'
+                : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
+            )}
+            title={collapsed ? 'Reports' : undefined}
+          >
+            <BarChart3
+              className="h-[18px] w-[18px] shrink-0"
+              strokeWidth={pathname.startsWith('/admin/reports') ? 2 : 1.5}
+            />
+            {!collapsed && (
+              <span className={cn('text-[13px]', pathname.startsWith('/admin/reports') && 'font-medium')}>
+                Reports
               </span>
             )}
           </Link>
