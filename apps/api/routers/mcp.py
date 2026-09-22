@@ -31,6 +31,7 @@ from ..services import mcp_oauth
 from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE, SCOPE_USERS_ADMIN
 from ..models.user import User
 from ..schemas.auth import AdminSetPasswordRequest, InviteRequest
+from ..schemas.folder import FolderCreate, FolderUpdate
 from ..schemas.submission import (
     BriefJsonUpdate,
     BulkDeleteRequest,
@@ -95,7 +96,9 @@ mcp = FastMCP(
     instructions=(
         "Manage Freeframe video request briefs. A brief is a token-gated request "
         "that editors submit work against. Call list_destinations before creating "
-        "or moving a brief — both need a real project id, which cannot be guessed."
+        "or moving a brief — both need a real project id, which cannot be guessed. "
+        "Folders to file briefs into are made with create_folder, which takes a "
+        "path and creates whatever part of it is missing."
     ),
     stateless_http=True,
     json_response=True,
@@ -644,6 +647,197 @@ def delete_brief(link_ids: list[str]) -> dict[str, Any]:
         "requested": len(link_ids),
         "note": "Soft delete: submissions and their uploaded files are retained.",
     }
+
+
+# ── Folders ──────────────────────────────────────────────────────────────────
+
+def _folder_summary(folder: Any) -> dict[str, Any]:
+    return {
+        "id": str(folder.id),
+        "project_id": str(folder.project_id),
+        "parent_id": str(folder.parent_id) if folder.parent_id else None,
+        "name": folder.name,
+        "item_count": folder.item_count,
+    }
+
+
+def _find_node(nodes: list[Any], folder_id: uuid.UUID) -> Any | None:
+    for node in nodes:
+        if node.id == folder_id:
+            return node
+        hit = _find_node(node.children, folder_id)
+        if hit is not None:
+            return hit
+    return None
+
+
+def _split_path(path: str) -> list[str]:
+    segments = [s.strip() for s in path.split("/") if s.strip()]
+    if not segments:
+        raise ValueError("path must name at least one folder, e.g. 'Phones/Stokora'")
+    return segments
+
+
+@mcp.tool(
+    description=(
+        "Create a folder inside a project, by path. Segments that already exist "
+        "are reused and only the missing tail is created, so calling this twice "
+        "with the same path is safe. Pass parent_folder_id to resolve the path "
+        "beneath an existing folder instead of the project root. Names are matched "
+        "case-insensitively. Use the returned id as home_folder_id when creating, "
+        "duplicating or moving a brief."
+    )
+)
+def create_folder(
+    project_id: str,
+    path: str,
+    parent_folder_id: str | None = None,
+) -> dict[str, Any]:
+    """Args: path — one or more names separated by '/', relative to parent_folder_id or the project root."""
+    _require_scope(SCOPE_WRITE)
+    pid = _uuid(project_id, "project_id")
+    segments = _split_path(path)
+
+    tree = _call(folders_router.get_folder_tree, project_id=pid)
+    if parent_folder_id:
+        parent = _uuid(parent_folder_id, "parent_folder_id")
+        node = _find_node(tree, parent)
+        if node is None:
+            raise ValueError(f"No folder {parent_folder_id} in project {project_id}")
+        current_id: uuid.UUID | None = parent
+        siblings = node.children
+    else:
+        current_id = None
+        siblings = tree
+
+    created: list[str] = []
+    landed: Any = None
+    for index, segment in enumerate(segments):
+        # Nothing stops two siblings sharing a name, so a path can be genuinely
+        # ambiguous. Guessing would file briefs into the wrong tree silently.
+        matches = [n for n in siblings if n.name.casefold() == segment.casefold()]
+        if len(matches) > 1:
+            raise ValueError(
+                f"{len(matches)} folders here are named {segment!r} — "
+                "pass parent_folder_id to say which branch you mean"
+            )
+        if matches:
+            landed = matches[0]
+            current_id = landed.id
+            siblings = landed.children
+            continue
+        # First gap in the path: everything from here down is new, and each one
+        # is the next one's parent, so the tree read above is stale from here on.
+        for name in segments[index:]:
+            landed = _call(
+                folders_router.create_folder,
+                project_id=pid,
+                body=FolderCreate(name=name, parent_id=current_id),
+            )
+            created.append(name)
+            current_id = landed.id
+        break
+
+    return {
+        "id": str(current_id),
+        "project_id": project_id,
+        "name": landed.name,
+        "path": "/".join(segments),
+        # Which segments were new, so a caller can tell "created" from "was already there".
+        "created": created,
+    }
+
+
+@mcp.tool(
+    description=(
+        "Rename a folder, move it under a different parent, or both. Only the "
+        "fields you pass change. parent_folder_id must be another folder in the "
+        "same project; pass an empty string to move the folder to the project "
+        "root. A folder cannot be moved inside itself or one of its own subfolders."
+    )
+)
+def update_folder(
+    folder_id: str,
+    name: str | None = None,
+    parent_folder_id: str | None = None,
+) -> dict[str, Any]:
+    """Args: folder_id — the folder to change. Omitted fields keep their current value."""
+    _require_scope(SCOPE_WRITE)
+    if name is None and parent_folder_id is None:
+        raise ValueError("Pass name, parent_folder_id, or both — nothing to change otherwise")
+
+    fields: dict[str, Any] = {}
+    if name is not None:
+        fields["name"] = name
+    if parent_folder_id is not None:
+        # "" is how a caller says "to the root". The endpoint distinguishes unset
+        # from null via model_fields_set, so parent_id only goes in when asked for.
+        fields["parent_id"] = _uuid(parent_folder_id, "parent_folder_id") if parent_folder_id else None
+
+    return _folder_summary(
+        _call(
+            folders_router.update_folder,
+            folder_id=_uuid(folder_id, "folder_id"),
+            body=FolderUpdate(**fields),
+        )
+    )
+
+
+@mcp.tool(
+    description=(
+        "Delete a folder. This is a soft delete: the folder, every subfolder "
+        "under it and every asset inside them are hidden from the tree but kept, "
+        "and restore_folder puts the whole subtree back. Briefs filed here are "
+        "not deleted — they keep pointing at the folder and reappear with it. "
+        "Note the returned id if you might want to undo this later."
+    )
+)
+def delete_folder(folder_id: str) -> dict[str, Any]:
+    """Args: folder_id — the folder to delete, along with everything beneath it."""
+    _require_scope(SCOPE_WRITE)
+    fid = _uuid(folder_id, "folder_id")
+    _call(folders_router.delete_folder, folder_id=fid)
+    return {
+        "deleted": str(fid),
+        "note": "Soft delete — call restore_folder with this id to undo.",
+    }
+
+
+@mcp.tool(
+    description=(
+        "Undo a folder deletion. Restores the folder, its subfolders and their "
+        "assets. If the folder's old parent is itself still deleted, the folder "
+        "comes back at the project root instead. Use list_deleted_folders to find "
+        "the id of something deleted earlier."
+    )
+)
+def restore_folder(folder_id: str) -> dict[str, Any]:
+    """Args: folder_id — a previously deleted folder."""
+    _require_scope(SCOPE_WRITE)
+    fid = _uuid(folder_id, "folder_id")
+    _call(folders_router.restore_folder, folder_id=fid)
+    return {"restored": str(fid)}
+
+
+@mcp.tool(
+    description=(
+        "List a project's deleted folders, most recently deleted first, so a "
+        "deletion can be undone after its id has been forgotten. Deleted assets "
+        "are not listed here."
+    )
+)
+def list_deleted_folders(project_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Args: project_id — the project to look in. limit — 1 to 100, default 50."""
+    _require_scope(SCOPE_READ)
+    if not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
+    trash = _call(
+        folders_router.list_trash,
+        project_id=_uuid(project_id, "project_id"),
+        skip=0,
+        limit=limit,
+    )
+    return trash["folders"]
 
 
 # ── Task pipeline ────────────────────────────────────────────────────────────

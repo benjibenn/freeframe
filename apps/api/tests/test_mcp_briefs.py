@@ -534,6 +534,162 @@ def test_delete_brief_rejects_an_empty_selection(as_admin):
         mcp_router.delete_brief(link_ids=[])
 
 
+# ── Folders ──────────────────────────────────────────────────────────────────
+
+def _node(name, children=None, folder_id=None):
+    """A FolderTreeNode stand-in. `name` is reserved by MagicMock, so set it after."""
+    n = MagicMock(id=folder_id or uuid.uuid4(), children=children or [])
+    n.name = name
+    return n
+
+
+def _folder(name, folder_id=None, parent_id=None, project_id=None):
+    f = MagicMock(
+        id=folder_id or uuid.uuid4(),
+        project_id=project_id or uuid.uuid4(),
+        parent_id=parent_id,
+        item_count=0,
+    )
+    f.name = name
+    return f
+
+
+def test_create_folder_reuses_the_part_of_the_path_that_exists(as_admin):
+    """Re-running the same path must not fork a second "Stokora" beside the first.
+
+    An agent filing a batch of briefs calls this once per destination and cannot
+    be trusted to remember which folders it already made.
+    """
+    stokora = _node("Stokora")
+    tree = [_node("Phones", children=[stokora])]
+    made = _folder("iPhone 17e")
+    with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=tree), \
+         patch.object(mcp_router.folders_router, "create_folder", return_value=made) as create:
+        out = mcp_router.create_folder(
+            project_id=str(uuid.uuid4()), path="Phones/Stokora/iPhone 17e"
+        )
+
+    assert create.call_count == 1
+    assert create.call_args.kwargs["body"].parent_id == stokora.id
+    assert out["created"] == ["iPhone 17e"]
+    assert out["id"] == str(made.id)
+
+
+def test_create_folder_chains_each_new_folder_under_the_last(as_admin):
+    """Only the first missing segment has a parent in the tree we read.
+
+    The rest are parented to folders that did not exist when that tree was
+    fetched, so re-reading it would find nothing and file them all at the root.
+    """
+    first = _folder("Stokora")
+    second = _folder("iPhone 17e")
+    phones = _node("Phones")
+    with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=[phones]), \
+         patch.object(
+             mcp_router.folders_router, "create_folder", side_effect=[first, second]
+         ) as create:
+        out = mcp_router.create_folder(
+            project_id=str(uuid.uuid4()), path="Phones/Stokora/iPhone 17e"
+        )
+
+    parents = [c.kwargs["body"].parent_id for c in create.call_args_list]
+    assert parents == [phones.id, first.id]
+    assert out["created"] == ["Stokora", "iPhone 17e"]
+
+
+def test_create_folder_refuses_an_ambiguous_segment(as_admin):
+    """Nothing stops two siblings sharing a name, and picking one silently
+    would file briefs into a tree the caller never looked at."""
+    tree = [_node("Phones"), _node("phones")]
+    with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=tree):
+        with pytest.raises(ValueError, match="parent_folder_id"):
+            mcp_router.create_folder(project_id=str(uuid.uuid4()), path="Phones/Stokora")
+
+
+def test_create_folder_resolves_the_path_under_a_given_parent(as_admin):
+    """parent_folder_id is how a caller disambiguates; the path must start there."""
+    stokora = _node("Stokora")
+    phones = _node("Phones", children=[stokora])
+    made = _folder("iPhone 17e")
+    with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=[phones]), \
+         patch.object(mcp_router.folders_router, "create_folder", return_value=made) as create:
+        mcp_router.create_folder(
+            project_id=str(uuid.uuid4()),
+            path="Stokora/iPhone 17e",
+            parent_folder_id=str(phones.id),
+        )
+    assert create.call_count == 1
+    assert create.call_args.kwargs["body"].parent_id == stokora.id
+
+
+def test_create_folder_rejects_an_empty_path(as_admin):
+    with pytest.raises(ValueError, match="at least one folder"):
+        mcp_router.create_folder(project_id=str(uuid.uuid4()), path="  /  ")
+
+
+def test_update_folder_leaves_the_parent_alone_when_only_renaming(as_admin):
+    """The endpoint reads model_fields_set, so a parent_id we did not mean to send
+    would move the folder to the project root as a side effect of a rename."""
+    with patch.object(
+        mcp_router.folders_router, "update_folder", return_value=_folder("Renamed")
+    ) as update:
+        mcp_router.update_folder(folder_id=str(uuid.uuid4()), name="Renamed")
+    assert "parent_id" not in update.call_args.kwargs["body"].model_fields_set
+
+
+def test_update_folder_moves_to_the_root_on_an_empty_string(as_admin):
+    """"" is the only way to say "no parent"; omitting it means "don't touch"."""
+    with patch.object(
+        mcp_router.folders_router, "update_folder", return_value=_folder("Stokora")
+    ) as update:
+        mcp_router.update_folder(folder_id=str(uuid.uuid4()), parent_folder_id="")
+    body = update.call_args.kwargs["body"]
+    assert "parent_id" in body.model_fields_set and body.parent_id is None
+
+
+def test_update_folder_rejects_a_call_that_changes_nothing(as_admin):
+    with pytest.raises(ValueError, match="nothing to change"):
+        mcp_router.update_folder(folder_id=str(uuid.uuid4()))
+
+
+def test_delete_folder_reports_how_to_undo_itself(as_admin):
+    """The delete cascades over subfolders and assets, so the caller has to know
+    it is reversible — and needs the id to reverse it with."""
+    fid = uuid.uuid4()
+    with patch.object(mcp_router.folders_router, "delete_folder", return_value=None):
+        out = mcp_router.delete_folder(folder_id=str(fid))
+    assert out["deleted"] == str(fid)
+    assert "restore_folder" in out["note"]
+
+
+def test_restore_folder_undoes_a_delete(as_admin):
+    fid = uuid.uuid4()
+    with patch.object(
+        mcp_router.folders_router, "restore_folder", return_value={"ok": True}
+    ) as restore:
+        out = mcp_router.restore_folder(folder_id=str(fid))
+    assert restore.call_args.kwargs["folder_id"] == fid
+    assert out == {"restored": str(fid)}
+
+
+def test_list_deleted_folders_omits_deleted_assets(as_admin):
+    """Trash carries assets too, and MCP exposes no asset tools — listing them
+    would spend the caller's context on ids no tool here can act on."""
+    trash = {
+        "folders": [{"id": str(uuid.uuid4()), "name": "Stokora"}],
+        "assets": [{"id": str(uuid.uuid4()), "name": "hook.mp4"}],
+    }
+    with patch.object(mcp_router.folders_router, "list_trash", return_value=trash):
+        out = mcp_router.list_deleted_folders(project_id=str(uuid.uuid4()))
+    assert out == trash["folders"]
+
+
+def test_list_deleted_folders_rejects_a_limit_the_endpoint_would_reject(as_admin):
+    """The Query(le=100) bound is not enforced when the function is called directly."""
+    with pytest.raises(ValueError, match="between 1 and 100"):
+        mcp_router.list_deleted_folders(project_id=str(uuid.uuid4()), limit=500)
+
+
 # ── Task pipeline ────────────────────────────────────────────────────────────
 
 def _stage(**over):
