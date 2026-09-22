@@ -1,13 +1,18 @@
-"""Superadmin reports: the whole submission pipeline as numbers.
+"""Superadmin reports: the whole submission pipeline as facts to count.
 
 Sibling of routers/admin.py rather than part of it because nothing here mutates
-state and everything here is one read model. The aggregation lives in the pure
+state and everything here is one read model. The shaping lives in the pure
 `build_report` below, NOT in SQL GROUP BY clauses: the API test suite mocks the
 DB session (the models use PostgreSQL UUID types), so a grouped query would be
 unverifiable, while a pure function over plain rows is tested directly.
+
+This endpoint deliberately computes NO totals. It returns briefs, the people who
+accepted them and when, and one row per delivered file with its date; the page
+derives every number from those against whatever window is being asked about.
+An earlier version returned all-time counts and let the page filter rows, which
+put lifetime totals underneath a two-day filter.
 """
 import uuid
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,7 +27,7 @@ from ..schemas.reports import (
     ReportBriefRow,
     ReportFileRow,
     ReportPayload,
-    ReportTotals,
+    ReportSubmitter,
     ReportUserRow,
 )
 from ..services.folder_paths import link_home_paths
@@ -59,13 +64,13 @@ def build_report(
     users: dict,
     home_paths: dict,
 ) -> ReportPayload:
-    """Fold the brief → submission → project → asset join into all four pivots.
+    """Resolve the brief -> submission -> project -> asset join into flat rows.
 
-    `asset_rows` are (asset_id, project_id, name, created_at) tuples. Assets are
-    tied to a submitter through the per-submitter PROJECT, not through a column on
-    the asset — that indirection is the whole join, so it is resolved once here and
-    every pivot is derived from the same resolved rows. Anything uploaded into a
-    project that is not a submitter project is not submitted work and is ignored.
+    `asset_rows` are (asset_id, project_id, name, created_at) tuples. A file is
+    tied to a person only through the per-submitter PROJECT — assets carry no
+    uploader column — so that indirection is resolved once, here. Anything
+    uploaded into a project that is not a submitter project is not submitted work
+    and is dropped.
     """
     sub_by_project = {s.project_id: s for s in subs}
     link_by_id = {l.id: l for l in links}
@@ -91,73 +96,46 @@ def build_report(
             )
         )
 
-    files_per_brief: dict = {}
-    last_upload_per_brief: dict = {}
-    files_per_user: dict = {}
-    last_upload_per_user: dict = {}
-    for f in files:
-        files_per_brief[f.brief_id] = files_per_brief.get(f.brief_id, 0) + 1
-        files_per_user[f.user_id] = files_per_user.get(f.user_id, 0) + 1
-        prev_b = last_upload_per_brief.get(f.brief_id)
-        if prev_b is None or f.created_at > prev_b:
-            last_upload_per_brief[f.brief_id] = f.created_at
-        prev_u = last_upload_per_user.get(f.user_id)
-        if prev_u is None or f.created_at > prev_u:
-            last_upload_per_user[f.user_id] = f.created_at
-
     subs_per_link: dict = {}
     for s in subs:
         subs_per_link.setdefault(s.submission_link_id, []).append(s)
 
-    briefs: list[ReportBriefRow] = []
-    for l in links:
-        rows = subs_per_link.get(l.id, [])
-        briefs.append(
-            ReportBriefRow(
-                id=l.id,
-                title=l.title,
-                home_path=home_paths.get(l.id) or l.taxonomy_path,
-                created_at=l.created_at,
-                is_enabled=l.is_enabled,
-                persona_label=l.persona_label,
-                angle_label=l.angle_label,
-                submission_count=len(rows),
-                file_count=files_per_brief.get(l.id, 0),
-                submitter_ids=[s.user_id for s in rows],
-                submitter_names=[person_name(users.get(s.user_id)) for s in rows],
-                last_upload_at=last_upload_per_brief.get(l.id),
-            )
+    briefs = [
+        ReportBriefRow(
+            id=l.id,
+            title=l.title,
+            home_path=home_paths.get(l.id) or l.taxonomy_path,
+            created_at=l.created_at,
+            is_enabled=l.is_enabled,
+            persona_label=l.persona_label,
+            angle_label=l.angle_label,
+            submitters=[
+                ReportSubmitter(
+                    user_id=s.user_id,
+                    name=person_name(users.get(s.user_id)),
+                    submitted_at=s.created_at,
+                )
+                for s in subs_per_link.get(l.id, [])
+            ],
         )
+        for l in links
+    ]
 
-    briefs_per_user: dict = {}
+    # Everyone who has ever accepted a brief, whether or not they delivered.
+    # Someone who accepted and uploaded nothing is exactly who an admin opens
+    # this page to find, so they must survive into the payload.
+    seen: dict = {}
     for s in subs:
-        briefs_per_user.setdefault(s.user_id, set()).add(s.submission_link_id)
-
-    user_rows: list[ReportUserRow] = []
-    for user_id, brief_ids in briefs_per_user.items():
-        u = users.get(user_id)
-        user_rows.append(
-            ReportUserRow(
-                user_id=user_id,
+        if s.user_id not in seen:
+            u = users.get(s.user_id)
+            seen[s.user_id] = ReportUserRow(
+                user_id=s.user_id,
                 name=person_name(u),
                 email=(u.email if u else "") or "",
-                brief_count=len(brief_ids),
-                file_count=files_per_user.get(user_id, 0),
-                last_upload_at=last_upload_per_user.get(user_id),
             )
-        )
-    # Busiest first: the reason to open the per-user tab is to see who is carrying
-    # the work, so the answer should not need a click to sort.
-    user_rows.sort(key=lambda r: (-r.file_count, r.name.lower()))
+    user_rows = sorted(seen.values(), key=lambda r: (r.name or "￿").lower())
 
-    totals = ReportTotals(
-        brief_count=len(links),
-        submission_count=len(subs),
-        file_count=len(files),
-        submitter_count=len(briefs_per_user),
-        briefs_awaiting_work=sum(1 for b in briefs if b.file_count == 0),
-    )
-    return ReportPayload(totals=totals, briefs=briefs, users=user_rows, files=files)
+    return ReportPayload(briefs=briefs, users=user_rows, files=files)
 
 
 @router.get("", response_model=ReportPayload)
@@ -174,18 +152,7 @@ def get_reports(
         .all()
     )
     if not links:
-        return ReportPayload(
-            totals=ReportTotals(
-                brief_count=0,
-                submission_count=0,
-                file_count=0,
-                submitter_count=0,
-                briefs_awaiting_work=0,
-            ),
-            briefs=[],
-            users=[],
-            files=[],
-        )
+        return ReportPayload(briefs=[], users=[], files=[])
 
     subs = (
         db.query(Submission)

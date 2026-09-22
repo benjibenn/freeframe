@@ -1,10 +1,14 @@
 """Response shapes for the superadmin reports page.
 
-One request returns every pivot the page offers (totals, per-brief, per-user and
-the flat file list) because they are four readings of the SAME join — brief →
-submission → per-submitter project → asset. Splitting them into four endpoints
-would re-walk that join four times and let the tabs disagree about the numbers
-when uploads land mid-session.
+The payload carries FACTS, not counts: briefs with their submitters, submitters
+with the day they accepted, and one row per file with its upload date. Every
+number on the page is derived from these by the client.
+
+That split is deliberate and was learned the hard way. The first version shipped
+pre-aggregated all-time counts and let the client filter rows; a two-day date
+range then kept a row whose last upload fell inside it and displayed that
+person's LIFETIME totals next to the filter. Counts computed anywhere other than
+where the filter is applied will eventually disagree with it.
 """
 import uuid
 from datetime import datetime
@@ -13,16 +17,13 @@ from typing import Optional
 from pydantic import BaseModel
 
 
-class ReportTotals(BaseModel):
-    brief_count: int
-    submission_count: int
-    file_count: int
-    # Distinct people who have accepted at least one brief, NOT the total user
-    # count — the report is about work done, not accounts that exist.
-    submitter_count: int
-    # A brief nobody has uploaded a file against yet. Counted on files, not on
-    # submissions: accepting a link and never delivering still means "awaiting".
-    briefs_awaiting_work: int
+class ReportSubmitter(BaseModel):
+    user_id: uuid.UUID
+    name: str
+    # When this person accepted the brief — NOT when they uploaded anything.
+    # Carried so a date range can scope "submissions" the same way it scopes
+    # files, instead of leaving one all-time number in an otherwise scoped row.
+    submitted_at: datetime
 
 
 class ReportBriefRow(BaseModel):
@@ -33,24 +34,17 @@ class ReportBriefRow(BaseModel):
     is_enabled: bool
     persona_label: Optional[str] = None
     angle_label: Optional[str] = None
-    submission_count: int
-    file_count: int
-    # Ids as well as names: the page filters by submitter, and two editors can
-    # share a display name while their ids never collide.
-    submitter_ids: list[uuid.UUID]
-    submitter_names: list[str]
-    last_upload_at: Optional[datetime] = None
+    submitters: list[ReportSubmitter]
 
 
 class ReportUserRow(BaseModel):
+    """Identity only. How many briefs this person worked on and how many files
+    they delivered depends on the window being asked about, so it is derived
+    where the window is known rather than fixed here."""
+
     user_id: uuid.UUID
     name: str
     email: str
-    # No separate submission count: `uq_submissions_link_user` makes one
-    # submission per (brief, person), so the two numbers are always equal.
-    brief_count: int
-    file_count: int
-    last_upload_at: Optional[datetime] = None
 
 
 class ReportFileRow(BaseModel):
@@ -65,7 +59,6 @@ class ReportFileRow(BaseModel):
 
 
 class ReportPayload(BaseModel):
-    totals: ReportTotals
     briefs: list[ReportBriefRow]
     users: list[ReportUserRow]
     files: list[ReportFileRow]
