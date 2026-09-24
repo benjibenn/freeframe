@@ -30,8 +30,10 @@ from ..middleware.api_key import resolve_api_key_user
 from ..services import mcp_oauth
 from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE, SCOPE_USERS_ADMIN
 from ..models.user import User
+from ..schemas.approval import ApprovalCreate
+from ..schemas.asset import AssetUpdate
 from ..schemas.auth import AdminSetPasswordRequest, InviteRequest
-from ..schemas.folder import FolderCreate, FolderUpdate
+from ..schemas.folder import AssetMoveRequest, FolderCreate, FolderUpdate
 from ..schemas.submission import (
     BriefJsonUpdate,
     BulkDeleteRequest,
@@ -41,6 +43,8 @@ from ..schemas.submission import (
 )
 from ..schemas.task_stage import BriefAssigneeAssign, TaskStageAssign
 from . import admin as admin_router
+from . import approvals as approvals_router
+from . import assets as assets_router
 from . import folders as folders_router
 from . import projects as projects_router
 from . import submissions as submissions_router
@@ -98,7 +102,9 @@ mcp = FastMCP(
         "that editors submit work against. Call list_destinations before creating "
         "or moving a brief — both need a real project id, which cannot be guessed. "
         "Folders to file briefs into are made with create_folder, which takes a "
-        "path and creates whatever part of it is missing."
+        "path and creates whatever part of it is missing. The work editors send "
+        "back is reached with list_submitted_files, and every file tool below "
+        "takes an asset_id from it."
     ),
     stateless_http=True,
     json_response=True,
@@ -202,19 +208,53 @@ def _call(fn, **kwargs) -> Any:
 
 @mcp.tool(
     description=(
-        "List video request briefs. Returns each brief's id, title, where it is "
-        "filed, how many submissions it has received, and its public submit URL."
+        "Search video request briefs. Returns each brief's id, title, where it is "
+        "filed, how many submissions it has received, and its public submit URL. "
+        "Narrow with query (matches the title or the folder path, case-insensitive), "
+        "project_id, or folder_id. A tenant can hold hundreds of briefs, so the "
+        "result is capped at limit and reports total_matched when it truncates — "
+        "narrow the search rather than raising limit."
     )
 )
-def list_briefs(project_id: str | None = None) -> list[dict[str, Any]]:
-    """Args: project_id — optional; only briefs filed in this project."""
+def list_briefs(
+    project_id: str | None = None,
+    query: str | None = None,
+    folder_id: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Args: project_id, query, folder_id — all optional filters; limit — 1..200.
+
+    Filtering happens here rather than in the endpoint on purpose: the endpoint
+    backs the admin grid, which wants every row, and adding search parameters to
+    it would mean two places deciding what a brief matches.
+    """
     _require_scope(SCOPE_READ)
+    if not 1 <= limit <= 200:
+        raise ValueError("limit must be between 1 and 200")
     links = _call(submissions_router.list_submission_links)
     out = [_brief_summary(l) for l in links]
     if project_id:
         wanted = str(_uuid(project_id, "project_id"))
         out = [b for b in out if b["home_project_id"] == wanted]
-    return out
+    if folder_id:
+        wanted = str(_uuid(folder_id, "folder_id"))
+        out = [b for b in out if b["home_folder_id"] == wanted]
+    if query:
+        needle = query.casefold().strip()
+        out = [
+            b for b in out
+            if needle in (b["title"] or "").casefold()
+            or needle in (b["home_path"] or "").casefold()
+        ]
+    total = len(out)
+    return {
+        "total_matched": total,
+        "returned": min(total, limit),
+        # Said out loud rather than left for the caller to infer from a length:
+        # a silently truncated list reads as "that is all of them".
+        "truncated": total > limit,
+        "briefs": out[:limit],
+    }
 
 
 @mcp.tool(
@@ -626,7 +666,7 @@ def move_brief(
         "Close one or more briefs. This is a soft delete: the brief stops accepting "
         "work and disappears from the tree, but every submission already made "
         "against it — and every file uploaded with those submissions — is left "
-        "alone in its own project. There is no undo through this API. A brief with "
+        "alone in its own project. Undo it with restore_brief. A brief with "
         "submissions is usually one someone is still working from, so check "
         "submission_count in list_briefs before closing anything you did not create."
     )
@@ -647,6 +687,51 @@ def delete_brief(link_ids: list[str]) -> dict[str, Any]:
         "requested": len(link_ids),
         "note": "Soft delete: submissions and their uploaded files are retained.",
     }
+
+
+@mcp.tool(
+    description=(
+        "Reopen a brief that delete_brief closed. Its submit URL starts working "
+        "again and it reappears in list_briefs. Find the id with "
+        "list_deleted_briefs. A brief that was already past its expiry comes back "
+        "still expired — give it a new expires_at with update_brief to reopen the "
+        "window."
+    )
+)
+def restore_brief(brief_id: str) -> dict[str, Any]:
+    """Args: brief_id — the closed brief to reopen."""
+    _require_scope(SCOPE_WRITE)
+    link = _call(
+        submissions_router.restore_submission_link,
+        link_id=_uuid(brief_id, "brief_id"),
+    )
+    return _brief_summary(link)
+
+
+@mcp.tool(
+    description=(
+        "List closed briefs, most recently closed first, so one can be reopened "
+        "with restore_brief. Deleting a brief never destroys it or the work "
+        "submitted to it."
+    )
+)
+def list_deleted_briefs(limit: int = 50) -> list[dict[str, Any]]:
+    """Args: limit — 1..100, newest deletions first."""
+    _require_scope(SCOPE_READ)
+    if not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
+    links = _call(submissions_router.list_deleted_submission_links, skip=0, limit=limit)
+    return [
+        {
+            "id": str(l.id),
+            "title": l.title,
+            "submission_count": l.submission_count,
+            "deleted_at": (
+                d.isoformat() if (d := getattr(l, "deleted_at", None)) else None
+            ),
+        }
+        for l in links
+    ]
 
 
 # ── Folders ──────────────────────────────────────────────────────────────────
@@ -838,6 +923,253 @@ def list_deleted_folders(project_id: str, limit: int = 50) -> list[dict[str, Any
         limit=limit,
     )
     return trash["folders"]
+
+
+# ── Submitted files ──────────────────────────────────────────────────────────
+
+def _file_summary(asset: Any) -> dict[str, Any]:
+    """The handful of fields a file tool acts on, not the whole AssetResponse.
+
+    The response model also carries versions, thumbnails and tags; none of them
+    are inputs to anything here, and a brief with fifty submitted files would
+    otherwise flood the caller's context.
+    """
+    kind = getattr(asset, "asset_type", None)
+    return {
+        "asset_id": str(asset.id),
+        "name": asset.name,
+        "project_id": str(asset.project_id),
+        "folder_id": str(asset.folder_id) if asset.folder_id else None,
+        "asset_type": getattr(kind, "value", None) or (str(kind) if kind else None),
+    }
+
+
+def _latest_version_id(asset_id: uuid.UUID) -> uuid.UUID:
+    """The version a review applies to.
+
+    list_asset_versions orders by version_number descending, so the head of the
+    list is the newest upload. Reviewing anything else silently would approve a
+    superseded cut.
+    """
+    versions = _call(assets_router.list_asset_versions, asset_id=asset_id)
+    if not versions:
+        raise ValueError("That file has no uploaded version to review yet")
+    return versions[0].id
+
+
+@mcp.tool(
+    description=(
+        "List the work editors have submitted against a brief, grouped by "
+        "submitter. Every file carries the asset_id that get_file_url, "
+        "rename_file, move_file, delete_file and review_file all take."
+    )
+)
+def list_submitted_files(brief_id: str) -> list[dict[str, Any]]:
+    """Args: brief_id — the brief whose submissions to list."""
+    _require_scope(SCOPE_READ)
+    subs = _call(
+        submissions_router.list_submissions,
+        link_id=_uuid(brief_id, "brief_id"),
+    )
+    return [
+        {
+            "submission_id": str(s.id),
+            "submitter": s.display_name or s.user_name or s.user_email,
+            "submitter_email": s.user_email,
+            "project_id": str(s.project_id),
+            "submitted_at": s.created_at.isoformat() if s.created_at else None,
+            "files": [{"asset_id": str(f.asset_id), "name": f.name} for f in s.files],
+        }
+        for s in subs
+    ]
+
+
+@mcp.tool(
+    description=(
+        "Get a time-limited URL for a submitted file, to view or download it. "
+        "The link is presigned and expires, so fetch it when you are ready to "
+        "use it rather than storing it."
+    )
+)
+def get_file_url(asset_id: str, download: bool = True) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files; download — false streams inline."""
+    _require_scope(SCOPE_READ)
+    res = _call(
+        assets_router.get_stream_url,
+        asset_id=_uuid(asset_id, "asset_id"),
+        version_id=None,
+        download=download,
+    )
+    kind = getattr(res, "asset_type", None)
+    return {
+        "url": res.url,
+        "asset_type": getattr(kind, "value", None) or (str(kind) if kind else None),
+        "expires_in": res.expires_in,
+    }
+
+
+@mcp.tool(
+    description=(
+        "Rename a submitted file. Renames the file only — it stays in the same "
+        "folder and keeps every version it has."
+    )
+)
+def rename_file(asset_id: str, name: str) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files; name — the new filename."""
+    _require_scope(SCOPE_WRITE)
+    new_name = name.strip()
+    if not new_name:
+        raise ValueError("name must not be blank")
+    return _file_summary(_call(
+        assets_router.update_asset,
+        asset_id=_uuid(asset_id, "asset_id"),
+        body=AssetUpdate(name=new_name),
+    ))
+
+
+@mcp.tool(
+    description=(
+        "Move a submitted file into a folder of the same project. Pass an empty "
+        "string to move it to the project root. Cross-project moves are refused: "
+        "a folder only ever holds files from its own project."
+    )
+)
+def move_file(asset_id: str, folder_id: str) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files; folder_id — target, "" for root.
+
+    folder_id is required rather than defaulted: an omitted argument that quietly
+    means "root" would move a file out of its folder every time a caller forgot it.
+    """
+    _require_scope(SCOPE_WRITE)
+    aid = _uuid(asset_id, "asset_id")
+    target = _uuid(folder_id, "folder_id") if folder_id else None
+    _call(folders_router.move_asset, asset_id=aid, body=AssetMoveRequest(folder_id=target))
+    return {"asset_id": str(aid), "folder_id": str(target) if target else None}
+
+
+@mcp.tool(
+    description=(
+        "Delete a submitted file. Soft delete — the file is hidden but kept, and "
+        "restore_file brings it back with its versions intact."
+    )
+)
+def delete_file(asset_id: str) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files."""
+    _require_scope(SCOPE_WRITE)
+    aid = _uuid(asset_id, "asset_id")
+    _call(assets_router.delete_asset, asset_id=aid)
+    return {
+        "deleted": str(aid),
+        "note": "Soft delete — call restore_file with this id to undo.",
+    }
+
+
+@mcp.tool(
+    description=(
+        "Undo delete_file. If the folder the file was in has since been deleted "
+        "too, the file comes back at the project root."
+    )
+)
+def restore_file(asset_id: str) -> dict[str, Any]:
+    """Args: asset_id — the deleted file to bring back."""
+    _require_scope(SCOPE_WRITE)
+    aid = _uuid(asset_id, "asset_id")
+    _call(folders_router.restore_asset, asset_id=aid)
+    return {"restored": str(aid)}
+
+
+@mcp.tool(
+    description=(
+        "Approve or reject a submitted file, with an optional note as feedback. "
+        "Applies to the file's newest version. This emails the person who "
+        "uploaded it and raises a notification for them, so only call it when the "
+        "decision is final."
+    )
+)
+def review_file(asset_id: str, decision: str, note: str | None = None) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files; decision — "approve" or
+    "reject"; note — feedback sent with the decision."""
+    _require_scope(SCOPE_WRITE)
+    choice = decision.strip().casefold()
+    if choice not in ("approve", "reject"):
+        raise ValueError('decision must be "approve" or "reject"')
+    aid = _uuid(asset_id, "asset_id")
+    version_id = _latest_version_id(aid)
+    endpoint = (
+        approvals_router.approve_asset if choice == "approve"
+        else approvals_router.reject_asset
+    )
+    _call(endpoint, asset_id=aid, body=ApprovalCreate(version_id=version_id, note=note))
+    return {
+        "asset_id": str(aid),
+        "decision": choice,
+        "version_id": str(version_id),
+        "note": note,
+        "notified": "The uploader was emailed and notified in-app.",
+    }
+
+
+@mcp.tool(
+    description=(
+        "Look inside one folder: its subfolders, the files in it, and the briefs "
+        "filed there. Omit folder_id for the project root. Use this instead of "
+        "listing a whole project when you already know where you are."
+    )
+)
+def list_folder_contents(
+    project_id: str,
+    folder_id: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Args: project_id; folder_id — omit for the root; limit — 1..200 files.
+
+    Every defaulted parameter of list_assets is passed explicitly. Called
+    directly rather than through FastAPI, an omitted argument is left as the
+    Query object itself — which is truthy, so include_failed would silently
+    turn on.
+    """
+    _require_scope(SCOPE_READ)
+    if not 1 <= limit <= 200:
+        raise ValueError("limit must be between 1 and 200")
+    pid = _uuid(project_id, "project_id")
+    tree = _call(folders_router.get_folder_tree, project_id=pid)
+
+    if folder_id:
+        fid = _uuid(folder_id, "folder_id")
+        node = _find_node(tree, fid)
+        if node is None:
+            raise ValueError(f"No folder {folder_id} in project {project_id}")
+        children, scope, here = node.children, str(fid), str(fid)
+    else:
+        children, scope, here = tree, "root", None
+
+    assets = _call(
+        assets_router.list_assets,
+        project_id=pid,
+        include_failed=False,
+        folder_id=scope,
+        tag=None,
+        frame_label=None,
+        exclude_archived=False,
+        skip=0,
+        limit=limit,
+    )
+    links = _call(submissions_router.list_submission_links)
+    briefs = [
+        _brief_summary(l) for l in links
+        if str(l.home_project_id) == str(pid)
+        and (str(l.home_folder_id) if l.home_folder_id else None) == here
+    ]
+
+    return {
+        "folder_id": here,
+        "subfolders": [
+            {"id": str(c.id), "name": c.name, "item_count": c.item_count}
+            for c in children
+        ],
+        "files": [_file_summary(a) for a in assets],
+        "briefs": briefs,
+    }
 
 
 # ── Task pipeline ────────────────────────────────────────────────────────────
