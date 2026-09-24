@@ -262,8 +262,9 @@ def test_list_briefs_filters_by_project(as_admin):
         with patch("apps.api.routers.mcp.settings") as s:
             s.frontend_url = "https://x.test"
             out = mcp_router.list_briefs(project_id=str(wanted))
-    assert len(out) == 1
-    assert out[0]["home_project_id"] == str(wanted)
+    assert out["total_matched"] == 1
+    assert out["truncated"] is False
+    assert out["briefs"][0]["home_project_id"] == str(wanted)
 
 
 def test_list_destinations_flattens_folders_to_paths(as_admin):
@@ -688,6 +689,209 @@ def test_list_deleted_folders_rejects_a_limit_the_endpoint_would_reject(as_admin
     """The Query(le=100) bound is not enforced when the function is called directly."""
     with pytest.raises(ValueError, match="between 1 and 100"):
         mcp_router.list_deleted_folders(project_id=str(uuid.uuid4()), limit=500)
+
+
+# ── Submitted files ──────────────────────────────────────────────────────────
+
+def _submission(files, display_name=None, user_name="Ed", user_email="ed@x.io"):
+    s = MagicMock(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        display_name=display_name,
+        user_name=user_name,
+        user_email=user_email,
+        created_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        files=files,
+    )
+    return s
+
+
+def _sub_file(name):
+    f = MagicMock(asset_id=uuid.uuid4())
+    f.name = name
+    return f
+
+
+def _asset(name, folder_id=None, project_id=None):
+    a = MagicMock(
+        id=uuid.uuid4(),
+        project_id=project_id or uuid.uuid4(),
+        folder_id=folder_id,
+        asset_type=MagicMock(value="video"),
+    )
+    a.name = name
+    return a
+
+
+def test_list_submitted_files_exposes_the_asset_id_every_file_tool_needs(as_admin):
+    """rename/move/delete/review all key off asset_id.
+
+    If this tool reported only filenames, an agent asked to rename a file would
+    have nothing to address it by and would have to guess.
+    """
+    one, two = _sub_file("cut_a.mp4"), _sub_file("cut_b.mp4")
+    with patch.object(
+        mcp_router.submissions_router, "list_submissions",
+        return_value=[_submission([one, two])],
+    ):
+        out = mcp_router.list_submitted_files(brief_id=str(uuid.uuid4()))
+
+    assert [f["asset_id"] for f in out[0]["files"]] == [str(one.asset_id), str(two.asset_id)]
+    assert [f["name"] for f in out[0]["files"]] == ["cut_a.mp4", "cut_b.mp4"]
+
+
+def test_rename_file_sends_only_the_name(as_admin):
+    """update_asset applies model_dump(exclude_unset=True).
+
+    Passing a fully-populated AssetUpdate would blank the description, rating and
+    due date of a file whose name is the only thing being changed.
+    """
+    with patch.object(
+        mcp_router.assets_router, "update_asset", return_value=_asset("final.mp4"),
+    ) as update:
+        mcp_router.rename_file(asset_id=str(uuid.uuid4()), name="  final.mp4  ")
+
+    body = update.call_args.kwargs["body"]
+    assert body.model_fields_set == {"name"}
+    assert body.name == "final.mp4"
+
+
+def test_rename_file_rejects_a_blank_name(as_admin):
+    """A whitespace-only rename would leave an unclickable, unnameable row."""
+    with pytest.raises(ValueError, match="must not be blank"):
+        mcp_router.rename_file(asset_id=str(uuid.uuid4()), name="   ")
+
+
+def test_move_file_treats_an_empty_destination_as_the_project_root(as_admin):
+    """The root is not a folder and has no id, so "" is how a caller names it."""
+    with patch.object(mcp_router.folders_router, "move_asset") as move:
+        out = mcp_router.move_file(asset_id=str(uuid.uuid4()), folder_id="")
+
+    assert move.call_args.kwargs["body"].folder_id is None
+    assert out["folder_id"] is None
+
+
+def test_review_file_reviews_the_newest_version(as_admin):
+    """Versions come back newest-first.
+
+    Approving anything but the head would sign off a cut the editor has already
+    replaced, and the uploader would be emailed about the wrong one.
+    """
+    newest, older = MagicMock(id=uuid.uuid4()), MagicMock(id=uuid.uuid4())
+    with patch.object(
+        mcp_router.assets_router, "list_asset_versions", return_value=[newest, older],
+    ), patch.object(mcp_router.approvals_router, "approve_asset") as approve:
+        out = mcp_router.review_file(
+            asset_id=str(uuid.uuid4()), decision="Approve", note="ship it"
+        )
+
+    assert approve.call_args.kwargs["body"].version_id == newest.id
+    assert approve.call_args.kwargs["body"].note == "ship it"
+    assert out["decision"] == "approve"
+
+
+def test_review_file_refuses_an_unknown_decision(as_admin):
+    """Anything other than approve/reject must not fall through to one of them —
+    a review is emailed to the uploader and cannot be taken back."""
+    with pytest.raises(ValueError, match="approve"):
+        mcp_router.review_file(asset_id=str(uuid.uuid4()), decision="maybe")
+
+
+def test_review_file_refuses_a_file_with_no_uploaded_version(as_admin):
+    """ApprovalCreate requires a version_id; there is nothing to review yet."""
+    with patch.object(
+        mcp_router.assets_router, "list_asset_versions", return_value=[],
+    ):
+        with pytest.raises(ValueError, match="no uploaded version"):
+            mcp_router.review_file(asset_id=str(uuid.uuid4()), decision="reject")
+
+
+def test_delete_file_reports_how_to_undo(as_admin):
+    """The delete is soft, so the caller is told rather than left to assume
+    the file is gone."""
+    with patch.object(mcp_router.assets_router, "delete_asset"):
+        out = mcp_router.delete_file(asset_id=str(uuid.uuid4()))
+
+    assert "restore_file" in out["note"]
+
+
+def test_list_folder_contents_passes_every_list_assets_default_explicitly(as_admin):
+    """list_assets declares its options as Query(...) objects.
+
+    Called directly rather than through FastAPI, an omitted argument stays a
+    Query instance — which is truthy, so include_failed would silently switch on
+    and the folder would show broken uploads.
+    """
+    pid = uuid.uuid4()
+    with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=[]), \
+         patch.object(mcp_router.assets_router, "list_assets", return_value=[]) as listing, \
+         patch.object(mcp_router.submissions_router, "list_submission_links", return_value=[]):
+        mcp_router.list_folder_contents(project_id=str(pid))
+
+    kwargs = listing.call_args.kwargs
+    assert kwargs["include_failed"] is False
+    assert kwargs["exclude_archived"] is False
+    assert kwargs["tag"] is None and kwargs["frame_label"] is None
+    assert kwargs["folder_id"] == "root"
+
+
+def test_list_folder_contents_only_returns_briefs_filed_in_that_folder(as_admin):
+    """A brief's home folder is what files it; listing the project's briefs in
+    every folder would make the folder view meaningless."""
+    pid, fid = uuid.uuid4(), uuid.uuid4()
+    node = _node("Stokora", folder_id=fid)
+    here = _link(title="In here", home_project_id=pid, home_folder_id=fid)
+    elsewhere = _link(title="Elsewhere", home_project_id=pid, home_folder_id=uuid.uuid4())
+    with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=[node]), \
+         patch.object(mcp_router.assets_router, "list_assets", return_value=[]), \
+         patch.object(
+             mcp_router.submissions_router, "list_submission_links",
+             return_value=[here, elsewhere],
+         ):
+        out = mcp_router.list_folder_contents(project_id=str(pid), folder_id=str(fid))
+
+    assert [b["title"] for b in out["briefs"]] == ["In here"]
+
+
+def test_list_briefs_says_so_when_it_truncates(as_admin):
+    """A silently cut list reads as the whole set.
+
+    A tenant holds hundreds of briefs; an agent told it saw 50 of 550 narrows its
+    search, one handed 50 rows concludes the rest do not exist.
+    """
+    links = [_link(title=f"Brief {i}") for i in range(12)]
+    with patch.object(
+        mcp_router.submissions_router, "list_submission_links", return_value=links,
+    ):
+        out = mcp_router.list_briefs(limit=5)
+
+    assert out["total_matched"] == 12
+    assert out["returned"] == 5
+    assert out["truncated"] is True
+    assert len(out["briefs"]) == 5
+
+
+def test_list_briefs_matches_title_or_folder_path_case_insensitively(as_admin):
+    """Ben types "stokora"; the folder is "Stokora". Matching the path as well as
+    the title is what makes "show me the Stokora briefs" work."""
+    by_title = _link(title="Stokora hero cut")
+    by_path = _link(title="Untitled", home_path="Phones/Stokora")
+    miss = _link(title="Something else", home_path="Phones/Other")
+    with patch.object(
+        mcp_router.submissions_router, "list_submission_links",
+        return_value=[by_title, by_path, miss],
+    ):
+        out = mcp_router.list_briefs(query="STOKORA")
+
+    assert out["total_matched"] == 2
+    assert {b["title"] for b in out["briefs"]} == {"Stokora hero cut", "Untitled"}
+
+
+def test_list_deleted_briefs_rejects_an_out_of_range_limit(as_admin):
+    """The endpoint's Query(le=100) never runs on a direct call, so the bound is
+    enforced here or not at all."""
+    with pytest.raises(ValueError, match="between 1 and 100"):
+        mcp_router.list_deleted_briefs(limit=500)
 
 
 # ── Task pipeline ────────────────────────────────────────────────────────────

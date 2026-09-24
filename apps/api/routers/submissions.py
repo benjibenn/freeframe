@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -408,6 +408,82 @@ def list_submission_links(
         resp.has_reference_image = resp.reference_image_count > 0
         out.append(resp)
     return out
+
+
+# Declared before /submission-links/{link_id}: FastAPI matches in declaration
+# order, so a literal path registered after the UUID placeholder would never be
+# reached — "trash" would be parsed as a link_id and 422.
+@router.get("/submission-links/trash", response_model=list[SubmissionLinkResponse])
+def list_deleted_submission_links(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Closed requests, most recently closed first, so one can be reopened.
+
+    Mirrors the visibility rule of list_submission_links rather than inventing a
+    second one: platform admins see every closed request, everyone else only the
+    ones they created."""
+    query = db.query(SubmissionLink).filter(SubmissionLink.deleted_at.isnot(None))
+    if not is_platform_admin(current_user):
+        query = query.filter(SubmissionLink.created_by == current_user.id)
+    links = (
+        query.order_by(SubmissionLink.deleted_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    counts = _count_map(db, [l.id for l in links])
+    out = []
+    for l in links:
+        resp = SubmissionLinkResponse.model_validate(l)
+        resp.submission_count = counts.get(l.id, 0)
+        resp.has_brief = bool(l.brief_pdf_s3_key)
+        resp.has_brief_json = bool(l.brief_json)
+        out.append(resp)
+    return out
+
+
+@router.post("/submission-links/{link_id}/restore", response_model=SubmissionLinkResponse)
+def restore_submission_link(
+    link_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Reopen a closed request.
+
+    The delete was a soft delete that also cleared is_enabled, so restoring has
+    to undo both — clearing deleted_at alone would give back a request that is
+    visible but silently refuses submissions.
+
+    An expired request comes back still expired: the expiry is the owner's own
+    deadline, and quietly extending it on restore would reopen a window they
+    deliberately closed."""
+    link = db.query(SubmissionLink).filter(
+        SubmissionLink.id == link_id,
+        SubmissionLink.deleted_at.isnot(None),
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Closed submission link not found")
+    if link.created_by != current_user.id and not is_platform_admin(current_user):
+        raise HTTPException(status_code=403, detail="Not your submission link")
+
+    link.deleted_at = None
+    link.is_enabled = True
+    db.commit()
+    db.refresh(link)
+
+    resp = SubmissionLinkResponse.model_validate(link)
+    resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
+    resp.has_brief = bool(link.brief_pdf_s3_key)
+    resp.has_brief_json = bool(link.brief_json)
+    resp.reference_video_count = len(_ref_video_keys(link))
+    resp.has_reference_video = resp.reference_video_count > 0
+    resp.reference_image_count = len(_ref_image_keys(link))
+    resp.has_reference_image = resp.reference_image_count > 0
+    resp.home_path = resolve_link_home_path(db, link)
+    return resp
 
 
 @router.get("/submission-links/{link_id}", response_model=SubmissionLinkResponse)
