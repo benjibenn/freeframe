@@ -1800,6 +1800,7 @@ def accept_submission_link(
 class SubmitWorkFromUrlRequest(BaseModel):
     url: str
     asset_name: Optional[str] = None
+    language: Optional[str] = None
 
 
 class SubmitWorkResponse(BaseModel):
@@ -1847,6 +1848,37 @@ def resolve_submitted_asset_name(brief_json, requested: Optional[str]) -> Option
     return requested or None
 
 
+def resolve_submitted_language(brief_json, requested: Optional[str]) -> Optional[str]:
+    """Which output language this submission is in, or None when there is no choice.
+
+    Mirrors resolve_submitted_asset_name, and for the same reason: a brief asking
+    for several languages is a contract that each deliverable comes back in each
+    of them. Work that does not say which one it is would collide on a name
+    already taken by another locale, and the second upload would thread under the
+    first as a revision rather than standing as its own deliverable.
+
+    Fewer than two languages means the name carries no prefix at all, so anything
+    the caller sent is ignored rather than rejected — briefs predating the field
+    list none, and a single language distinguishes nothing.
+    """
+    from ..services.hook_naming import output_languages
+
+    allowed = output_languages(brief_json)
+    if len(allowed) < 2:
+        return None
+    if not requested:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This brief asks for several languages; language must be one of: {allowed}",
+        )
+    if requested not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"language must be one of the brief's output languages: {allowed}",
+        )
+    return requested
+
+
 @router.post("/submission-links/{link_id}/submit-work/from-url", response_model=SubmitWorkResponse)
 def submit_work_from_url(
     link_id: uuid.UUID,
@@ -1869,7 +1901,7 @@ def submit_work_from_url(
     from ..models.activity import ActivityLog, ActivityAction
     from ..models.task_stage import TaskStage
     from ..schemas.upload import ALLOWED_MIME_TYPES, mime_to_asset_type
-    from ..services.hook_naming import next_hook_name, variation_names
+    from ..services.hook_naming import compose_name, next_hook_name, variation_names
     from ..services import brief_import_service
 
     link = _validate_active(
@@ -1893,10 +1925,13 @@ def submit_work_from_url(
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}")
     asset_type = mime_to_asset_type(content_type)
 
+    language = resolve_submitted_language(link.brief_json, body.language)
     name = resolve_submitted_asset_name(link.brief_json, body.asset_name)
     if name is None:
         db.query(Project).filter(Project.id == project.id).with_for_update().first()
-        name = next_hook_name(db, project.id)
+        name = next_hook_name(db, project.id, language)
+    else:
+        name = compose_name(language, name)
 
     # A repeat submission of the same deliverable is a revision, not a rival.
     asset = db.query(Asset).filter(

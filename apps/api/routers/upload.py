@@ -52,7 +52,9 @@ def initiate_upload(
             raise HTTPException(status_code=400, detail="Asset does not belong to the specified project")
     else:
         from ..services import brief_import_service
-        from ..services.hook_naming import next_hook_name, variation_names
+        from ..services.hook_naming import (
+            compose_name, next_hook_name, output_languages, variation_names,
+        )
         from ..models.submission import SubmissionLink
         from ..services.folder_paths import resolve_link_home_path
         asset_type = mime_to_asset_type(body.mime_type)
@@ -74,16 +76,29 @@ def initiate_upload(
             # folder rename is stamped with the new name rather than a stale one.
             taxonomy_path = resolve_link_home_path(db, link) if link else None
             allowed = variation_names(link.brief_json) if link else []
+            languages = output_languages(link.brief_json) if link else []
+            # Only a brief listing two or more languages makes the uploader say
+            # which one a file is. Without this the same deliverable in two
+            # locales lands on one name, and the second silently becomes a
+            # version of the first instead of its own asset.
+            language = None
+            if len(languages) > 1:
+                if body.language not in languages:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Language must be one of the brief's output languages",
+                    )
+                language = body.language
             if allowed:
                 if body.asset_name not in allowed:
                     raise HTTPException(
                         status_code=400,
                         detail="Asset name must be one of the brief's deliverable names",
                     )
-                name = body.asset_name
+                name = compose_name(language, body.asset_name)
             else:
                 db.query(Project).filter(Project.id == project.id).with_for_update().first()
-                name = next_hook_name(db, project.id)
+                name = next_hook_name(db, project.id, language)
         asset = Asset(
             project_id=body.project_id,
             name=name,

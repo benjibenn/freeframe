@@ -88,6 +88,7 @@ export default function ProjectDetailPage() {
   const [assetName, setAssetName] = React.useState("");
   const [pendingFiles, setPendingFiles] = React.useState<File[]>([]);
   const [fileNames, setFileNames] = React.useState<string[]>([]);
+  const [fileLanguages, setFileLanguages] = React.useState<string[]>([]);
   const [selectedAsset, setSelectedAsset] =
     React.useState<AssetResponse | null>(null);
   const [shareLinksExpanded, setShareLinksExpanded] = React.useState(true);
@@ -531,9 +532,25 @@ export default function ProjectDetailPage() {
       .map((v) => v.trim());
   }, [autoNamesHooks, project?.brief_json]);
 
+  // A brief asking for several languages makes the submitter say which one each
+  // file is, on top of (or instead of) the deliverable. Returns [] for a single
+  // language so that "should we ask?" is just a length check here and in the
+  // JSX — matching the server, which only prefixes names when there is a choice.
+  const outputLanguages = React.useMemo(() => {
+    if (!autoNamesHooks) return [];
+    const raw = (project?.brief_json as Record<string, unknown> | undefined)
+      ?.output_languages;
+    if (!Array.isArray(raw)) return [];
+    const langs = raw
+      .filter((l): l is string => typeof l === "string" && l.trim() !== "")
+      .map((l) => l.trim());
+    return langs.length > 1 ? langs : [];
+  }, [autoNamesHooks, project?.brief_json]);
+
   const handleFilesSelected = (files: File[]) => {
     setPendingFiles(files);
     setFileNames(files.map(() => ""));
+    setFileLanguages(files.map(() => ""));
     if (files.length > 0) setAssetName(files[0].name.replace(/\.[^/.]+$/, ""));
   };
 
@@ -547,10 +564,18 @@ export default function ProjectDetailPage() {
             : file.name;
       // Note: startUpload does not yet accept folderId — assets will upload to root.
       // Upload store needs to be updated in a future task to support folder placement.
-      startUpload(file, projectId, name, project?.name, currentFolderId);
+      startUpload(
+        file,
+        projectId,
+        name,
+        project?.name,
+        currentFolderId,
+        outputLanguages.length > 0 ? fileLanguages[i] : null,
+      );
     });
     setPendingFiles([]);
     setFileNames([]);
+    setFileLanguages([]);
     setAssetName("");
     setUploadOpen(false);
   };
@@ -1330,6 +1355,28 @@ export default function ProjectDetailPage() {
                                   ))}
                                 </select>
                               )}
+                              {outputLanguages.length > 0 && (
+                                <select
+                                  value={fileLanguages[i] ?? ""}
+                                  onChange={(e) =>
+                                    setFileLanguages((prev) => {
+                                      const next = [...prev];
+                                      next[i] = e.target.value;
+                                      return next;
+                                    })
+                                  }
+                                  className="mt-1.5 w-full rounded-md border border-border bg-bg-primary px-2 py-1.5 text-sm text-text-primary"
+                                >
+                                  <option value="" disabled>
+                                    Select language…
+                                  </option>
+                                  {outputLanguages.map((lang) => (
+                                    <option key={lang} value={lang}>
+                                      {lang}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -1339,6 +1386,12 @@ export default function ProjectDetailPage() {
                           {variationNames.length > 0
                             ? "Each file must be one of the brief's deliverables — pick which one it is. To revise a deliverable you already sent, open it and upload a new version instead."
                             : "Uploads are numbered automatically — each new file becomes the next hook (Hook 1, Hook 2, …). To revise a hook you already sent, open it and upload a new version instead."}
+                          {outputLanguages.length > 0 &&
+                            " This brief asks for several languages, so say which one each file is — it goes in front of the name, e.g. “" +
+                              outputLanguages[0] +
+                              " — " +
+                              (variationNames[0] ?? "Hook 1") +
+                              "”."}
                         </p>
                       ) : (
                         pendingFiles.length === 1 && (
@@ -1358,6 +1411,7 @@ export default function ProjectDetailPage() {
                           onClick={() => {
                             setPendingFiles([]);
                             setFileNames([]);
+                            setFileLanguages([]);
                           }}
                         >
                           Change files
@@ -1366,8 +1420,10 @@ export default function ProjectDetailPage() {
                           size="sm"
                           onClick={handleStartUpload}
                           disabled={
-                            variationNames.length > 0 &&
-                            pendingFiles.some((_, i) => !fileNames[i])
+                            (variationNames.length > 0 &&
+                              pendingFiles.some((_, i) => !fileNames[i])) ||
+                            (outputLanguages.length > 0 &&
+                              pendingFiles.some((_, i) => !fileLanguages[i]))
                           }
                         >
                           Start upload
