@@ -52,7 +52,7 @@ interface UploadStore {
   historySkip: number
   setPanelOpen: (open: boolean) => void
   togglePanel: () => void
-  startUpload: (file: File, projectId: string, assetName: string, projectName?: string, folderId?: string | null) => string
+  startUpload: (file: File, projectId: string, assetName: string, projectName?: string, folderId?: string | null, language?: string | null) => string
   startVersionUpload: (file: File, assetId: string, assetName: string, projectId: string) => string
   cancelUpload: (fileId: string) => void
   removeFile: (fileId: string) => void
@@ -123,7 +123,7 @@ const storeCreator: StateCreator<UploadStore, [['zustand/persist', unknown]]> = 
   setPanelOpen: (open) => set({ panelOpen: open }),
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
 
-  startUpload: (file, projectId, assetName, projectName, folderId) => {
+  startUpload: (file, projectId, assetName, projectName, folderId, language) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
 
     const entry: UploadFile = {
@@ -170,6 +170,9 @@ const storeCreator: StateCreator<UploadStore, [['zustand/persist', unknown]]> = 
             file_size_bytes: file.size,
             mime_type: file.type,
             folder_id: folderId ?? null,
+            // Only meaningful for request projects whose brief lists several
+            // output languages; the server decides that and ignores it otherwise.
+            language: language ?? null,
           },
         )
         upload_id = initRes.upload_id

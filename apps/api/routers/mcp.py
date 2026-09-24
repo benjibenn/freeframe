@@ -375,15 +375,26 @@ def add_brief_reference(link_id: str, url: str, kind: str = "auto") -> dict[str,
         "valid at the moment of the call. Images and videos up to 200 MB; anything "
         "larger has to go through the web UI. When the brief prescribes deliverable "
         "names (its hook_variations), asset_name must be exactly one of them — "
-        "call get_brief first to read them. Submitting the same name twice adds a "
-        "new version to that deliverable rather than a second one beside it."
+        "call get_brief first to read them. If the brief lists two or more "
+        "output_languages, language is required too and must be exactly one of "
+        "them; the file is then stored as 'German — A. before you buy'. "
+        "Submitting the same deliverable and language twice adds a new version to "
+        "it rather than a second one beside it."
     )
 )
-def submit_work(link_id: str, url: str, asset_name: Optional[str] = None) -> dict[str, Any]:
-    """Args: url — a public http(s) URL; asset_name — which deliverable this is."""
+def submit_work(
+    link_id: str,
+    url: str,
+    asset_name: Optional[str] = None,
+    language: Optional[str] = None,
+) -> dict[str, Any]:
+    """Args: url — a public http(s) URL; asset_name — which deliverable this is;
+    language — which of the brief's output_languages it is in."""
     _require_scope(SCOPE_WRITE)
     link_uuid = _uuid(link_id, "link_id")
-    body = submissions_router.SubmitWorkFromUrlRequest(url=url, asset_name=asset_name)
+    body = submissions_router.SubmitWorkFromUrlRequest(
+        url=url, asset_name=asset_name, language=language
+    )
     result = _call(submissions_router.submit_work_from_url, link_id=link_uuid, body=body)
     return {
         "submission_project_id": str(result.submission_project_id),

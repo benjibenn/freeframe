@@ -7,7 +7,15 @@ to their own project, and revising a hook must not burn a new number.
 import uuid
 from unittest.mock import MagicMock, patch
 
-from apps.api.services.hook_naming import next_hook_name, next_hook_number, variation_names
+from apps.api.services.hook_naming import (
+    compose_name,
+    next_hook_name,
+    next_hook_number,
+    output_languages,
+    requires_language,
+    strip_language,
+    variation_names,
+)
 
 
 # ── The numbering rule ─────────────────────────────────────────────────────────
@@ -90,6 +98,62 @@ def test_next_hook_name_only_counts_live_assets_in_that_project():
     # Two predicates: scoped to the project AND excluding soft-deleted assets.
     # Without the project scope one submitter's uploads would number off another's.
     assert len(db.filter.call_args[0]) == 2
+
+
+# ── Multi-language briefs ──────────────────────────────────────────────────────
+
+def test_output_languages_reads_the_languages_a_brief_asks_for():
+    assert output_languages({"output_languages": ["German", "  Swedish  "]}) == [
+        "German",
+        "Swedish",
+    ]
+
+
+def test_output_languages_is_empty_for_briefs_without_the_key():
+    # Briefs are pasted free-form and most predate the field. Every misshapen
+    # form has to read as "single-language" rather than blow up an upload.
+    for brief in (None, {}, {"output_languages": "German"}, {"output_languages": [1, ""]}):
+        assert output_languages(brief) == []
+
+
+def test_one_language_is_not_a_choice():
+    # Asking would be a dropdown with a single option, and the prefix it stamps
+    # on every name would distinguish nothing. Two or more is a real question.
+    assert requires_language({"output_languages": ["German"]}) is False
+    assert requires_language({"output_languages": ["German", "Swedish"]}) is True
+
+
+def test_the_language_comes_first_in_the_name():
+    # Ben's call: reviewers go through localised work one locale at a time, so
+    # sorting by name has to group the languages, not the deliverables.
+    assert compose_name("German", "A. before you buy") == "German — A. before you buy"
+
+
+def test_a_name_is_left_alone_when_there_is_no_language():
+    assert compose_name(None, "Hook 1") == "Hook 1"
+
+
+def test_hook_numbering_runs_per_language_so_the_locales_pair_up():
+    # The German and Swedish cuts of one idea are the same hook twice, so both
+    # must be Hook 1. Numbering across languages would make the Swedish set
+    # start at 3 and destroy the pairing a reviewer reads them by.
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.all.return_value = [("German — Hook 1",), ("German — Hook 2",)]
+
+    assert next_hook_name(db, uuid.uuid4(), "German") == "German — Hook 3"
+    assert next_hook_name(db, uuid.uuid4(), "Swedish") == "Swedish — Hook 1"
+
+
+def test_stripping_a_language_rejects_another_languages_name():
+    # This is what keeps the sequences apart: a name that is not this language's
+    # returns None and is excluded from the count entirely.
+    assert strip_language("German — Hook 2", "German") == "Hook 2"
+    assert strip_language("Swedish — Hook 2", "German") is None
+    # Hand-renamed assets still count, matching the case-insensitive rule the
+    # bare "Hook N" matcher already uses.
+    assert strip_language("german — Hook 2", "German") == "Hook 2"
 
 
 # ── The upload endpoint ────────────────────────────────────────────────────────
