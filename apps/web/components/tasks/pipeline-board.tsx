@@ -74,6 +74,7 @@ function BriefCard({
         </span>
         <span className="ml-auto flex items-center gap-1.5">
           {(brief.has_brief || brief.has_brief_json) && <FileText className="h-3 w-3" />}
+          {brief.editors.length > 1 && <span>{brief.editors.length} editors</span>}
           {brief.assets.length > 0 && <span>{brief.assets.length} file{brief.assets.length === 1 ? '' : 's'}</span>}
         </span>
       </div>
@@ -94,12 +95,15 @@ export function PipelineBoard({
   stages,
   folderFilter,
   canManage = true,
+  viewerId,
 }: {
   briefs: BriefTaskItem[]
   stages: TaskStage[]
   folderFilter: string | null
   /** Admins open the brief's settings page; editors open the submit flow. */
   canManage?: boolean
+  /** Which editor row belongs to the reader. */
+  viewerId?: string
 }) {
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [overColumn, setOverColumn] = React.useState<string | null>(null)
@@ -111,9 +115,22 @@ export function PipelineBoard({
     ...stages.map((s) => ({ id: s.id, name: s.name, color: s.color })),
   ]
 
+  // Which status a card sits in, and which one a drag writes. Admins work the
+  // brief's overall status. An editor works their own — a board grouped by a
+  // status they cannot move tells them nothing and lets them change nothing.
+  // A non-admin who owns the brief but has no editor row of their own falls
+  // back to the brief's status: they own it, so it is theirs to move.
+  const ownRow = (b: BriefTaskItem) =>
+    canManage ? undefined : b.editors.find((e) => e.id === viewerId)
+
+  const stageOf = (b: BriefTaskItem) => {
+    const own = ownRow(b)
+    return own ? own.task_stage_id : b.task_stage_id
+  }
+
   const inColumn = (columnId: string) =>
     briefs.filter((b) =>
-      columnId === UNASSIGNED ? b.task_stage_id === null : b.task_stage_id === columnId,
+      columnId === UNASSIGNED ? stageOf(b) === null : stageOf(b) === columnId,
     )
 
   const drop = async (columnId: string) => {
@@ -123,9 +140,13 @@ export function PipelineBoard({
     if (!id) return
     const target = columnId === UNASSIGNED ? null : columnId
     const current = briefs.find((b) => b.id === id)
-    if (!current || current.task_stage_id === target) return
+    if (!current || stageOf(current) === target) return
+    const own = ownRow(current)
+    const url = own
+      ? `/submission-links/${id}/editors/${own.id}/task-stage`
+      : `/submission-links/${id}/task-stage`
     try {
-      await api.patch(`/submission-links/${id}/task-stage`, { task_stage_id: target })
+      await api.patch(url, { task_stage_id: target })
       mutate(BOARD_KEY)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Could not move that brief')

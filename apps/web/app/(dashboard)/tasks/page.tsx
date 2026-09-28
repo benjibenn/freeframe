@@ -110,7 +110,7 @@ export default function TasksPage() {
           <p className="mt-1 text-sm text-text-secondary">
             {isPlatformAdmin
               ? 'Every brief and what has been delivered against it. A brief appears here from the moment you create it, so an empty one is visible rather than forgotten.'
-              : 'The briefs assigned to you. Move one along as you work on it.'}
+              : 'The briefs assigned to you. Move your own status as you work — the brief’s overall status stays with whoever owns it.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -228,7 +228,13 @@ export default function TasksPage() {
           }
         />
       ) : view === 'pipeline' ? (
-        <PipelineBoard briefs={briefs} stages={stageList} folderFilter={folderFilter} canManage={isPlatformAdmin} />
+        <PipelineBoard
+          briefs={briefs}
+          stages={stageList}
+          folderFilter={folderFilter}
+          canManage={isPlatformAdmin}
+          viewerId={user?.id}
+        />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border">
           <table className="w-full min-w-[52rem] table-fixed">
@@ -249,6 +255,7 @@ export default function TasksPage() {
                   stages={stageList}
                   owners={owners ?? []}
                   canAssign={isPlatformAdmin}
+                  viewerId={user?.id}
                   folderFilter={folderFilter}
                   typeFilter={typeFilter}
                   onDrillTo={setFolderFilter}
