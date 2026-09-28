@@ -322,10 +322,10 @@ class BriefEditorAssign(BaseModel):
 
 - [ ] **Step 2: Scope `_brief_item` to its viewer**
 
-In `apps/api/routers/tasks.py`, add to the imports from `..schemas.task_stage`: `BriefEditorAssign`. Add a new import line:
+In `apps/api/routers/tasks.py`, add to the imports from `..schemas.task_stage`: `BriefEditorAssign`. Add a new import line — `visible_editors` only, since nothing here moves a stage yet; Task 5 extends this line:
 
 ```python
-from ..services.brief_editors import may_move_editor_stage, visible_editors
+from ..services.brief_editors import visible_editors
 ```
 
 Replace `_brief_item` (line 605) with:
@@ -531,6 +531,14 @@ def _link(deleted=False):
     l.brief_json = None
     l.created_at = None
     l.deleted_at = "gone" if deleted else None
+    # These three MUST be None, not left as auto-created MagicMock attributes.
+    # _brief_item resolves the brief's path through folder_paths, which builds a
+    # recursive CTE and iterates db.execute(...).all(). A truthy folder id sends
+    # it down that road against a mock session and the request 500s. None makes
+    # link_home_paths short-circuit with no DB work at all.
+    l.home_folder_id = None
+    l.home_project_id = None
+    l.taxonomy_path = None
     return l
 
 
@@ -671,7 +679,13 @@ Expected: FAIL — every request 404s because the routes do not exist yet.
 
 - [ ] **Step 3: Write the endpoints**
 
-In `apps/api/routers/tasks.py`, after `set_brief_assignee` and before `_brief_item`:
+First extend the existing import added in Task 3:
+
+```python
+from ..services.brief_editors import may_move_editor_stage, visible_editors
+```
+
+Then, in `apps/api/routers/tasks.py`, after `set_brief_assignee` and before `_brief_item`:
 
 ```python
 @router.post("/submission-links/{link_id}/editors", response_model=BriefTaskItem)
