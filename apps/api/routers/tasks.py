@@ -668,9 +668,10 @@ def assign_brief_editor(
     from .submissions import _provision_submission_project
 
     # Idempotent — assigning someone already on the brief returns their existing
-    # project rather than opening a second one.
+    # project rather than opening a second one. The provisioner owns the
+    # transaction (it commits, or rolls back on a lost race, internally) —
+    # there is nothing left here to commit.
     _provision_submission_project(db, link, editor)
-    db.commit()
     db.refresh(link)
     return _brief_item(db, link, current_user)
 

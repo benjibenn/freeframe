@@ -11,8 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from apps.api.models.user import UserStatus
@@ -30,7 +29,7 @@ def _user(*, is_superadmin=False, name="Editor"):
     return u
 
 
-def _link(deleted=False):
+def _link():
     l = MagicMock()
     l.id = uuid.uuid4()
     l.token = "tok-abc"
@@ -43,7 +42,6 @@ def _link(deleted=False):
     # unlike the fields above this cannot be None: _brief_item's response-model
     # serialization would raise a pydantic ValidationError on any 200-path test.
     l.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    l.deleted_at = "gone" if deleted else None
     # These three MUST be None, not left as auto-created MagicMock attributes.
     # _brief_item resolves the brief's path through folder_paths, which builds a
     # recursive CTE and iterates db.execute(...).all(). A truthy folder id sends
@@ -79,7 +77,9 @@ def test_a_plain_editor_cannot_assign_anyone(mock_db):
 
 def test_assigning_to_a_deleted_brief_is_refused_before_provisioning(mock_db):
     """Otherwise a private project is created pointing at a brief that is gone."""
-    mock_db.first.return_value = None  # the deleted-aware lookup finds nothing
+    # side_effect (not return_value) pins this to the link lookup specifically,
+    # so a later query cannot silently satisfy it too.
+    mock_db.first.side_effect = [None]  # the deleted-aware lookup finds nothing
     client = _client(mock_db, _user(is_superadmin=True, name="Admin"))
     with patch("apps.api.routers.submissions._provision_submission_project") as prov:
         r = client.post(
@@ -106,7 +106,7 @@ def test_assigning_the_briefs_own_creator_is_allowed(mock_db):
     handles (it skips the duplicate membership). It must not blow up here."""
     link = _link()
     admin = _user(is_superadmin=True, name="Admin")
-    mock_db.first.side_effect = [link, admin, None]
+    mock_db.first.side_effect = [link, admin]
     mock_db.all.return_value = []
     client = _client(mock_db, admin)
     with patch(
@@ -143,8 +143,9 @@ def test_moving_an_editors_status_leaves_the_briefs_own_status_alone(mock_db):
     stage = MagicMock()
     stage.id = uuid.uuid4()
     stage.deleted_at = None
-    # link lookup, stage validation, submission lookup, then _brief_item's owner lookup
-    mock_db.first.side_effect = [link, stage, submission, None]
+    # link lookup, stage validation, submission lookup — _brief_item's owner
+    # lookup is short-circuited because _link() sets assignee_id to None.
+    mock_db.first.side_effect = [link, stage, submission]
     mock_db.all.return_value = []
     client = _client(mock_db, me)
     r = client.patch(
@@ -168,6 +169,11 @@ def test_moving_to_a_deleted_stage_is_refused(mock_db):
         json={"task_stage_id": str(uuid.uuid4())},
     )
     assert r.status_code == 404
+    # Distinguishes this 404 (raised by _get_stage) from the generic "Request
+    # not found" 404s elsewhere on this path — without it, deleting the
+    # _get_stage call entirely would still pass this test via the submission
+    # lookup's own bare 404.
+    assert r.json()["detail"] == "Task stage not found"
 
 
 def test_an_editor_with_no_row_on_this_brief_gets_a_404(mock_db):
