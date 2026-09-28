@@ -41,7 +41,7 @@ from ..schemas.submission import (
     DuplicateLinkRequest,
     SubmissionLinkCreate,
 )
-from ..schemas.task_stage import BriefAssigneeAssign, TaskStageAssign
+from ..schemas.task_stage import BriefAssigneeAssign, BriefEditorAssign, TaskStageAssign
 from . import admin as admin_router
 from . import approvals as approvals_router
 from . import assets as assets_router
@@ -1233,6 +1233,17 @@ def _brief_task_summary(item: Any) -> dict[str, Any]:
         "task_stage_id": str(item.task_stage_id) if item.task_stage_id else None,
         "assignee_id": str(item.assignee_id) if item.assignee_id else None,
         "assignee_name": item.assignee_name,
+        # Who is making it, and how far each of them is. An agent that can
+        # assign work but cannot read its progress can only ever assign more.
+        "editors": [
+            {
+                "id": str(e.id),
+                "name": e.name,
+                "email": e.email,
+                "task_stage_id": str(e.task_stage_id) if e.task_stage_id else None,
+            }
+            for e in (item.editors or [])
+        ],
         "submit_url": item.submit_url,
         "created_at": item.created_at.isoformat() if item.created_at else None,
     }
@@ -1262,9 +1273,9 @@ def set_brief_task_stage(link_id: str, task_stage_id: str | None) -> dict[str, A
 @mcp.tool(
     description=(
         "Set the internal owner of a brief — whose desk it sits on — or pass "
-        "null to unassign it. Distinct from the editors who accepted the link, "
-        "which is derived and not settable here. Get a real user id from "
-        "list_assignable_users first. Platform-admin only."
+        "null to unassign it. Distinct from the editors making it — put those on "
+        "with assign_brief_editor. Get a real user id from list_assignable_users "
+        "first. Platform-admin only."
     )
 )
 def assign_brief_owner(link_id: str, assignee_id: str | None) -> dict[str, Any]:
@@ -1276,6 +1287,53 @@ def assign_brief_owner(link_id: str, assignee_id: str | None) -> dict[str, Any]:
         link_id=_uuid(link_id, "link_id"),
         body=BriefAssigneeAssign(
             assignee_id=_uuid(assignee_id, "assignee_id") if assignee_id else None
+        ),
+    )
+    return _brief_task_summary(updated)
+
+
+@mcp.tool(
+    description=(
+        "Put an editor on a brief so it appears on their task list and they can "
+        "upload against it. This provisions their private upload folder and "
+        "CANNOT BE UNDONE — there is no unassign, because that folder holds "
+        "their work. Assigning the same person twice is harmless. Get a real "
+        "user id from list_assignable_users first. Platform-admin only."
+    )
+)
+def assign_brief_editor(link_id: str, user_id: str) -> dict[str, Any]:
+    """Args: link_id — the brief to staff. user_id — a user id from
+    list_assignable_users. Cannot be undone."""
+    _require_scope(SCOPE_WRITE)
+    updated = _call(
+        tasks_router.assign_brief_editor,
+        link_id=_uuid(link_id, "link_id"),
+        body=BriefEditorAssign(user_id=_uuid(user_id, "user_id")),
+    )
+    return _brief_task_summary(updated)
+
+
+@mcp.tool(
+    description=(
+        "Move one editor along the pipeline on a brief, or pass null to clear "
+        "their stage. Each editor on a brief carries their own status, and this "
+        "leaves the brief's own status alone. Get a real stage id from "
+        "list_task_stages first. Platform admins may move any editor; anyone "
+        "else only themselves."
+    )
+)
+def set_brief_editor_stage(
+    link_id: str, user_id: str, task_stage_id: str | None
+) -> dict[str, Any]:
+    """Args: link_id — the brief. user_id — which editor on it. task_stage_id —
+    a stage id from list_task_stages, or null to clear their stage."""
+    _require_scope(SCOPE_WRITE)
+    updated = _call(
+        tasks_router.set_brief_editor_task_stage,
+        link_id=_uuid(link_id, "link_id"),
+        user_id=_uuid(user_id, "user_id"),
+        body=TaskStageAssign(
+            task_stage_id=_uuid(task_stage_id, "task_stage_id") if task_stage_id else None
         ),
     )
     return _brief_task_summary(updated)
