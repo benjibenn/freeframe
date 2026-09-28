@@ -162,3 +162,66 @@ def test_task_board_hides_paid_counts_from_non_admin(_adm, _items, _paths, clien
     # Payment state is the owner's bookkeeping; an editor's board must not carry it.
     assert brief["paid_count"] == 0
     assert brief["submission_count"] == 0
+
+
+def _editor_rows_including(link_id, viewer_id):
+    """Two editors on one brief, one of whom is the person asking."""
+    me = MagicMock(); me.id = viewer_id; me.name = "Me"; me.email = "me@x.co"
+    other = MagicMock(); other.id = uuid.uuid4(); other.name = "Cleo"; other.email = "cleo@x.co"
+    return [(link_id, None, None, me), (link_id, date(2026, 8, 1), None, other)]
+
+
+@patch("apps.api.routers.tasks.link_home_paths", return_value={})
+@patch("apps.api.routers.tasks._build_task_items", return_value=[])
+@patch("apps.api.routers.tasks.is_platform_admin", return_value=False)
+def test_task_board_reaches_an_editor_who_does_not_own_the_brief(
+    _adm, _items, _paths, client, mock_db, auth_headers
+):
+    """The change that made several editors per brief possible.
+
+    A brief has to reach someone because they were assigned to make it, not only
+    because it sits on their desk. If the scope ever narrows back to assignee_id
+    alone, the first result below is empty, the board early-returns, and an
+    assigned editor is told they have no work.
+    """
+    link = _board_link()
+    mock_db.order_by.return_value = mock_db
+    mock_db.join.return_value = mock_db
+    mock_db.all.side_effect = [
+        [],                      # assignee_id scope — they do not own this brief
+        [(link.id,)],            # submissions scope — they are assigned to make it
+        [],                      # assets
+        [link],                  # links
+        _editor_rows(link.id),   # editor rows
+    ]
+    resp = client.get("/task-board", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert [b["id"] for b in resp.json()["briefs"]] == [str(link.id)]
+
+
+@patch("apps.api.routers.tasks.link_home_paths", return_value={})
+@patch("apps.api.routers.tasks._build_task_items", return_value=[])
+@patch("apps.api.routers.tasks.is_platform_admin", return_value=False)
+def test_task_board_shows_an_editor_only_their_own_row(
+    _adm, _items, _paths, client, mock_db, test_user, auth_headers
+):
+    """Per-submitter isolation, asserted on the wire rather than in a unit test.
+
+    Two editors work this brief. Returning both would hand each of them the
+    other's name and progress — the thing submission links exist to prevent.
+    Filtering in the UI would not help; the response would still carry them.
+    """
+    link = _board_link()
+    mock_db.order_by.return_value = mock_db
+    mock_db.join.return_value = mock_db
+    mock_db.all.side_effect = [
+        [(link.id,)],                                   # assignee_id scope
+        [],                                             # submissions scope
+        [],                                             # assets
+        [link],                                         # links
+        _editor_rows_including(link.id, test_user.id),  # two editors, one is me
+    ]
+    resp = client.get("/task-board", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    editors = resp.json()["briefs"][0]["editors"]
+    assert [e["id"] for e in editors] == [str(test_user.id)]
