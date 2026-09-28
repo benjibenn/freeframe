@@ -73,10 +73,18 @@ class TaskItem(BaseModel):
 
 
 class BriefEditor(BaseModel):
-    """An editor who accepted the request — derived from `submissions`, not stored."""
+    """An editor assigned to the request — by accepting the link, or by an admin.
+
+    Derived from `submissions`, one row per (brief, editor). A non-admin viewer
+    receives only their own row: co-editors' names and progress are exactly what
+    per-submitter isolation exists to withhold.
+    """
     id: uuid.UUID
     name: Optional[str] = None
     email: Optional[str] = None
+    # This editor's own status. Null = not started. Independent of the brief's
+    # task_stage_id above: two editors can be at different points on one brief.
+    task_stage_id: Optional[uuid.UUID] = None
 
 
 class BriefTaskItem(BaseModel):
@@ -115,3 +123,12 @@ class TaskBoardResponse(BaseModel):
 class BriefAssigneeAssign(BaseModel):
     """Null clears the owner — an unowned brief is a real state, not an error."""
     assignee_id: Optional[uuid.UUID] = None
+
+
+class BriefEditorAssign(BaseModel):
+    """The editor to put on this brief.
+
+    One-way: assigning provisions their private upload project, and there is no
+    unassign — removing the row would orphan whatever they uploaded into it.
+    """
+    user_id: uuid.UUID

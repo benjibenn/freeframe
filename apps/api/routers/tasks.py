@@ -41,8 +41,10 @@ from ..schemas.task_stage import (
     BriefEditor,
     BriefTaskItem,
     BriefAssigneeAssign,
+    BriefEditorAssign,
     TaskBoardResponse,
 )
+from ..services.brief_editors import visible_editors
 from ..services.permissions import require_platform_admin, is_platform_admin
 from ..services.s3_service import generate_presigned_get_url
 
@@ -574,7 +576,7 @@ def set_brief_task_stage(
     link.task_stage_id = body.task_stage_id
     db.commit()
     db.refresh(link)
-    return _brief_item(db, link)
+    return _brief_item(db, link, current_user)
 
 
 @router.patch("/submission-links/{link_id}/assignee", response_model=BriefTaskItem)
@@ -599,16 +601,20 @@ def set_brief_assignee(
     link.assignee_id = body.assignee_id
     db.commit()
     db.refresh(link)
-    return _brief_item(db, link)
+    return _brief_item(db, link, current_user)
 
 
-def _brief_item(db: Session, link: SubmissionLink) -> BriefTaskItem:
+def _brief_item(db: Session, link: SubmissionLink, viewer: User) -> BriefTaskItem:
     """One brief, without its assets — the PATCH endpoints return the row the
-    board just changed, and the board already holds the nested files."""
+    board just changed, and the board already holds the nested files.
+
+    Editors are scoped to the viewer for the same reason the board scopes them:
+    the row a PATCH hands back must not disclose more than the board would have.
+    """
     owner = db.query(User).filter(User.id == link.assignee_id).first() if link.assignee_id else None
     editors = [
-        BriefEditor(id=u.id, name=u.name, email=u.email)
-        for _, u in db.query(Submission.submission_link_id, User)
+        BriefEditor(id=u.id, name=u.name, email=u.email, task_stage_id=stage_id)
+        for stage_id, u in db.query(Submission.task_stage_id, User)
         .join(User, User.id == Submission.user_id)
         .filter(Submission.submission_link_id == link.id)
         .all()
@@ -620,7 +626,7 @@ def _brief_item(db: Session, link: SubmissionLink) -> BriefTaskItem:
         task_stage_id=link.task_stage_id,
         assignee_id=link.assignee_id,
         assignee_name=owner.name if owner else None,
-        editors=editors,
+        editors=visible_editors(editors, viewer.id, is_platform_admin(viewer)),
         has_brief=bool(link.brief_pdf_s3_key),
         has_brief_json=bool(link.brief_json),
         submit_url=f"{settings.frontend_url}/submit/{link.token}",
