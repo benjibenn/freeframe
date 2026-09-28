@@ -334,9 +334,20 @@ def get_task_board(
     # file names, which is exactly the isolation submission links exist to provide.
     owned_link_ids = None
     if not admin:
+        # Union, not replacement: a brief reaches someone because they own it
+        # (assignee_id — whose desk it sits on) OR because they are assigned to
+        # make it (a submissions row). Dropping the first would take briefs away
+        # from internal owners who are not editors.
         owned_link_ids = {
             lid for (lid,) in db.query(SubmissionLink.id).filter(
                 SubmissionLink.assignee_id == current_user.id,
+                SubmissionLink.deleted_at.is_(None),
+            ).all()
+        } | {
+            lid for (lid,) in db.query(Submission.submission_link_id)
+            .join(SubmissionLink, SubmissionLink.id == Submission.submission_link_id)
+            .filter(
+                Submission.user_id == current_user.id,
                 SubmissionLink.deleted_at.is_(None),
             ).all()
         }
@@ -389,14 +400,19 @@ def get_task_board(
     paid_counts: dict = {}
     if links:
         rows = (
-            db.query(Submission.submission_link_id, Submission.paid_at, User)
+            db.query(
+                Submission.submission_link_id,
+                Submission.paid_at,
+                Submission.task_stage_id,
+                User,
+            )
             .join(User, User.id == Submission.user_id)
             .filter(Submission.submission_link_id.in_([l.id for l in links]))
             .all()
         )
-        for link_id, paid_at, user in rows:
+        for link_id, paid_at, stage_id, user in rows:
             editors_by_link.setdefault(link_id, []).append(
-                BriefEditor(id=user.id, name=user.name, email=user.email)
+                BriefEditor(id=user.id, name=user.name, email=user.email, task_stage_id=stage_id)
             )
             sub_counts[link_id] = sub_counts.get(link_id, 0) + 1
             if paid_at is not None:
@@ -410,7 +426,7 @@ def get_task_board(
             task_stage_id=l.task_stage_id,
             assignee_id=l.assignee_id,
             assignee_name=(owners[l.assignee_id].name if l.assignee_id in owners else None),
-            editors=editors_by_link.get(l.id, []),
+            editors=visible_editors(editors_by_link.get(l.id, []), current_user.id, admin),
             has_brief=bool(l.brief_pdf_s3_key),
             has_brief_json=bool(l.brief_json),
             # Payment state is the owner's bookkeeping, not the editor's — zeroed

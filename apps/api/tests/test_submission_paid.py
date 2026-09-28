@@ -118,7 +118,9 @@ def _board_link():
 def _editor_rows(link_id):
     u1 = MagicMock(); u1.id = uuid.uuid4(); u1.name = "Ada"; u1.email = "ada@x.co"
     u2 = MagicMock(); u2.id = uuid.uuid4(); u2.name = "Bob"; u2.email = "bob@x.co"
-    return [(link_id, date(2026, 8, 1), u1), (link_id, None, u2)]
+    # (link_id, paid_at, task_stage_id, user) — matches the bulk editors query,
+    # which now also selects Submission.task_stage_id (Task 4).
+    return [(link_id, date(2026, 8, 1), None, u1), (link_id, None, None, u2)]
 
 
 @patch("apps.api.routers.tasks.link_home_paths", return_value={})
@@ -148,7 +150,8 @@ def test_task_board_hides_paid_counts_from_non_admin(_adm, _items, _paths, clien
     mock_db.order_by.return_value = mock_db
     mock_db.join.return_value = mock_db
     mock_db.all.side_effect = [
-        [(link.id,)],            # owned link ids (assignee scope)
+        [(link.id,)],            # owned link ids — assignee_id scope
+        [],                      # owned link ids — submissions scope (union, Task 4)
         [],                      # assets
         [link],                  # links
         _editor_rows(link.id),   # editor rows — one of two paid
