@@ -301,3 +301,72 @@ def test_task_board_shows_an_editor_only_their_own_row(
     assert resp.status_code == 200, resp.text
     editors = resp.json()["briefs"][0]["editors"]
     assert [e["id"] for e in editors] == [str(test_user.id)]
+
+
+@patch("apps.api.routers.tasks.link_home_paths", return_value={})
+@patch("apps.api.routers.tasks._build_task_items", return_value=[])
+@patch("apps.api.routers.tasks.is_platform_admin", return_value=False)
+def test_task_board_hides_the_owners_name_from_an_editor_who_is_not_the_owner(
+    _adm, _items, _paths, client, mock_db, test_user, auth_headers
+):
+    """The isolation hole the editors filter alone does not close.
+
+    An internal owner is routinely also an editor on their own brief — on the
+    production tenant, 45 briefs are shaped that way — so passing assignee_name
+    through hands co-editor B the name of editor A, whose editor row was filtered
+    out one field earlier. The brief still HAS an owner here: the assertion is
+    that this viewer is not told who it is.
+    """
+    owner = MagicMock(); owner.id = uuid.uuid4(); owner.name = "Ada Owner"
+    link = _board_link()
+    link.assignee_id = owner.id
+    mock_db.order_by.return_value = mock_db
+    mock_db.join.return_value = mock_db
+    mock_db.all.side_effect = [
+        [],                                             # assignee_id scope — not the owner
+        [(link.id, uuid.uuid4())],                      # submissions scope — assigned to make it
+        [],                                             # assets
+        [link],                                         # links
+        [owner],                                        # owner lookup (the link has an assignee)
+        _editor_rows_including(link.id, test_user.id),  # two editors, one is me
+    ]
+    resp = client.get("/task-board", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    brief = resp.json()["briefs"][0]
+    assert link.assignee_id is not None, "the brief must genuinely have an owner"
+    assert brief["assignee_name"] is None
+    # The id is blanked with the name: on its own it still re-identifies the
+    # person the moment it is rendered or looked up anywhere else.
+    assert brief["assignee_id"] is None
+
+
+@patch("apps.api.routers.tasks.link_home_paths", return_value={})
+@patch("apps.api.routers.tasks._build_task_items", return_value=[])
+@patch("apps.api.routers.tasks.is_platform_admin", return_value=False)
+def test_task_board_still_shows_an_owner_that_the_brief_is_theirs(
+    _adm, _items, _paths, client, mock_db, test_user, auth_headers
+):
+    """Blanking must not blind an owner to their own ownership.
+
+    The owner column is how a non-admin tells "mine to run" from "mine to make",
+    and the list view's brief-level status control keys off assignee_id — hiding
+    it from the owner would take the brief's own status away from the one
+    non-admin allowed to move it.
+    """
+    link = _board_link()
+    link.assignee_id = test_user.id
+    mock_db.order_by.return_value = mock_db
+    mock_db.join.return_value = mock_db
+    mock_db.all.side_effect = [
+        [(link.id,)],                                   # assignee_id scope — it is theirs
+        [],                                             # submissions scope
+        [],                                             # assets
+        [link],                                         # links
+        [test_user],                                    # owner lookup
+        _editor_rows_including(link.id, test_user.id),  # two editors, one is me
+    ]
+    resp = client.get("/task-board", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    brief = resp.json()["briefs"][0]
+    assert brief["assignee_id"] == str(test_user.id)
+    assert brief["assignee_name"] == test_user.name

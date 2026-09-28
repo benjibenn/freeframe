@@ -1,9 +1,9 @@
 """Who may see, and who may move, an editor's status on a brief.
 
 A brief can be assigned to several editors, each carrying their own pipeline
-stage. Two rules govern that, and both are here rather than inline in the
-router: they are the parts worth reading on their own, and they are the parts
-this test suite can exercise without a database.
+stage. The rules governing that are here rather than inline in the router: they
+are the parts worth reading on their own, and they are the parts this test suite
+can exercise without a database.
 """
 from typing import Any, Optional
 import uuid
@@ -29,6 +29,30 @@ def visible_editors(
     if viewer_id is None:
         return []
     return [e for e in editors if e.id == viewer_id]
+
+
+def visible_owner(
+    assignee_id: Optional[uuid.UUID],
+    owner_name: Optional[str],
+    viewer_id: Optional[uuid.UUID],
+    is_admin: bool,
+) -> tuple[Optional[uuid.UUID], Optional[str]]:
+    """The brief's internal owner as this viewer is allowed to receive it.
+
+    An owner is routinely also an editor on their own brief, so passing this
+    field through unconditionally hands editor B the name of editor A — the very
+    leak `visible_editors` exists to stop, arriving by a different field instead.
+
+    A non-admin sees the owner only when they are the owner. Seeing that a brief
+    sits on your own desk discloses nothing about anyone else, and blanking it
+    would leave an owner unable to tell they own it.
+
+    Returned as a pair so the id and the name cannot be blanked separately: the
+    id alone re-identifies the person anywhere else it is rendered.
+    """
+    if is_admin or (viewer_id is not None and assignee_id == viewer_id):
+        return assignee_id, owner_name
+    return None, None
 
 
 def may_move_editor_stage(

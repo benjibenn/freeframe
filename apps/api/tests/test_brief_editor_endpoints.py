@@ -36,6 +36,14 @@ def _link():
     l.title = "Static — iPhone 17 Pro Max"
     l.task_stage_id = uuid.uuid4()
     l.assignee_id = None
+    # A live brief. All three MUST be set: assignment now runs the same
+    # _validate_active the token path uses, and left as auto-created MagicMocks a
+    # truthy deleted_at reads as a deleted brief (404) while an expires_at cannot
+    # be compared to a datetime at all — every 200-path test below would break.
+    # deleted_at is None because the lookup that found this link filtered on it.
+    l.deleted_at = None
+    l.is_enabled = True
+    l.expires_at = None
     l.brief_pdf_s3_key = None
     l.brief_json = None
     # BriefTaskItem.created_at is a required (non-Optional) datetime field, so
@@ -98,6 +106,58 @@ def test_assigning_an_unknown_user_is_refused(mock_db):
     with patch("apps.api.routers.submissions._provision_submission_project") as prov:
         r = client.post(f"/submission-links/{link.id}/editors", json={"user_id": str(editor_id)})
     assert r.status_code == 404
+    prov.assert_not_called()
+
+
+def test_assigning_a_deactivated_user_is_refused_before_provisioning(mock_db):
+    """A deactivated account cannot sign in, so it can never collect the project.
+
+    The web dropdown is safe by accident — /users/assignable already filters these
+    out — but MCP and any direct API call hand this endpoint a raw user id. There
+    is no unassign, so an accepted assignment here is a project, three membership
+    rows and a share link that nobody can ever reach or remove.
+    """
+    link = _link()
+    editor = _user(name="Gone Editor")
+    editor.status = UserStatus.deactivated
+    mock_db.first.side_effect = [link, editor]
+    client = _client(mock_db, _user(is_superadmin=True, name="Admin"))
+    with patch("apps.api.routers.submissions._provision_submission_project") as prov:
+        r = client.post(f"/submission-links/{link.id}/editors", json={"user_id": str(editor.id)})
+    assert r.status_code == 404
+    prov.assert_not_called()
+
+
+def test_assigning_to_a_disabled_brief_is_refused_before_provisioning(mock_db):
+    """A brief that stopped accepting submissions cannot take on new editors.
+
+    The token path already refuses this (403, via _validate_active). Provisioning
+    against it anyway would create an upload folder for work that can never be
+    uploaded — and could not then be removed.
+    """
+    link = _link()
+    link.is_enabled = False
+    editor = _user()
+    mock_db.first.side_effect = [link, editor]
+    client = _client(mock_db, _user(is_superadmin=True, name="Admin"))
+    with patch("apps.api.routers.submissions._provision_submission_project") as prov:
+        r = client.post(f"/submission-links/{link.id}/editors", json={"user_id": str(editor.id)})
+    assert r.status_code == 403
+    prov.assert_not_called()
+
+
+def test_assigning_to_an_expired_brief_is_refused_before_provisioning(mock_db):
+    """Same one-way cost, the other half of what "active" means to the token path
+    (410). Both checks come from _validate_active so the two provisioning routes
+    cannot drift into disagreeing about which briefs are still live."""
+    link = _link()
+    link.expires_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    editor = _user()
+    mock_db.first.side_effect = [link, editor]
+    client = _client(mock_db, _user(is_superadmin=True, name="Admin"))
+    with patch("apps.api.routers.submissions._provision_submission_project") as prov:
+        r = client.post(f"/submission-links/{link.id}/editors", json={"user_id": str(editor.id)})
+    assert r.status_code == 410
     prov.assert_not_called()
 
 

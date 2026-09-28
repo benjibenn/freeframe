@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..middleware.auth import get_current_user
-from ..models.user import User
+from ..models.user import User, UserStatus
 from ..models.project import Project
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType
 from ..models.task_stage import TaskStage
@@ -44,7 +44,7 @@ from ..schemas.task_stage import (
     BriefEditorAssign,
     TaskBoardResponse,
 )
-from ..services.brief_editors import may_move_editor_stage, visible_editors
+from ..services.brief_editors import may_move_editor_stage, visible_editors, visible_owner
 from ..services.permissions import require_platform_admin, is_platform_admin
 from ..services.s3_service import generate_presigned_get_url
 
@@ -439,27 +439,37 @@ def get_task_board(
             if paid_at is not None:
                 paid_counts[link_id] = paid_counts.get(link_id, 0) + 1
 
-    briefs = [
-        BriefTaskItem(
-            id=l.id,
-            title=l.title,
-            taxonomy_path=link_path.get(l.id),
-            task_stage_id=l.task_stage_id,
-            assignee_id=l.assignee_id,
-            assignee_name=(owners[l.assignee_id].name if l.assignee_id in owners else None),
-            editors=visible_editors(editors_by_link.get(l.id, []), current_user.id, admin),
-            has_brief=bool(l.brief_pdf_s3_key),
-            has_brief_json=bool(l.brief_json),
-            # Payment state is the owner's bookkeeping, not the editor's — zeroed
-            # for non-admins rather than filtered in the UI.
-            paid_count=paid_counts.get(l.id, 0) if admin else 0,
-            submission_count=sub_counts.get(l.id, 0) if admin else 0,
-            submit_url=f"{settings.frontend_url}/submit/{l.token}",
-            created_at=l.created_at,
-            assets=by_request.get(l.id, []),
+    briefs = []
+    for l in links:
+        # The owner is a person too: an owner who is also an editor on their own
+        # brief would otherwise be named to their co-editors through this field,
+        # one line after their editor row was filtered out of `editors`.
+        owner_id, owner_name = visible_owner(
+            l.assignee_id,
+            owners[l.assignee_id].name if l.assignee_id in owners else None,
+            current_user.id,
+            admin,
         )
-        for l in links
-    ]
+        briefs.append(
+            BriefTaskItem(
+                id=l.id,
+                title=l.title,
+                taxonomy_path=link_path.get(l.id),
+                task_stage_id=l.task_stage_id,
+                assignee_id=owner_id,
+                assignee_name=owner_name,
+                editors=visible_editors(editors_by_link.get(l.id, []), current_user.id, admin),
+                has_brief=bool(l.brief_pdf_s3_key),
+                has_brief_json=bool(l.brief_json),
+                # Payment state is the owner's bookkeeping, not the editor's — zeroed
+                # for non-admins rather than filtered in the UI.
+                paid_count=paid_counts.get(l.id, 0) if admin else 0,
+                submission_count=sub_counts.get(l.id, 0) if admin else 0,
+                submit_url=f"{settings.frontend_url}/submit/{l.token}",
+                created_at=l.created_at,
+                assets=by_request.get(l.id, []),
+            )
+        )
 
     # Assets uploaded straight into a project have no owner, so there is no
     # version of them that belongs to a given editor.
@@ -623,8 +633,11 @@ def set_brief_assignee(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Set the internal owner — whose desk the brief sits on. Distinct from the
-    editors who accepted the link, which is derived and not settable here."""
+    """Set the internal owner — whose desk the brief sits on.
+
+    Distinct from the editors who are making it: an owner reviews the work, an
+    editor delivers it. Editors are set through POST /submission-links/{id}/editors,
+    one at a time and irreversibly."""
     require_platform_admin(current_user)
     link = db.query(SubmissionLink).filter(
         SubmissionLink.id == link_id, SubmissionLink.deleted_at.is_(None)
@@ -655,22 +668,38 @@ def assign_brief_editor(
     arrived by, and there is one answer to "who is on this".
 
     One-way on purpose: that row owns a project with their uploads in it, so
-    there is no unassign. The brief is checked before anything is provisioned,
-    or a dead brief would acquire a live project.
+    there is no unassign. Both the brief and the editor are therefore checked
+    before anything is provisioned: a dead brief or a dead account would
+    otherwise acquire a live project, membership rows and a share link that
+    nothing can undo.
     """
     require_platform_admin(current_user)
+    # Local imports: both live with the accept flow they were written for, and
+    # importing them at module level would tie these two routers together.
+    from .submissions import _provision_submission_project, _validate_active
+
     link = db.query(SubmissionLink).filter(
         SubmissionLink.id == link_id, SubmissionLink.deleted_at.is_(None)
     ).first()
     if not link:
         raise HTTPException(status_code=404, detail="Request not found")
-    editor = db.query(User).filter(User.id == body.user_id).first()
-    if not editor:
-        raise HTTPException(status_code=404, detail="User not found")
+    # The same "is this brief still live" the token path enforces — disabled (403)
+    # and expired (410) — rather than a third notion of active that could drift
+    # away from it. The 403 discloses nothing here: require_platform_admin above
+    # has already established the caller is an admin.
+    _validate_active(link)
 
-    # Local import: the provisioner lives with the accept flow it was written
-    # for, and importing it at module level would tie these two routers together.
-    from .submissions import _provision_submission_project
+    # Deleted and deactivated accounts are excluded in SQL and re-checked in
+    # Python: the filters are what production relies on, the re-check is what this
+    # suite (which has no database, so every filter is a no-op) can hold the
+    # endpoint to — and the cost of getting this wrong cannot be reversed.
+    editor = db.query(User).filter(
+        User.id == body.user_id,
+        User.deleted_at.is_(None),
+        User.status != UserStatus.deactivated,
+    ).first()
+    if not editor or editor.deleted_at is not None or editor.status == UserStatus.deactivated:
+        raise HTTPException(status_code=404, detail="User not found")
 
     # Idempotent — assigning someone already on the brief returns their existing
     # project rather than opening a second one. The provisioner owns the
@@ -727,10 +756,17 @@ def _brief_item(db: Session, link: SubmissionLink, viewer: User) -> BriefTaskIte
     """One brief, without its assets — the PATCH endpoints return the row the
     board just changed, and the board already holds the nested files.
 
-    Editors are scoped to the viewer for the same reason the board scopes them:
-    the row a PATCH hands back must not disclose more than the board would have.
+    Editors AND the owner are scoped to the viewer for the same reason the board
+    scopes them: the row a PATCH hands back must not disclose more than the board
+    would have, or the isolation depends on which request you ask through.
     """
     owner = db.query(User).filter(User.id == link.assignee_id).first() if link.assignee_id else None
+    owner_id, owner_name = visible_owner(
+        link.assignee_id,
+        owner.name if owner else None,
+        viewer.id,
+        is_platform_admin(viewer),
+    )
     editors = [
         BriefEditor(id=u.id, name=u.name, email=u.email, task_stage_id=stage_id)
         for stage_id, u in db.query(Submission.task_stage_id, User)
@@ -743,8 +779,8 @@ def _brief_item(db: Session, link: SubmissionLink, viewer: User) -> BriefTaskIte
         title=link.title,
         taxonomy_path=resolve_link_home_path(db, link),
         task_stage_id=link.task_stage_id,
-        assignee_id=link.assignee_id,
-        assignee_name=owner.name if owner else None,
+        assignee_id=owner_id,
+        assignee_name=owner_name,
         editors=visible_editors(editors, viewer.id, is_platform_admin(viewer)),
         has_brief=bool(link.brief_pdf_s3_key),
         has_brief_json=bool(link.brief_json),
