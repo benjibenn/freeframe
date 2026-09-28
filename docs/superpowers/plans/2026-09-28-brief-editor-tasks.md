@@ -19,7 +19,9 @@
 - There is **no unassign path**. Do not add a DELETE endpoint, an MCP tool, or a UI control for it.
 - Every new stage reference reads the same `task_stages` rows. Do not introduce a second stage vocabulary.
 - API tests run against `MagicMock` sessions (`apps/api/tests/conftest.py`) — there is no test database. Logic that must be tested has to be reachable without one.
-- Python: `cd apps/api && uv run pytest`. Web typecheck: `cd apps/web && npx tsc --noEmit`.
+- Python: `cd apps/api && uv run pytest`.
+- Web typecheck: `cd apps/web && ../../node_modules/.bin/tsc --noEmit`. **Never `npx tsc`** — there is no local tsc binary in `apps/web`, so npx fetches an unrelated package called `tsc`, prints a joke banner and exits 0. It checks nothing and reports success.
+- Web unit tests: `cd apps/web && npm test` (vitest). The repo has vitest 4, jsdom, `@testing-library/react` and `@testing-library/user-event`, and 9 existing component tests — `components/admin/__tests__/brief-overview-table.test.tsx` is the precedent for a table component.
 
 ## Review Focus
 
@@ -1207,9 +1209,32 @@ In the chip `<span>` beside the Brief and Paid chips, add before the paid chip, 
 
 A brief with three editors should read as one without expanding it.
 
-- [ ] **Step 5: Typecheck and commit**
+- [ ] **Step 5: Component tests for the permission logic**
 
-Run: `cd apps/web && npx tsc --noEmit`
+Create `apps/web/components/tasks/__tests__/brief-row.test.tsx`, following the
+conventions of the existing `apps/web/components/admin/__tests__/brief-overview-table.test.tsx`
+(vitest + `@testing-library/react`, `vi.mock` for `@/lib/api`). `BriefRow` renders
+`<tr>` elements, so render it inside a `<table><tbody>` wrapper.
+
+`canMove={canAssign || e.id === viewerId}` is the frontend half of the rule
+deciding who may move whose status, and the confirm-before-POST guard protects a
+one-way action that provisions a project. Neither is covered anywhere else. Four
+tests, each named for the consequence it guards:
+
+1. A non-admin sees a live status control on their own editor row and read-only
+   text on a co-editor's. Inverted, an editor could drive a request that 404s, or
+   lose control of their own status.
+2. An admin sees a live control on every editor row — the roll-up is what admins
+   are for.
+3. The "Assign an editor…" control renders for an admin and not for a non-admin.
+   Assignment is not self-service.
+4. Declining the confirm dialog issues no POST. Assignment cannot be undone, so a
+   mis-click must not provision a project. Stub `window.confirm` to return false
+   and assert the mocked `api.post` was never called.
+
+- [ ] **Step 6: Typecheck and commit**
+
+Run: `cd apps/web && ../../node_modules/.bin/tsc --noEmit`
 Expected: exit 0, no output.
 
 ```bash
@@ -1296,15 +1321,28 @@ In `BriefCard`, in the metadata row, before the file count:
           {brief.editors.length > 1 && <span>{brief.editors.length} editors</span>}
 ```
 
-- [ ] **Step 4: Typecheck**
+- [ ] **Step 4: Component tests for the pipeline's two readings**
 
-Run: `cd apps/web && npx tsc --noEmit`
+Add to `apps/web/components/tasks/__tests__/pipeline-board.test.tsx`, following the
+same conventions. `stageOf` is the expression that decides which column a card
+sits in and which endpoint a drag writes, and it means two different things for
+the two audiences. Three tests:
+
+1. An admin's card sits in the column matching the **brief's** status.
+2. A non-admin's card sits in the column matching **their own** editor status, not
+   the brief's. Make the two differ, or the test proves nothing.
+3. A non-admin who owns the brief but has no editor row of their own falls back to
+   the brief's status — they own it, so it is theirs to move.
+
+- [ ] **Step 5: Typecheck**
+
+Run: `cd apps/web && ../../node_modules/.bin/tsc --noEmit`
 Expected: exit 0, no output.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add "apps/web/app/(dashboard)/tasks/page.tsx" apps/web/components/tasks/pipeline-board.tsx
+git add "apps/web/app/(dashboard)/tasks/page.tsx" apps/web/components/tasks/pipeline-board.tsx apps/web/components/tasks/__tests__/pipeline-board.test.tsx
 git commit -m "Group an editor's pipeline by the status they actually own"
 ```
 
@@ -1324,10 +1362,15 @@ Run: `cd apps/api && uv run pytest -q 2>&1 | tail -5`
 
 Expected: passed up by 20 new tests (Task 1: 7, Task 5: 8, Task 6: 1, Task 7: 4), failed unchanged at the repo's 16 pre-existing failures. Recount against the real totals rather than trusting this arithmetic. If the failed count rose, stop and fix; do not report the run as green.
 
-- [ ] **Step 2: Typecheck the web app**
+- [ ] **Step 2: Typecheck and unit-test the web app**
 
-Run: `cd apps/web && npx tsc --noEmit`
-Expected: exit 0.
+Run: `cd apps/web && ../../node_modules/.bin/tsc --noEmit`
+Expected: exit 0, no output. **Do not substitute `npx tsc`** — it fetches an
+unrelated package, prints a joke banner and exits 0 without checking anything.
+
+Run: `cd apps/web && npm test`
+Expected: all vitest suites pass, including the new `brief-row` and
+`pipeline-board` component tests. Record the counts.
 
 - [ ] **Step 3: Verify the migration chain offline**
 
