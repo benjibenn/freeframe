@@ -44,7 +44,7 @@ from ..schemas.task_stage import (
     BriefEditorAssign,
     TaskBoardResponse,
 )
-from ..services.brief_editors import visible_editors
+from ..services.brief_editors import may_move_editor_stage, visible_editors
 from ..services.permissions import require_platform_admin, is_platform_admin
 from ..services.s3_service import generate_presigned_get_url
 
@@ -631,6 +631,87 @@ def set_brief_assignee(
         if not owner:
             raise HTTPException(status_code=404, detail="User not found")
     link.assignee_id = body.assignee_id
+    db.commit()
+    db.refresh(link)
+    return _brief_item(db, link, current_user)
+
+
+@router.post("/submission-links/{link_id}/editors", response_model=BriefTaskItem)
+def assign_brief_editor(
+    link_id: uuid.UUID,
+    body: BriefEditorAssign,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Put an editor on a brief, provisioning their private upload project.
+
+    Assignment IS a submissions row, the same row accepting the token link
+    creates — so a brief reaches an editor the same way whichever route they
+    arrived by, and there is one answer to "who is on this".
+
+    One-way on purpose: that row owns a project with their uploads in it, so
+    there is no unassign. The brief is checked before anything is provisioned,
+    or a dead brief would acquire a live project.
+    """
+    require_platform_admin(current_user)
+    link = db.query(SubmissionLink).filter(
+        SubmissionLink.id == link_id, SubmissionLink.deleted_at.is_(None)
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Request not found")
+    editor = db.query(User).filter(User.id == body.user_id).first()
+    if not editor:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Local import: the provisioner lives with the accept flow it was written
+    # for, and importing it at module level would tie these two routers together.
+    from .submissions import _provision_submission_project
+
+    # Idempotent — assigning someone already on the brief returns their existing
+    # project rather than opening a second one.
+    _provision_submission_project(db, link, editor)
+    db.commit()
+    db.refresh(link)
+    return _brief_item(db, link, current_user)
+
+
+@router.patch(
+    "/submission-links/{link_id}/editors/{user_id}/task-stage",
+    response_model=BriefTaskItem,
+)
+def set_brief_editor_task_stage(
+    link_id: uuid.UUID,
+    user_id: uuid.UUID,
+    body: TaskStageAssign,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Move one editor along the pipeline, leaving the brief's own stage alone.
+
+    The separation is the point: a brief with three editors has three answers to
+    "how far along is this", and collapsing them into the brief's single stage
+    would mean the first editor to finish marked the whole thing done.
+    """
+    link = db.query(SubmissionLink).filter(
+        SubmissionLink.id == link_id, SubmissionLink.deleted_at.is_(None)
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if not may_move_editor_stage(current_user.id, user_id, is_platform_admin(current_user)):
+        # 404, not 403: whether someone else is on this brief is not this
+        # caller's to learn.
+        raise HTTPException(status_code=404, detail="Request not found")
+    if body.task_stage_id is not None:
+        _get_stage(db, body.task_stage_id)  # validate it exists / is not deleted
+
+    submission = db.query(Submission).filter(
+        Submission.submission_link_id == link_id,
+        Submission.user_id == user_id,
+    ).first()
+    if not submission:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    submission.task_stage_id = body.task_stage_id
     db.commit()
     db.refresh(link)
     return _brief_item(db, link, current_user)
