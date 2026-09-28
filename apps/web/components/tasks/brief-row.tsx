@@ -3,10 +3,10 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { mutate } from 'swr'
-import { Banknote, ChevronDown, ChevronRight, FileText, Film, Image as ImageIcon } from 'lucide-react'
+import { Banknote, ChevronDown, ChevronRight, FileText, Film, Image as ImageIcon, UserRound } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn, formatRelativeTime } from '@/lib/utils'
-import type { BriefTaskItem, TaskItem, TaskStage, User } from '@/types'
+import type { BriefEditor, BriefTaskItem, TaskItem, TaskStage, User } from '@/types'
 
 const BOARD_KEY = '/task-board'
 
@@ -72,6 +72,7 @@ export function BriefRow({
   folderFilter,
   typeFilter,
   canAssign = true,
+  viewerId,
   onDrillTo,
 }: {
   brief: BriefTaskItem
@@ -81,10 +82,13 @@ export function BriefRow({
   typeFilter: string
   /** Only admins hand a brief to someone. An editor sees who owns it, read-only. */
   canAssign?: boolean
+  /** Which editor row belongs to the reader. */
+  viewerId?: string
   onDrillTo: (path: string) => void
 }) {
   const [expanded, setExpanded] = React.useState(false)
   const [savingOwner, setSavingOwner] = React.useState(false)
+  const [assigning, setAssigning] = React.useState(false)
 
   const assets = brief.assets.filter((a) => typeFilter === 'all' || a.asset_type === typeFilter)
   const rel = brief.taxonomy_path ? relativePath(brief.taxonomy_path, folderFilter) : ''
@@ -110,6 +114,23 @@ export function BriefRow({
     }
   }
 
+  const assignEditor = async (userId: string) => {
+    const who = owners.find((u) => u.id === userId)
+    // One-way: the editor's upload folder is created here and there is no
+    // unassign, so this asks rather than silently doing it.
+    if (!confirm(`Put ${who?.name || who?.email || 'this editor'} on “${brief.title}”?\n\nThis creates their upload folder and cannot be undone.`))
+      return
+    setAssigning(true)
+    try {
+      await api.post(`/submission-links/${brief.id}/editors`, { user_id: userId })
+      mutate(BOARD_KEY)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to assign that editor')
+    } finally {
+      setAssigning(false)
+    }
+  }
+
   return (
     <>
       <tr className="border-t border-border hover:bg-bg-hover/40">
@@ -132,12 +153,18 @@ export function BriefRow({
               >
                 {brief.title}
               </Link>
-              {(brief.has_brief || brief.has_brief_json || brief.paid_count > 0) && (
+              {(brief.has_brief || brief.has_brief_json || brief.paid_count > 0 || brief.editors.length > 0) && (
                 <span className="mt-0.5 inline-flex items-center gap-2">
                   {(brief.has_brief || brief.has_brief_json) && (
                     <span className="inline-flex items-center gap-1 text-xs text-text-tertiary">
                       <FileText className="h-3 w-3" />
                       Brief
+                    </span>
+                  )}
+                  {brief.editors.length > 0 && (
+                    <span className="inline-flex items-center gap-1 text-xs text-text-tertiary">
+                      <UserRound className="h-3 w-3" />
+                      {brief.editors.length}
                     </span>
                   )}
                   {/* Owner bookkeeping: all editors paid, or how many of them are. */}
@@ -210,16 +237,54 @@ export function BriefRow({
         </td>
       </tr>
 
-      {expanded &&
-        (assets.length === 0 ? (
-          <tr className="border-t border-border/50 bg-bg-secondary/30">
-            <td colSpan={5} className="px-3 py-2 pl-12 text-xs text-text-tertiary">
-              Nothing submitted yet.
-            </td>
-          </tr>
-        ) : (
-          assets.map((a) => <AssetSubRow key={a.asset_id} asset={a} stages={stages} />)
-        ))}
+      {expanded && (
+        <>
+          {brief.editors.map((e) => (
+            <EditorSubRow
+              key={e.id}
+              briefId={brief.id}
+              editor={e}
+              stages={stages}
+              canMove={canAssign || e.id === viewerId}
+            />
+          ))}
+
+          {canAssign && (
+            <tr className="border-t border-border/50 bg-bg-secondary/20">
+              <td colSpan={5} className="px-3 py-2 pl-12">
+                <select
+                  value=""
+                  disabled={assigning}
+                  onChange={(e) => {
+                    if (e.target.value) assignEditor(e.target.value)
+                    e.target.value = ''
+                  }}
+                  className="rounded-md border border-border bg-bg-secondary px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-border-focus disabled:opacity-60 cursor-pointer"
+                >
+                  <option value="">Assign an editor…</option>
+                  {owners
+                    .filter((u) => !brief.editors.some((e) => e.id === u.id))
+                    .map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name || u.email}
+                      </option>
+                    ))}
+                </select>
+              </td>
+            </tr>
+          )}
+
+          {assets.length === 0 ? (
+            <tr className="border-t border-border/50 bg-bg-secondary/30">
+              <td colSpan={5} className="px-3 py-2 pl-12 text-xs text-text-tertiary">
+                Nothing submitted yet.
+              </td>
+            </tr>
+          ) : (
+            assets.map((a) => <AssetSubRow key={a.asset_id} asset={a} stages={stages} />)
+          )}
+        </>
+      )}
     </>
   )
 }
@@ -265,6 +330,51 @@ export function AssetSubRow({ asset, stages }: { asset: TaskItem; stages: TaskSt
       </td>
       <td className="px-3 py-2">
         <StagePicker value={asset.task_stage_id} stages={stages} onChange={setStage} />
+      </td>
+    </tr>
+  )
+}
+
+/** An editor working this brief, with the status only they (and admins) can
+ *  move. Sits above the delivered files because who is on it comes before what
+ *  has arrived. */
+export function EditorSubRow({
+  briefId,
+  editor,
+  stages,
+  canMove,
+}: {
+  briefId: string
+  editor: BriefEditor
+  stages: TaskStage[]
+  /** Admins move anyone; everyone else only their own row. */
+  canMove: boolean
+}) {
+  const setStage = async (stageId: string | null) => {
+    await api.patch(`/submission-links/${briefId}/editors/${editor.id}/task-stage`, {
+      task_stage_id: stageId,
+    })
+    mutate(BOARD_KEY)
+  }
+  const stageName = stages.find((s) => s.id === editor.task_stage_id)?.name
+
+  return (
+    <tr className="border-t border-border/50 bg-bg-secondary/20">
+      <td className="px-3 py-2 pl-12">
+        <span className="flex items-center gap-2 text-xs text-text-secondary">
+          <UserRound className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+          <span className="truncate">{editor.name || editor.email || 'Editor'}</span>
+        </span>
+      </td>
+      <td className="px-3 py-2 text-xs text-text-tertiary">—</td>
+      <td className="px-3 py-2 text-xs text-text-tertiary">Editor</td>
+      <td className="px-3 py-2 text-center text-xs text-text-tertiary"></td>
+      <td className="px-3 py-2">
+        {canMove ? (
+          <StagePicker value={editor.task_stage_id} stages={stages} onChange={setStage} />
+        ) : (
+          <span className="text-xs text-text-tertiary">{stageName || 'Not started'}</span>
+        )}
       </td>
     </tr>
   )

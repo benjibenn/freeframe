@@ -74,6 +74,10 @@ export interface BriefEditor {
   id: string;
   name: string | null;
   email: string | null;
+  /** This editor's own status on the brief. Independent of the brief's own —
+   *  two editors on one brief can be at different points. A non-admin viewer
+   *  only ever receives their own row here. */
+  task_stage_id: string | null;
 }
 
 /** A brief as a work item. Present from creation, so it appears on the board
