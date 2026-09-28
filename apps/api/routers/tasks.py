@@ -333,24 +333,36 @@ def get_task_board(
     # response body would otherwise carry every other editor's brief titles and
     # file names, which is exactly the isolation submission links exist to provide.
     owned_link_ids = None
+    owner_link_ids: set = set()
+    editor_link_ids: set = set()
+    my_project_ids: set = set()
     if not admin:
-        # Union, not replacement: a brief reaches someone because they own it
-        # (assignee_id — whose desk it sits on) OR because they are assigned to
-        # make it (a submissions row). Dropping the first would take briefs away
-        # from internal owners who are not editors.
-        owned_link_ids = {
+        # Two ways a brief reaches a non-admin, and they grant different sight.
+        # Owning it (assignee_id — whose desk it sits on) is an internal role:
+        # that person reviews every editor's work, so they see all of it.
+        owner_link_ids = {
             lid for (lid,) in db.query(SubmissionLink.id).filter(
                 SubmissionLink.assignee_id == current_user.id,
                 SubmissionLink.deleted_at.is_(None),
             ).all()
-        } | {
-            lid for (lid,) in db.query(Submission.submission_link_id)
+        }
+        # Being assigned to MAKE it grants sight of the brief and of your own
+        # uploads, nothing more. Every editor on a link gets a separate private
+        # project, but all of those projects carry the same submission_link_id —
+        # so filtering assets by link id alone would hand each editor every
+        # other editor's filenames, names and thumbnails. The project id is
+        # what actually separates them.
+        editor_rows = (
+            db.query(Submission.submission_link_id, Submission.project_id)
             .join(SubmissionLink, SubmissionLink.id == Submission.submission_link_id)
             .filter(
                 Submission.user_id == current_user.id,
                 SubmissionLink.deleted_at.is_(None),
             ).all()
-        }
+        )
+        editor_link_ids = {lid for lid, _ in editor_rows}
+        my_project_ids = {pid for _, pid in editor_rows}
+        owned_link_ids = owner_link_ids | editor_link_ids
         if not owned_link_ids:
             return TaskBoardResponse(briefs=[], unbriefed=[])
 
@@ -359,7 +371,11 @@ def get_task_board(
         asset_q = asset_q.filter(asset_path_filter(db, folder_path))
     items = _build_task_items(db, asset_q.order_by(Asset.created_at.desc()).all())
     if owned_link_ids is not None:
-        items = [it for it in items if it.request_id in owned_link_ids]
+        items = [
+            it for it in items
+            if it.request_id in owner_link_ids
+            or (it.request_id in editor_link_ids and it.project_id in my_project_ids)
+        ]
 
     by_request: dict = {}
     unbriefed: list[TaskItem] = []
