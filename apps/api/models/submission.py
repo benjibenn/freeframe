@@ -123,6 +123,13 @@ class Submission(Base):
     # it records the bookkeeping day (often backdated), not a click time. Null =
     # unpaid. Owner-visible only — never exposed to the editors themselves.
     paid_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    # This editor's own status on this brief. Reads the same task_stages rows as
+    # the brief and the assets, so a stage name means one thing everywhere. Null
+    # = not started. Distinct from SubmissionLink.task_stage_id, which is the
+    # brief's overall state: two editors on one brief can be at different points.
+    task_stage_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("task_stages.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
