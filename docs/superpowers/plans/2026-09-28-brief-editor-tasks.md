@@ -21,7 +21,8 @@
 - API tests run against `MagicMock` sessions (`apps/api/tests/conftest.py`) — there is no test database. Logic that must be tested has to be reachable without one.
 - Python: `cd apps/api && uv run pytest`.
 - Web typecheck: `cd apps/web && ../../node_modules/.bin/tsc --noEmit`. **Never `npx tsc`** — there is no local tsc binary in `apps/web`, so npx fetches an unrelated package called `tsc`, prints a joke banner and exits 0. It checks nothing and reports success.
-- Web unit tests: `cd apps/web && npm test` (vitest). The repo has vitest 4, jsdom, `@testing-library/react` and `@testing-library/user-event`, and 9 existing component tests — `components/admin/__tests__/brief-overview-table.test.tsx` is the precedent for a table component.
+- Web unit tests: `cd apps/web && PATH="$HOME/.nvm/versions/node/v20.19.1/bin:$PATH" ../../node_modules/.bin/vitest run`. **Not `npm test` and not `npx vitest`**: this shell's default Node is v14.21.3, which cannot parse vitest 4, and there is no local `vitest` in `apps/web/node_modules/.bin`. The repo has vitest 4, jsdom, `@testing-library/react` and `@testing-library/user-event`, and 9 existing component tests — `components/admin/__tests__/brief-overview-table.test.tsx` is the precedent for a table component.
+- **Web baseline: 5 failed test files / 171 passed tests**, all pre-existing and in files this branch never touches. Three are Playwright specs under `apps/web/e2e/` that `vitest run` wrongly collects, because `apps/web/vitest.config.ts` sets no `include`/`exclude`; the other two are `lib/__tests__/api.test.ts` and `stores/__tests__/notification-store.test.ts`. Do not try to fix them.
 
 ## Review Focus
 
@@ -1368,9 +1369,11 @@ Run: `cd apps/web && ../../node_modules/.bin/tsc --noEmit`
 Expected: exit 0, no output. **Do not substitute `npx tsc`** — it fetches an
 unrelated package, prints a joke banner and exits 0 without checking anything.
 
-Run: `cd apps/web && npm test`
-Expected: all vitest suites pass, including the new `brief-row` and
-`pipeline-board` component tests. Record the counts.
+Run: `cd apps/web && PATH="$HOME/.nvm/versions/node/v20.19.1/bin:$PATH" ../../node_modules/.bin/vitest run`
+Expected: the new `brief-row` and `pipeline-board` component tests pass, and the
+failure set is unchanged from the 5 pre-existing failures named in Global
+Constraints. Record the counts. **Not `npm test`** — this shell's Node is too old
+for vitest 4.
 
 - [ ] **Step 3: Verify the migration chain offline**
 
