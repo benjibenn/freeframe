@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { mutate } from 'swr'
 import { Banknote, ChevronDown, ChevronRight, FileText, Film, Image as ImageIcon, UserRound } from 'lucide-react'
 import { api } from '@/lib/api'
+import { stageOf } from '@/lib/brief-stage'
 import { cn, formatRelativeTime } from '@/lib/utils'
 import type { BriefEditor, BriefTaskItem, TaskItem, TaskStage, User } from '@/types'
 
@@ -100,7 +101,11 @@ export function BriefRow({
   // null for exactly the people who would be refused, and their own id for the
   // owner, who keeps both controls.
   const canMoveBrief = canAssign || (!!brief.assignee_id && brief.assignee_id === viewerId)
-  const briefStageName = stages.find((s) => s.id === brief.task_stage_id)?.name
+  // Read-only text must agree with the chip that selected this row, which counts
+  // and filters by stageOf (the viewer's own status when they're an editor on the
+  // brief) — not brief.task_stage_id. Recomputing that split here is how it drifted
+  // before; the live picker below stays on brief.task_stage_id on purpose (see there).
+  const readOnlyStageName = stages.find((s) => s.id === stageOf(brief, viewerId, canAssign))?.name
   // An editor's own row is the only one they receive, so the count is always "1"
   // for them — a constant dressed as data. It only carries information on the
   // admin board, where it is the whole roll-up.
@@ -252,7 +257,7 @@ export function BriefRow({
           {canMoveBrief ? (
             <StagePicker value={brief.task_stage_id} stages={stages} onChange={setStage} />
           ) : (
-            <span className="text-xs text-text-tertiary">{briefStageName || 'Not started'}</span>
+            <span className="text-xs text-text-tertiary">{readOnlyStageName || 'Not started'}</span>
           )}
         </td>
       </tr>

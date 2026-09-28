@@ -209,11 +209,14 @@ describe('BriefRow — the owner column', () => {
 describe('BriefRow — who can move the brief’s own status', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('shows a non-owner the brief status as text, because the PATCH would 404', () => {
+  it('shows a non-owner text, not a picker, because the PATCH would 404', () => {
     // PATCH /submission-links/{id}/task-stage admits admins and the brief's owner
     // only. Before the board widened to editors, every row on a non-admin's board
     // was one they owned, so the picker always worked; now it would reject every
-    // change and snap back.
+    // change and snap back. The text itself is 'In Progress' — e-self's OWN stage,
+    // not the brief's 's2' ('Review') — because the chips above this row count and
+    // filter by the same reading; a row showing the brief's stage here would
+    // disagree with the chip that selected it.
     renderRow({
       canAssign: false,
       viewerId: 'e-self',
@@ -222,7 +225,27 @@ describe('BriefRow — who can move the brief’s own status', () => {
     })
 
     expect(statusCell().queryByRole('combobox')).toBeNull()
-    expect(statusCell().getByText('Review')).toBeInTheDocument()
+    expect(statusCell().getByText('In Progress')).toBeInTheDocument()
+  })
+
+  it('reads the read-only Status cell from the editor\'s own stage, not the brief\'s', () => {
+    // The tasks-list chips above this table now count and filter by stageOf (an
+    // editor's own status), built in lib/brief-stage.ts. This cell used to render
+    // brief.task_stage_id directly instead of going through stageOf — a second,
+    // drifted copy of that decision — so a non-admin could click a "Review 1" chip
+    // and land on the one row it selected while that row's own Status column read
+    // "In Progress". The two stages are given different names on purpose: if this
+    // cell read either source, a same-named fixture would pass either way and
+    // catch nothing.
+    renderRow({
+      canAssign: false,
+      viewerId: 'e-self',
+      editors: [EDITORS[0]],
+      brief: { task_stage_id: 's2' },
+    })
+
+    expect(statusCell().getByText('In Progress')).toBeInTheDocument()
+    expect(statusCell().queryByText('Review')).toBeNull()
   })
 
   it('keeps the picker live for a non-admin who owns the brief', () => {
