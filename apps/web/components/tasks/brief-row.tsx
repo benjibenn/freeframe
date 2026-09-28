@@ -93,6 +93,19 @@ export function BriefRow({
   const assets = brief.assets.filter((a) => typeFilter === 'all' || a.asset_type === typeFilter)
   const rel = brief.taxonomy_path ? relativePath(brief.taxonomy_path, folderFilter) : ''
 
+  // The brief's own status, and the stage of the files under it, belong to whoever
+  // the brief sits with: both endpoints 404 for anyone else. Rendering the pickers
+  // anyway gives an editor two controls that reject every change they make.
+  // Composes with the server blanking the owner for a non-owner — assignee_id is
+  // null for exactly the people who would be refused, and their own id for the
+  // owner, who keeps both controls.
+  const canMoveBrief = canAssign || (!!brief.assignee_id && brief.assignee_id === viewerId)
+  const briefStageName = stages.find((s) => s.id === brief.task_stage_id)?.name
+  // An editor's own row is the only one they receive, so the count is always "1"
+  // for them — a constant dressed as data. It only carries information on the
+  // admin board, where it is the whole roll-up.
+  const showEditorCount = canAssign && brief.editors.length > 0
+
   // Admins land on the brief's settings page; editors land on the submit flow,
   // where their private folder is created. The settings page is admin-only.
   const briefHref = canAssign ? `/projects/requests/${brief.id}` : (brief.submit_url ?? '/tasks')
@@ -153,7 +166,7 @@ export function BriefRow({
               >
                 {brief.title}
               </Link>
-              {(brief.has_brief || brief.has_brief_json || brief.paid_count > 0 || brief.editors.length > 0) && (
+              {(brief.has_brief || brief.has_brief_json || brief.paid_count > 0 || showEditorCount) && (
                 <span className="mt-0.5 inline-flex items-center gap-2">
                   {(brief.has_brief || brief.has_brief_json) && (
                     <span className="inline-flex items-center gap-1 text-xs text-text-tertiary">
@@ -161,7 +174,7 @@ export function BriefRow({
                       Brief
                     </span>
                   )}
-                  {brief.editors.length > 0 && (
+                  {showEditorCount && (
                     <span className="inline-flex items-center gap-1 text-xs text-text-tertiary">
                       <UserRound className="h-3 w-3" />
                       {brief.editors.length}
@@ -206,8 +219,11 @@ export function BriefRow({
 
         <td className="px-3 py-2.5">
           {!canAssign ? (
+            /* Blank means "not yours to see", not "nobody": the server withholds
+               the owner from an editor who is not the owner, so "Unassigned" here
+               would be a lie about a brief that does have one. */
             <span className="text-xs text-text-secondary">
-              {brief.assignee_name || 'Unassigned'}
+              {brief.assignee_name || '—'}
             </span>
           ) : (
           <select
@@ -233,7 +249,11 @@ export function BriefRow({
         </td>
 
         <td className="px-3 py-2.5">
-          <StagePicker value={brief.task_stage_id} stages={stages} onChange={setStage} />
+          {canMoveBrief ? (
+            <StagePicker value={brief.task_stage_id} stages={stages} onChange={setStage} />
+          ) : (
+            <span className="text-xs text-text-tertiary">{briefStageName || 'Not started'}</span>
+          )}
         </td>
       </tr>
 
@@ -281,7 +301,9 @@ export function BriefRow({
               </td>
             </tr>
           ) : (
-            assets.map((a) => <AssetSubRow key={a.asset_id} asset={a} stages={stages} />)
+            assets.map((a) => (
+              <AssetSubRow key={a.asset_id} asset={a} stages={stages} canStage={canMoveBrief} />
+            ))
           )}
         </>
       )}
@@ -291,7 +313,18 @@ export function BriefRow({
 
 /** A delivered file under its brief. Keeps its own stage: a brief can be "In
  *  Progress" while one of its files is already "Done". */
-export function AssetSubRow({ asset, stages }: { asset: TaskItem; stages: TaskStage[] }) {
+export function AssetSubRow({
+  asset,
+  stages,
+  canStage,
+}: {
+  asset: TaskItem
+  stages: TaskStage[]
+  /** PATCH /assets/{id}/task-stage admits admins and the brief's owner only, so
+   *  anyone else gets the stage as text. A boolean rather than the brief itself:
+   *  a file sub-row has no other use for one. */
+  canStage: boolean
+}) {
   const setStage = async (stageId: string | null) => {
     await api.patch(`/assets/${asset.asset_id}/task-stage`, { task_stage_id: stageId })
     mutate(BOARD_KEY)
@@ -329,7 +362,13 @@ export function AssetSubRow({ asset, stages }: { asset: TaskItem; stages: TaskSt
         {asset.run_as_ad ? 'Ad' : ''}
       </td>
       <td className="px-3 py-2">
-        <StagePicker value={asset.task_stage_id} stages={stages} onChange={setStage} />
+        {canStage ? (
+          <StagePicker value={asset.task_stage_id} stages={stages} onChange={setStage} />
+        ) : (
+          <span className="text-xs text-text-tertiary">
+            {stages.find((s) => s.id === asset.task_stage_id)?.name || 'Not started'}
+          </span>
+        )}
       </td>
     </tr>
   )

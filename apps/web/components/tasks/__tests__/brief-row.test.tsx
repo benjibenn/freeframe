@@ -47,7 +47,10 @@ function makeUser(id: string, name: string): User {
 
 const OWNERS: User[] = [makeUser('u-admin', 'Admin Owner'), makeUser('u-new', 'New Owner')]
 
-function makeBrief(editors: BriefEditor[] = EDITORS): BriefTaskItem {
+function makeBrief(
+  editors: BriefEditor[] = EDITORS,
+  overrides: Partial<BriefTaskItem> = {},
+): BriefTaskItem {
   return {
     id: 'brief-1',
     title: 'Test Brief',
@@ -63,7 +66,41 @@ function makeBrief(editors: BriefEditor[] = EDITORS): BriefTaskItem {
     submit_url: null,
     created_at: '2026-09-01T00:00:00Z',
     assets: [],
+    ...overrides,
   }
+}
+
+/** Renders one collapsed BriefRow. Collapsed on purpose for the brief-level
+ *  assertions: an expanded row mounts the editor sub-rows, whose own pickers
+ *  contribute their own comboboxes and their own "Unassigned" option. */
+function renderRow(opts: {
+  canAssign: boolean
+  viewerId?: string
+  editors?: BriefEditor[]
+  brief?: Partial<BriefTaskItem>
+}) {
+  return render(
+    <table>
+      <tbody>
+        <BriefRow
+          brief={makeBrief(opts.editors, opts.brief)}
+          stages={STAGES}
+          owners={OWNERS}
+          folderFilter={null}
+          typeFilter="all"
+          canAssign={opts.canAssign}
+          viewerId={opts.viewerId}
+          onDrillTo={() => {}}
+        />
+      </tbody>
+    </table>,
+  )
+}
+
+/** The row's last cell — the brief-level Status column. */
+function statusCell() {
+  const cells = screen.getByText('Test Brief').closest('tr')!.querySelectorAll('td')
+  return within(cells[cells.length - 1] as HTMLElement)
 }
 
 /** Renders one BriefRow inside the table/tbody it expects as an ancestor, then
@@ -137,5 +174,73 @@ describe('BriefRow — assigning an editor', () => {
 
     expect(window.confirm).toHaveBeenCalled()
     expect(api.post).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('BriefRow — the owner column', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('shows a neutral placeholder, not “Unassigned”, when the owner is withheld', () => {
+    // The server blanks assignee_id/assignee_name for an editor who is not the
+    // owner, so this is what a non-admin actually receives for a brief that DOES
+    // have an owner. "Unassigned" would tell them nobody is on the hook for it,
+    // and on an admin board the same brief reads with a name — one of the two
+    // would be wrong.
+    renderRow({ canAssign: false, viewerId: 'e-self', editors: [EDITORS[0]] })
+
+    const ownerCell = screen.getByText('Test Brief').closest('tr')!.querySelectorAll('td')[2]
+    expect(ownerCell.textContent).toBe('\u2014')
+    expect(screen.queryByText('Unassigned')).toBeNull()
+  })
+
+  it('still names the owner to the owner', () => {
+    renderRow({
+      canAssign: false,
+      viewerId: 'u-owner',
+      editors: [EDITORS[0]],
+      brief: { assignee_id: 'u-owner', assignee_name: 'Owner Themself' },
+    })
+
+    expect(screen.getByText('Owner Themself')).toBeInTheDocument()
+  })
+})
+
+describe('BriefRow — who can move the brief’s own status', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('shows a non-owner the brief status as text, because the PATCH would 404', () => {
+    // PATCH /submission-links/{id}/task-stage admits admins and the brief's owner
+    // only. Before the board widened to editors, every row on a non-admin's board
+    // was one they owned, so the picker always worked; now it would reject every
+    // change and snap back.
+    renderRow({
+      canAssign: false,
+      viewerId: 'e-self',
+      editors: [EDITORS[0]],
+      brief: { task_stage_id: 's2' },
+    })
+
+    expect(statusCell().queryByRole('combobox')).toBeNull()
+    expect(statusCell().getByText('Review')).toBeInTheDocument()
+  })
+
+  it('keeps the picker live for a non-admin who owns the brief', () => {
+    // The half that fails if the condition is inverted or dropped: an owner is the
+    // one non-admin the endpoint accepts, and this is the only control they have
+    // over the brief's own status.
+    renderRow({
+      canAssign: false,
+      viewerId: 'u-owner',
+      editors: [EDITORS[0]],
+      brief: { assignee_id: 'u-owner', assignee_name: 'Owner Themself', task_stage_id: 's2' },
+    })
+
+    expect(statusCell().getByRole('combobox')).toBeInTheDocument()
+  })
+
+  it('keeps the picker live for an admin', () => {
+    renderRow({ canAssign: true, brief: { task_stage_id: 's2' } })
+    expect(statusCell().getByRole('combobox')).toBeInTheDocument()
   })
 })

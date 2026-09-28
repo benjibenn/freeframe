@@ -7,6 +7,7 @@ import { FileText, FolderOpen } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { relativePath } from './brief-row'
+import { ownEditorRow, stageOf } from '@/lib/brief-stage'
 import type { BriefTaskItem, TaskStage } from '@/types'
 
 const BOARD_KEY = '/task-board'
@@ -62,16 +63,22 @@ function BriefCard({
       )}
 
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-tertiary">
-        <span
-          className={cn(
-            'rounded px-1.5 py-0.5',
-            brief.assignee_name
-              ? 'bg-accent/10 text-accent'
-              : 'bg-bg-tertiary text-text-tertiary',
-          )}
-        >
-          {brief.assignee_name || 'Unassigned'}
-        </span>
+        {/* The owner is blanked server-side for an editor who is not the owner, so
+            for them a missing name means "not yours to see", not "nobody". An
+            "Unassigned" pill would be a lie about a brief that does have an owner;
+            no pill says nothing. Admins, who receive every owner, still get it. */}
+        {(brief.assignee_name || canManage) && (
+          <span
+            className={cn(
+              'rounded px-1.5 py-0.5',
+              brief.assignee_name
+                ? 'bg-accent/10 text-accent'
+                : 'bg-bg-tertiary text-text-tertiary',
+            )}
+          >
+            {brief.assignee_name || 'Unassigned'}
+          </span>
+        )}
         <span className="ml-auto flex items-center gap-1.5">
           {(brief.has_brief || brief.has_brief_json) && <FileText className="h-3 w-3" />}
           {brief.editors.length > 1 && <span>{brief.editors.length} editors</span>}
@@ -115,22 +122,15 @@ export function PipelineBoard({
     ...stages.map((s) => ({ id: s.id, name: s.name, color: s.color })),
   ]
 
-  // Which status a card sits in, and which one a drag writes. Admins work the
-  // brief's overall status. An editor works their own — a board grouped by a
-  // status they cannot move tells them nothing and lets them change nothing.
-  // A non-admin who owns the brief but has no editor row of their own falls
-  // back to the brief's status: they own it, so it is theirs to move.
-  const ownRow = (b: BriefTaskItem) =>
-    canManage ? undefined : b.editors.find((e) => e.id === viewerId)
-
-  const stageOf = (b: BriefTaskItem) => {
-    const own = ownRow(b)
-    return own ? own.task_stage_id : b.task_stage_id
-  }
+  // Which status a card sits in, and which one a drag writes — shared with the
+  // list view's stage chips, which must group the same briefs the same way or the
+  // two halves of one screen disagree about where the work is.
+  const ownRow = (b: BriefTaskItem) => ownEditorRow(b, viewerId, canManage)
+  const stage = (b: BriefTaskItem) => stageOf(b, viewerId, canManage)
 
   const inColumn = (columnId: string) =>
     briefs.filter((b) =>
-      columnId === UNASSIGNED ? stageOf(b) === null : stageOf(b) === columnId,
+      columnId === UNASSIGNED ? stage(b) === null : stage(b) === columnId,
     )
 
   const drop = async (columnId: string) => {
@@ -140,7 +140,7 @@ export function PipelineBoard({
     if (!id) return
     const target = columnId === UNASSIGNED ? null : columnId
     const current = briefs.find((b) => b.id === id)
-    if (!current || stageOf(current) === target) return
+    if (!current || stage(current) === target) return
     const own = ownRow(current)
     const url = own
       ? `/submission-links/${id}/editors/${own.id}/task-stage`
