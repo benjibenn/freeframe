@@ -189,3 +189,25 @@ def test_an_editor_with_no_row_on_this_brief_gets_a_404(mock_db):
         json={"task_stage_id": str(uuid.uuid4())},
     )
     assert r.status_code == 404
+
+
+def test_deleting_a_stage_releases_the_editors_sitting_in_it(mock_db):
+    """A soft-deleted stage would otherwise keep showing as an editor's status
+    while being absent from the picker — a status nobody can clear."""
+    from apps.api.models.submission import Submission
+
+    stage = MagicMock()
+    stage.id = uuid.uuid4()
+    stage.deleted_at = None
+    mock_db.first.return_value = stage
+
+    client = _client(mock_db, _user(is_superadmin=True, name="Admin"))
+    assert client.delete(f"/task-stages/{stage.id}").status_code == 204
+
+    detached = [
+        c.args[0] for c in mock_db.update.call_args_list
+        if c.args and isinstance(c.args[0], dict)
+    ]
+    assert any(Submission.task_stage_id in d for d in detached), (
+        "submissions in the deleted stage were not detached"
+    )

@@ -158,6 +158,11 @@ def delete_task_stage(
     db.query(Asset).filter(Asset.task_stage_id == stage.id).update(
         {Asset.task_stage_id: None}, synchronize_session=False
     )
+    # Same for the editors sitting in this stage. Without this a soft-deleted
+    # stage keeps rendering as someone's status while being gone from the picker.
+    db.query(Submission).filter(Submission.task_stage_id == stage.id).update(
+        {Submission.task_stage_id: None}, synchronize_session=False
+    )
     stage.deleted_at = datetime.now(timezone.utc)
     db.commit()
 
