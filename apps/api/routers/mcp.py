@@ -31,6 +31,7 @@ from ..services import mcp_oauth
 from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE, SCOPE_USERS_ADMIN
 from ..models.user import User
 from ..schemas.auth import AdminSetPasswordRequest, InviteRequest
+from ..schemas.brief_overview import BriefLabelsUpdate
 from ..schemas.folder import FolderCreate, FolderUpdate
 from ..schemas.submission import (
     BriefJsonUpdate,
@@ -41,6 +42,7 @@ from ..schemas.submission import (
 )
 from ..schemas.task_stage import BriefAssigneeAssign, TaskStageAssign
 from . import admin as admin_router
+from . import brief_labels as brief_labels_router
 from . import folders as folders_router
 from . import projects as projects_router
 from . import submissions as submissions_router
@@ -647,6 +649,31 @@ def delete_brief(link_ids: list[str]) -> dict[str, Any]:
         "requested": len(link_ids),
         "note": "Soft delete: submissions and their uploaded files are retained.",
     }
+
+
+@mcp.tool(
+    description=(
+        "Tag one or more briefs with a persona and/or angle label — the two axes "
+        "the playbook view groups and counts by. Omit a field to leave it as it is; "
+        "pass \"\" to clear it. All-or-nothing: if any id is unknown or deleted, "
+        "nothing is saved."
+    )
+)
+def set_brief_labels(
+    link_ids: list[str],
+    persona_label: str | None = None,
+    angle_label: str | None = None,
+) -> dict[str, Any]:
+    """Args: link_ids — briefs to tag; persona_label / angle_label — the labels to set."""
+    _require_scope(SCOPE_WRITE)
+    if not link_ids:
+        raise ValueError("link_ids must contain at least one brief id")
+    body = BriefLabelsUpdate(
+        link_ids=[_uuid(i, "link_ids") for i in link_ids],
+        persona_label=persona_label,
+        angle_label=angle_label,
+    )
+    return _call(brief_labels_router.set_brief_labels, body=body)
 
 
 # ── Folders ──────────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import {
   Activity,
   ListChecks,
   ClipboardList,
+  LayoutGrid,
   Library,
   BookOpen,
 } from 'lucide-react'
@@ -232,6 +233,32 @@ export function Sidebar({ collapsed: collapsedProp, onToggle, mobileOpen = false
             {!collapsed && (
               <span className={cn('text-[13px]', pathname.startsWith('/admin/briefs') && 'font-medium')}>
                 Brief overview
+              </span>
+            )}
+          </Link>
+        )}
+
+        {/* Playbook — superadmins only, same data as the brief overview */}
+        {isSuperAdmin && (
+          <Link
+            href="/admin/playbook"
+            onClick={() => setNotifOpen(false)}
+            className={cn(
+              'group relative flex items-center rounded-md transition-colors duration-100',
+              collapsed ? 'justify-center h-9 w-9 mx-auto' : 'gap-2.5 px-2.5 h-9',
+              pathname.startsWith('/admin/playbook')
+                ? 'bg-bg-hover text-text-primary'
+                : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
+            )}
+            title={collapsed ? 'Playbook' : undefined}
+          >
+            <LayoutGrid
+              className="h-[18px] w-[18px] shrink-0"
+              strokeWidth={pathname.startsWith('/admin/playbook') ? 2 : 1.5}
+            />
+            {!collapsed && (
+              <span className={cn('text-[13px]', pathname.startsWith('/admin/playbook') && 'font-medium')}>
+                Playbook
               </span>
             )}
           </Link>
