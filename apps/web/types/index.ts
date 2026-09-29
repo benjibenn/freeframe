@@ -74,6 +74,10 @@ export interface BriefEditor {
   id: string;
   name: string | null;
   email: string | null;
+  /** This editor's own status on the brief. Independent of the brief's own —
+   *  two editors on one brief can be at different points. A non-admin viewer
+   *  only ever receives their own row here. */
+  task_stage_id: string | null;
 }
 
 /** A brief as a work item. Present from creation, so it appears on the board
@@ -83,7 +87,10 @@ export interface BriefTaskItem {
   title: string;
   taxonomy_path: string | null;
   task_stage_id: string | null;
-  /** Internal owner — whose desk this is on. */
+  /** Internal owner — whose desk this is on. Both fields are blanked for a
+   *  non-admin who is not the owner (an owner is often also an editor, and this
+   *  would name them to their co-editors), so null means "not yours to see" as
+   *  well as "nobody". */
   assignee_id: string | null;
   assignee_name: string | null;
   /** Who is making it. Derived from acceptances, so blank until someone accepts. */

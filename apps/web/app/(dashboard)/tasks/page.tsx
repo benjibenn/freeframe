@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { ManageStagesDialog } from '@/components/tasks/manage-stages-dialog'
 import { BriefRow, relativePath } from '@/components/tasks/brief-row'
 import { PipelineBoard } from '@/components/tasks/pipeline-board'
+import { stageOf } from '@/lib/brief-stage'
 import type { TaskStage, TaskBoardResponse, User } from '@/types'
 
 const STAGES_KEY = '/task-stages'
@@ -68,8 +69,10 @@ export default function TasksPage() {
   const { data: stages } = useSWR<TaskStage[]>(STAGES_KEY, () =>
     api.get<TaskStage[]>(STAGES_KEY),
   )
-  // The board is scoped server-side: an editor's response contains only the
-  // briefs they own, so there is nothing here to filter or hide client-side.
+  // The board is scoped server-side to the briefs this reader owns OR is assigned
+  // to make, and the rows are already stripped of what they may not see — so there
+  // is nothing here to filter or hide. Note the two halves are not the same right:
+  // being on your board does not mean you own it.
   const { data: board, isLoading } = useSWR<TaskBoardResponse>(BOARD_KEY, () =>
     api.get<TaskBoardResponse>(BOARD_KEY),
   )
@@ -88,14 +91,20 @@ export default function TasksPage() {
     (path !== null && (path === folderFilter || path.startsWith(folderFilter + '/')))
 
   const folderBriefs = allBriefs.filter((b) => inFolder(b.taxonomy_path))
+
+  // Chips and rows read the same status the pipeline columns do — an editor's own,
+  // an admin's the brief's. Reading the brief's here would put an editor's brief in
+  // one chip, the pipeline column for another, and their sub-row on a third.
+  const stageFor = (b: (typeof folderBriefs)[number]) => stageOf(b, user?.id, isPlatformAdmin)
+
   const countByStage = (id: string | null) =>
-    folderBriefs.filter((b) => (b.task_stage_id ?? null) === id).length
+    folderBriefs.filter((b) => stageFor(b) === id).length
 
   const briefs = folderBriefs.filter((b) => {
     if (view === 'pipeline') return true
     if (stageFilter === null) return true
-    if (stageFilter === 'unassigned') return b.task_stage_id === null
-    return b.task_stage_id === stageFilter
+    if (stageFilter === 'unassigned') return stageFor(b) === null
+    return stageFor(b) === stageFilter
   })
 
   const crumbs = folderFilter
@@ -110,7 +119,7 @@ export default function TasksPage() {
           <p className="mt-1 text-sm text-text-secondary">
             {isPlatformAdmin
               ? 'Every brief and what has been delivered against it. A brief appears here from the moment you create it, so an empty one is visible rather than forgotten.'
-              : 'The briefs assigned to you. Move one along as you work on it.'}
+              : 'The briefs assigned to you. Move your own status as you work — the brief’s overall status stays with whoever owns it.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -228,7 +237,13 @@ export default function TasksPage() {
           }
         />
       ) : view === 'pipeline' ? (
-        <PipelineBoard briefs={briefs} stages={stageList} folderFilter={folderFilter} canManage={isPlatformAdmin} />
+        <PipelineBoard
+          briefs={briefs}
+          stages={stageList}
+          folderFilter={folderFilter}
+          canManage={isPlatformAdmin}
+          viewerId={user?.id}
+        />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border">
           <table className="w-full min-w-[52rem] table-fixed">
@@ -249,6 +264,7 @@ export default function TasksPage() {
                   stages={stageList}
                   owners={owners ?? []}
                   canAssign={isPlatformAdmin}
+                  viewerId={user?.id}
                   folderFilter={folderFilter}
                   typeFilter={typeFilter}
                   onDrillTo={setFolderFilter}
