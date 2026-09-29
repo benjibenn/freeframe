@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { displayName } from "@/lib/display-name";
 import { ShareLinkActivityPanel } from "@/components/projects/share-link-activity";
 import type { ShareLink, ShareLinkAppearance } from "@/types";
 
@@ -177,6 +178,7 @@ function ToggleRow({
 interface UserSuggestion {
   id: string;
   name: string;
+  nickname?: string | null;
   email: string;
   avatar_url?: string | null;
 }
@@ -184,6 +186,7 @@ interface UserSuggestion {
 interface InvitedUser {
   id: string;
   name: string;
+  nickname?: string | null;
   email: string;
   permission: string;
 }
@@ -219,12 +222,13 @@ function ShareUserSearch({ shareLink }: { shareLink: ShareLink }) {
             .join(",");
           if (userIds) {
             const users = await api.get<
-              Array<{ id: string; name: string; email: string }>
+              Array<{ id: string; name: string; nickname?: string | null; email: string }>
             >(`/users?ids=${userIds}`);
             setInvitedUsers(
               users.map((u) => ({
                 id: u.id,
                 name: u.name,
+                nickname: u.nickname,
                 email: u.email,
                 permission:
                   shares.find((s) => s.shared_with_user_id === u.id)
@@ -278,7 +282,7 @@ function ShareUserSearch({ shareLink }: { shareLink: ShareLink }) {
           body,
         );
       }
-      setSent(user.name || user.email);
+      setSent(displayName(user));
       setQuery("");
       setSuggestions([]);
       setShowSuggestions(false);
@@ -287,6 +291,7 @@ function ShareUserSearch({ shareLink }: { shareLink: ShareLink }) {
         {
           id: user.id,
           name: user.name,
+          nickname: user.nickname,
           email: user.email,
           permission: shareLink.permission || "view",
         },
@@ -376,12 +381,12 @@ function ShareUserSearch({ shareLink }: { shareLink: ShareLink }) {
             >
               <div className="h-7 w-7 rounded-full bg-accent/20 flex items-center justify-center shrink-0">
                 <span className="text-xs font-medium text-accent">
-                  {(user.name || user.email).charAt(0).toUpperCase()}
+                  {displayName(user).charAt(0).toUpperCase()}
                 </span>
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-text-primary truncate">
-                  {user.name}
+                  {displayName(user)}
                 </p>
                 <p className="text-2xs text-text-tertiary truncate">
                   {user.email}
@@ -410,12 +415,12 @@ function ShareUserSearch({ shareLink }: { shareLink: ShareLink }) {
             >
               <div className="h-6 w-6 rounded-full bg-accent/20 flex items-center justify-center shrink-0">
                 <span className="text-2xs font-medium text-accent">
-                  {(user.name || user.email).charAt(0).toUpperCase()}
+                  {displayName(user).charAt(0).toUpperCase()}
                 </span>
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-xs text-text-primary truncate">
-                  {user.name}
+                  {displayName(user)}
                 </p>
               </div>
               <span className="text-2xs text-text-tertiary capitalize shrink-0">

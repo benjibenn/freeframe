@@ -45,6 +45,10 @@ def _make_user(
     u.id = user_id or uuid.uuid4()
     u.email = email
     u.name = name
+    u.nickname = None
+    # Mirrors User.display_name's fallback. Left as an auto-mock, it reaches a
+    # response model as a MagicMock and 500s any route that renders a name.
+    u.display_name = name
     # Store a fake hash — tests that need verify() must mock it themselves.
     u.password_hash = _FAKE_HASH
     u.status = UserStatus.active

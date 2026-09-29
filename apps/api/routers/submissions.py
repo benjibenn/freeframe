@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -408,6 +408,82 @@ def list_submission_links(
         resp.has_reference_image = resp.reference_image_count > 0
         out.append(resp)
     return out
+
+
+# Declared before /submission-links/{link_id}: FastAPI matches in declaration
+# order, so a literal path registered after the UUID placeholder would never be
+# reached — "trash" would be parsed as a link_id and 422.
+@router.get("/submission-links/trash", response_model=list[SubmissionLinkResponse])
+def list_deleted_submission_links(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Closed requests, most recently closed first, so one can be reopened.
+
+    Mirrors the visibility rule of list_submission_links rather than inventing a
+    second one: platform admins see every closed request, everyone else only the
+    ones they created."""
+    query = db.query(SubmissionLink).filter(SubmissionLink.deleted_at.isnot(None))
+    if not is_platform_admin(current_user):
+        query = query.filter(SubmissionLink.created_by == current_user.id)
+    links = (
+        query.order_by(SubmissionLink.deleted_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    counts = _count_map(db, [l.id for l in links])
+    out = []
+    for l in links:
+        resp = SubmissionLinkResponse.model_validate(l)
+        resp.submission_count = counts.get(l.id, 0)
+        resp.has_brief = bool(l.brief_pdf_s3_key)
+        resp.has_brief_json = bool(l.brief_json)
+        out.append(resp)
+    return out
+
+
+@router.post("/submission-links/{link_id}/restore", response_model=SubmissionLinkResponse)
+def restore_submission_link(
+    link_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Reopen a closed request.
+
+    The delete was a soft delete that also cleared is_enabled, so restoring has
+    to undo both — clearing deleted_at alone would give back a request that is
+    visible but silently refuses submissions.
+
+    An expired request comes back still expired: the expiry is the owner's own
+    deadline, and quietly extending it on restore would reopen a window they
+    deliberately closed."""
+    link = db.query(SubmissionLink).filter(
+        SubmissionLink.id == link_id,
+        SubmissionLink.deleted_at.isnot(None),
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Closed submission link not found")
+    if link.created_by != current_user.id and not is_platform_admin(current_user):
+        raise HTTPException(status_code=403, detail="Not your submission link")
+
+    link.deleted_at = None
+    link.is_enabled = True
+    db.commit()
+    db.refresh(link)
+
+    resp = SubmissionLinkResponse.model_validate(link)
+    resp.submission_count = _count_map(db, [link.id]).get(link.id, 0)
+    resp.has_brief = bool(link.brief_pdf_s3_key)
+    resp.has_brief_json = bool(link.brief_json)
+    resp.reference_video_count = len(_ref_video_keys(link))
+    resp.has_reference_video = resp.reference_video_count > 0
+    resp.reference_image_count = len(_ref_image_keys(link))
+    resp.has_reference_image = resp.reference_image_count > 0
+    resp.home_path = resolve_link_home_path(db, link)
+    return resp
 
 
 @router.get("/submission-links/{link_id}", response_model=SubmissionLinkResponse)
@@ -944,7 +1020,7 @@ def list_submissions(
         out.append(SubmissionItem(
             id=s.id,
             user_id=s.user_id,
-            user_name=(u.name if u else "") or "",
+            user_name=(u.display_name if u else "") or "",
             user_email=(u.email if u else "") or "",
             display_name=s.display_name,
             project_id=s.project_id,
@@ -980,7 +1056,7 @@ def update_submission(
     if "display_name" in body.model_fields_set:
         handle = (body.display_name or "").strip()
         sub.display_name = handle or None
-        label = handle or (u.name if u else "") or (u.email if u else "") or "Submission"
+        label = handle or (u.display_name if u else "") or (u.email if u else "") or "Submission"
         project = db.query(Project).filter(Project.id == sub.project_id).first()
         if project:
             project.name = _unique_project_name(
@@ -997,7 +1073,7 @@ def update_submission(
     return SubmissionItem(
         id=sub.id,
         user_id=sub.user_id,
-        user_name=(u.name if u else "") or "",
+        user_name=(u.display_name if u else "") or "",
         user_email=(u.email if u else "") or "",
         display_name=sub.display_name,
         project_id=sub.project_id,
@@ -1408,7 +1484,7 @@ def pre_create_submission(
         return SubmissionItem(
             id=existing.id,
             user_id=existing.user_id,
-            user_name=user.name or "",
+            user_name=user.display_name or "",
             user_email=user.email,
             display_name=existing.display_name,
             project_id=existing.project_id,
@@ -1416,7 +1492,7 @@ def pre_create_submission(
             created_at=existing.created_at,
         )
 
-    submitter_label = (body.display_name or user.name or email.split("@")[0]).strip()
+    submitter_label = (body.display_name or user.display_name or email.split("@")[0]).strip()
     project = Project(
         name=_unique_project_name(db, link, f"{link.title} — {submitter_label}"),
         description=f"Submission for \"{link.title}\".",
@@ -1471,7 +1547,7 @@ def pre_create_submission(
             return SubmissionItem(
                 id=existing.id,
                 user_id=existing.user_id,
-                user_name=user.name or "",
+                user_name=user.display_name or "",
                 user_email=user.email,
                 display_name=existing.display_name,
                 project_id=existing.project_id,
@@ -1483,7 +1559,7 @@ def pre_create_submission(
     return SubmissionItem(
         id=submission.id,
         user_id=user.id,
-        user_name=user.name or "",
+        user_name=user.display_name or "",
         user_email=user.email,
         display_name=submission.display_name,
         project_id=project.id,
@@ -1724,6 +1800,7 @@ def accept_submission_link(
 class SubmitWorkFromUrlRequest(BaseModel):
     url: str
     asset_name: Optional[str] = None
+    language: Optional[str] = None
 
 
 class SubmitWorkResponse(BaseModel):
@@ -1771,6 +1848,37 @@ def resolve_submitted_asset_name(brief_json, requested: Optional[str]) -> Option
     return requested or None
 
 
+def resolve_submitted_language(brief_json, requested: Optional[str]) -> Optional[str]:
+    """Which output language this submission is in, or None when there is no choice.
+
+    Mirrors resolve_submitted_asset_name, and for the same reason: a brief asking
+    for several languages is a contract that each deliverable comes back in each
+    of them. Work that does not say which one it is would collide on a name
+    already taken by another locale, and the second upload would thread under the
+    first as a revision rather than standing as its own deliverable.
+
+    Fewer than two languages means the name carries no prefix at all, so anything
+    the caller sent is ignored rather than rejected — briefs predating the field
+    list none, and a single language distinguishes nothing.
+    """
+    from ..services.hook_naming import output_languages
+
+    allowed = output_languages(brief_json)
+    if len(allowed) < 2:
+        return None
+    if not requested:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This brief asks for several languages; language must be one of: {allowed}",
+        )
+    if requested not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"language must be one of the brief's output languages: {allowed}",
+        )
+    return requested
+
+
 @router.post("/submission-links/{link_id}/submit-work/from-url", response_model=SubmitWorkResponse)
 def submit_work_from_url(
     link_id: uuid.UUID,
@@ -1793,7 +1901,7 @@ def submit_work_from_url(
     from ..models.activity import ActivityLog, ActivityAction
     from ..models.task_stage import TaskStage
     from ..schemas.upload import ALLOWED_MIME_TYPES, mime_to_asset_type
-    from ..services.hook_naming import next_hook_name, variation_names
+    from ..services.hook_naming import compose_name, next_hook_name, variation_names
     from ..services import brief_import_service
 
     link = _validate_active(
@@ -1817,10 +1925,13 @@ def submit_work_from_url(
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}")
     asset_type = mime_to_asset_type(content_type)
 
+    language = resolve_submitted_language(link.brief_json, body.language)
     name = resolve_submitted_asset_name(link.brief_json, body.asset_name)
     if name is None:
         db.query(Project).filter(Project.id == project.id).with_for_update().first()
-        name = next_hook_name(db, project.id)
+        name = next_hook_name(db, project.id, language)
+    else:
+        name = compose_name(language, name)
 
     # A repeat submission of the same deliverable is a revision, not a rival.
     asset = db.query(Asset).filter(

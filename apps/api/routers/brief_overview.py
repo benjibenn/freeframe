@@ -144,7 +144,7 @@ def get_brief_overview(
             BriefOverviewSubmission(
                 id=s.id,
                 user_id=s.user_id,
-                user_name=(u.name if u else "") or "",
+                user_name=(u.display_name if u else "") or "",
                 user_email=(u.email if u else "") or "",
                 display_name=s.display_name,
                 project_id=s.project_id,

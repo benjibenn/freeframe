@@ -33,6 +33,9 @@ class InitiateUploadRequest(BaseModel):
     # For new version of existing asset
     asset_id: uuid.UUID | None = None
     folder_id: uuid.UUID | None = None
+    # Which of the brief's output_languages this file is. Required only when the
+    # request's brief lists more than one; ignored everywhere else.
+    language: str | None = None
 
 class InitiateUploadResponse(BaseModel):
     upload_id: str

@@ -80,7 +80,7 @@ def _enrich(db: Session, logs: list[ActivityLog]) -> list[ActivityFeedItem]:
             id=log.id,
             action=log.action,
             created_at=log.created_at,
-            actor=ActivityActor(id=actor_user.id, name=actor_user.name, avatar_url=actor_user.avatar_url) if actor_user else None,
+            actor=ActivityActor(id=actor_user.id, name=actor_user.display_name, avatar_url=actor_user.avatar_url) if actor_user else None,
             asset_id=asset.id if asset else log.asset_id,
             asset_name=asset.name if asset else None,
             asset_type=(asset.asset_type.value if asset and asset.asset_type else None),

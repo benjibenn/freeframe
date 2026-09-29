@@ -124,7 +124,7 @@ def _build_comment_response(
     if comment.author_id:
         author = db.query(User).filter(User.id == comment.author_id).first()
         if author:
-            author_info = AuthorInfo(id=author.id, name=author.name, avatar_url=author.avatar_url)
+            author_info = AuthorInfo(id=author.id, name=author.display_name, avatar_url=author.avatar_url)
 
     guest_author_info = None
     if comment.guest_author_id:
@@ -706,7 +706,7 @@ def guest_comment(
 
     # Log share link activity
     actor_email = current_user.email if current_user else (body.guest_email or "anonymous")
-    actor_name = current_user.name if current_user else body.guest_name
+    actor_name = current_user.display_name if current_user else body.guest_name
     activity = ShareLinkActivity(
         share_link_id=link.id,
         action=ShareActivityAction.commented,

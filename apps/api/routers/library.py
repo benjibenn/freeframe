@@ -445,7 +445,7 @@ def list_grantable_users(
         ))
 
     return [
-        LibraryUserSummary(id=u.id, name=u.name, email=u.email, grants=by_user.get(u.id, []))
+        LibraryUserSummary(id=u.id, name=u.display_name, email=u.email, grants=by_user.get(u.id, []))
         for u in users
     ]
 

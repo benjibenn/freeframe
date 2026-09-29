@@ -8,7 +8,10 @@ variations was for.
 import pytest
 from fastapi import HTTPException
 
-from apps.api.routers.submissions import resolve_submitted_asset_name
+from apps.api.routers.submissions import (
+    resolve_submitted_asset_name,
+    resolve_submitted_language,
+)
 
 
 def _brief(*variations):
@@ -55,3 +58,44 @@ def test_brief_without_deliverable_names_auto_numbers():
 
 def test_brief_without_deliverable_names_honours_a_requested_name():
     assert resolve_submitted_asset_name({}, "Founder cut") == "Founder cut"
+
+
+# ── Multi-language briefs ──────────────────────────────────────────────────────
+
+def test_a_language_is_demanded_when_the_brief_asks_for_several():
+    """Same rule as the deliverable name, for the same reason.
+
+    Without it, the German and Swedish cuts of one deliverable both resolve to
+    the same name, and the second call threads under the first as a revision —
+    silently losing a deliverable the brief explicitly asked for.
+    """
+    brief = {"output_languages": ["German", "Swedish"]}
+    with pytest.raises(HTTPException) as exc:
+        resolve_submitted_language(brief, None)
+    assert exc.value.status_code == 400
+    # The caller is usually an agent; it can only retry if told the valid set.
+    assert "German" in str(exc.value.detail)
+
+
+def test_an_unlisted_language_is_rejected():
+    brief = {"output_languages": ["German", "Swedish"]}
+    with pytest.raises(HTTPException) as exc:
+        resolve_submitted_language(brief, "Dutch")
+    assert exc.value.status_code == 400
+
+
+def test_a_listed_language_is_accepted():
+    brief = {"output_languages": ["German", "Swedish"]}
+    assert resolve_submitted_language(brief, "Swedish") == "Swedish"
+
+
+def test_a_single_language_brief_asks_for_nothing_and_ignores_what_it_gets():
+    """One language is no choice, so the stored name carries no prefix.
+
+    Returning None rather than rejecting a sent language keeps older agents and
+    briefs predating the field working instead of failing on a field that would
+    not change the name anyway.
+    """
+    assert resolve_submitted_language({"output_languages": ["German"]}, None) is None
+    assert resolve_submitted_language({"output_languages": ["German"]}, "German") is None
+    assert resolve_submitted_language({}, "German") is None

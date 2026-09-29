@@ -17,7 +17,7 @@ ContextVar and the app stays safe to run behind more than one worker.
 import secrets
 import uuid
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -29,9 +29,14 @@ from ..database import SessionLocal
 from ..middleware.api_key import resolve_api_key_user
 from ..services import mcp_oauth
 from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE, SCOPE_USERS_ADMIN
+from ..models.share import SharePermission
 from ..models.user import User
+from ..schemas.approval import ApprovalCreate
+from ..schemas.asset import AssetUpdate
 from ..schemas.auth import AdminSetPasswordRequest, InviteRequest
-from ..schemas.folder import FolderCreate, FolderUpdate
+from ..schemas.brief_overview import BriefLabelsUpdate
+from ..schemas.folder import AssetMoveRequest, FolderCreate, FolderUpdate
+from ..schemas.share import MultiShareCreate, ShareLinkCreate
 from ..schemas.submission import (
     BriefJsonUpdate,
     BulkDeleteRequest,
@@ -39,10 +44,14 @@ from ..schemas.submission import (
     DuplicateLinkRequest,
     SubmissionLinkCreate,
 )
-from ..schemas.task_stage import BriefAssigneeAssign, TaskStageAssign
+from ..schemas.task_stage import BriefAssigneeAssign, BriefEditorAssign, TaskStageAssign
 from . import admin as admin_router
+from . import brief_labels as brief_labels_router
+from . import approvals as approvals_router
+from . import assets as assets_router
 from . import folders as folders_router
 from . import projects as projects_router
+from . import share as share_router
 from . import submissions as submissions_router
 from . import tasks as tasks_router
 from . import users as users_router
@@ -98,7 +107,10 @@ mcp = FastMCP(
         "that editors submit work against. Call list_destinations before creating "
         "or moving a brief — both need a real project id, which cannot be guessed. "
         "Folders to file briefs into are made with create_folder, which takes a "
-        "path and creates whatever part of it is missing."
+        "path and creates whatever part of it is missing. The work editors send "
+        "back is reached with list_submitted_files, and every file tool below "
+        "takes an asset_id from it. To send work outside Freeframe, share_file "
+        "and share_folder mint a public link anyone can open."
     ),
     stateless_http=True,
     json_response=True,
@@ -202,19 +214,53 @@ def _call(fn, **kwargs) -> Any:
 
 @mcp.tool(
     description=(
-        "List video request briefs. Returns each brief's id, title, where it is "
-        "filed, how many submissions it has received, and its public submit URL."
+        "Search video request briefs. Returns each brief's id, title, where it is "
+        "filed, how many submissions it has received, and its public submit URL. "
+        "Narrow with query (matches the title or the folder path, case-insensitive), "
+        "project_id, or folder_id. A tenant can hold hundreds of briefs, so the "
+        "result is capped at limit and reports total_matched when it truncates — "
+        "narrow the search rather than raising limit."
     )
 )
-def list_briefs(project_id: str | None = None) -> list[dict[str, Any]]:
-    """Args: project_id — optional; only briefs filed in this project."""
+def list_briefs(
+    project_id: str | None = None,
+    query: str | None = None,
+    folder_id: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Args: project_id, query, folder_id — all optional filters; limit — 1..200.
+
+    Filtering happens here rather than in the endpoint on purpose: the endpoint
+    backs the admin grid, which wants every row, and adding search parameters to
+    it would mean two places deciding what a brief matches.
+    """
     _require_scope(SCOPE_READ)
+    if not 1 <= limit <= 200:
+        raise ValueError("limit must be between 1 and 200")
     links = _call(submissions_router.list_submission_links)
     out = [_brief_summary(l) for l in links]
     if project_id:
         wanted = str(_uuid(project_id, "project_id"))
         out = [b for b in out if b["home_project_id"] == wanted]
-    return out
+    if folder_id:
+        wanted = str(_uuid(folder_id, "folder_id"))
+        out = [b for b in out if b["home_folder_id"] == wanted]
+    if query:
+        needle = query.casefold().strip()
+        out = [
+            b for b in out
+            if needle in (b["title"] or "").casefold()
+            or needle in (b["home_path"] or "").casefold()
+        ]
+    total = len(out)
+    return {
+        "total_matched": total,
+        "returned": min(total, limit),
+        # Said out loud rather than left for the caller to infer from a length:
+        # a silently truncated list reads as "that is all of them".
+        "truncated": total > limit,
+        "briefs": out[:limit],
+    }
 
 
 @mcp.tool(
@@ -335,15 +381,26 @@ def add_brief_reference(link_id: str, url: str, kind: str = "auto") -> dict[str,
         "valid at the moment of the call. Images and videos up to 200 MB; anything "
         "larger has to go through the web UI. When the brief prescribes deliverable "
         "names (its hook_variations), asset_name must be exactly one of them — "
-        "call get_brief first to read them. Submitting the same name twice adds a "
-        "new version to that deliverable rather than a second one beside it."
+        "call get_brief first to read them. If the brief lists two or more "
+        "output_languages, language is required too and must be exactly one of "
+        "them; the file is then stored as 'German — A. before you buy'. "
+        "Submitting the same deliverable and language twice adds a new version to "
+        "it rather than a second one beside it."
     )
 )
-def submit_work(link_id: str, url: str, asset_name: Optional[str] = None) -> dict[str, Any]:
-    """Args: url — a public http(s) URL; asset_name — which deliverable this is."""
+def submit_work(
+    link_id: str,
+    url: str,
+    asset_name: Optional[str] = None,
+    language: Optional[str] = None,
+) -> dict[str, Any]:
+    """Args: url — a public http(s) URL; asset_name — which deliverable this is;
+    language — which of the brief's output_languages it is in."""
     _require_scope(SCOPE_WRITE)
     link_uuid = _uuid(link_id, "link_id")
-    body = submissions_router.SubmitWorkFromUrlRequest(url=url, asset_name=asset_name)
+    body = submissions_router.SubmitWorkFromUrlRequest(
+        url=url, asset_name=asset_name, language=language
+    )
     result = _call(submissions_router.submit_work_from_url, link_id=link_uuid, body=body)
     return {
         "submission_project_id": str(result.submission_project_id),
@@ -626,7 +683,7 @@ def move_brief(
         "Close one or more briefs. This is a soft delete: the brief stops accepting "
         "work and disappears from the tree, but every submission already made "
         "against it — and every file uploaded with those submissions — is left "
-        "alone in its own project. There is no undo through this API. A brief with "
+        "alone in its own project. Undo it with restore_brief. A brief with "
         "submissions is usually one someone is still working from, so check "
         "submission_count in list_briefs before closing anything you did not create."
     )
@@ -647,6 +704,76 @@ def delete_brief(link_ids: list[str]) -> dict[str, Any]:
         "requested": len(link_ids),
         "note": "Soft delete: submissions and their uploaded files are retained.",
     }
+
+
+@mcp.tool(
+    description=(
+        "Reopen a brief that delete_brief closed. Its submit URL starts working "
+        "again and it reappears in list_briefs. Find the id with "
+        "list_deleted_briefs. A brief that was already past its expiry comes back "
+        "still expired — give it a new expires_at with update_brief to reopen the "
+        "window."
+    )
+)
+def restore_brief(brief_id: str) -> dict[str, Any]:
+    """Args: brief_id — the closed brief to reopen."""
+    _require_scope(SCOPE_WRITE)
+    link = _call(
+        submissions_router.restore_submission_link,
+        link_id=_uuid(brief_id, "brief_id"),
+    )
+    return _brief_summary(link)
+
+
+@mcp.tool(
+    description=(
+        "List closed briefs, most recently closed first, so one can be reopened "
+        "with restore_brief. Deleting a brief never destroys it or the work "
+        "submitted to it."
+    )
+)
+def list_deleted_briefs(limit: int = 50) -> list[dict[str, Any]]:
+    """Args: limit — 1..100, newest deletions first."""
+    _require_scope(SCOPE_READ)
+    if not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
+    links = _call(submissions_router.list_deleted_submission_links, skip=0, limit=limit)
+    return [
+        {
+            "id": str(l.id),
+            "title": l.title,
+            "submission_count": l.submission_count,
+            "deleted_at": (
+                d.isoformat() if (d := getattr(l, "deleted_at", None)) else None
+            ),
+        }
+        for l in links
+    ]
+
+
+@mcp.tool(
+    description=(
+        "Tag one or more briefs with a persona and/or angle label — the two axes "
+        "the playbook view groups and counts by. Omit a field to leave it as it is; "
+        "pass \"\" to clear it. All-or-nothing: if any id is unknown or deleted, "
+        "nothing is saved."
+    )
+)
+def set_brief_labels(
+    link_ids: list[str],
+    persona_label: str | None = None,
+    angle_label: str | None = None,
+) -> dict[str, Any]:
+    """Args: link_ids — briefs to tag; persona_label / angle_label — the labels to set."""
+    _require_scope(SCOPE_WRITE)
+    if not link_ids:
+        raise ValueError("link_ids must contain at least one brief id")
+    body = BriefLabelsUpdate(
+        link_ids=[_uuid(i, "link_ids") for i in link_ids],
+        persona_label=persona_label,
+        angle_label=angle_label,
+    )
+    return _call(brief_labels_router.set_brief_labels, body=body)
 
 
 # ── Folders ──────────────────────────────────────────────────────────────────
@@ -840,6 +967,515 @@ def list_deleted_folders(project_id: str, limit: int = 50) -> list[dict[str, Any
     return trash["folders"]
 
 
+# ── Submitted files ──────────────────────────────────────────────────────────
+
+def _file_summary(asset: Any) -> dict[str, Any]:
+    """The handful of fields a file tool acts on, not the whole AssetResponse.
+
+    The response model also carries versions, thumbnails and tags; none of them
+    are inputs to anything here, and a brief with fifty submitted files would
+    otherwise flood the caller's context.
+    """
+    kind = getattr(asset, "asset_type", None)
+    return {
+        "asset_id": str(asset.id),
+        "name": asset.name,
+        "project_id": str(asset.project_id),
+        "folder_id": str(asset.folder_id) if asset.folder_id else None,
+        "asset_type": getattr(kind, "value", None) or (str(kind) if kind else None),
+    }
+
+
+def _latest_version_id(asset_id: uuid.UUID) -> uuid.UUID:
+    """The version a review applies to.
+
+    list_asset_versions orders by version_number descending, so the head of the
+    list is the newest upload. Reviewing anything else silently would approve a
+    superseded cut.
+    """
+    versions = _call(assets_router.list_asset_versions, asset_id=asset_id)
+    if not versions:
+        raise ValueError("That file has no uploaded version to review yet")
+    return versions[0].id
+
+
+@mcp.tool(
+    description=(
+        "List the work editors have submitted against a brief, grouped by "
+        "submitter. Every file carries the asset_id that get_file_url, "
+        "rename_file, move_file, delete_file and review_file all take."
+    )
+)
+def list_submitted_files(brief_id: str) -> list[dict[str, Any]]:
+    """Args: brief_id — the brief whose submissions to list."""
+    _require_scope(SCOPE_READ)
+    subs = _call(
+        submissions_router.list_submissions,
+        link_id=_uuid(brief_id, "brief_id"),
+    )
+    return [
+        {
+            "submission_id": str(s.id),
+            "submitter": s.display_name or s.user_name or s.user_email,
+            "submitter_email": s.user_email,
+            "project_id": str(s.project_id),
+            "submitted_at": s.created_at.isoformat() if s.created_at else None,
+            "files": [{"asset_id": str(f.asset_id), "name": f.name} for f in s.files],
+        }
+        for s in subs
+    ]
+
+
+@mcp.tool(
+    description=(
+        "Get a time-limited URL for a submitted file, to view or download it. "
+        "The link is presigned and expires, so fetch it when you are ready to "
+        "use it rather than storing it."
+    )
+)
+def get_file_url(asset_id: str, download: bool = True) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files; download — false streams inline."""
+    _require_scope(SCOPE_READ)
+    res = _call(
+        assets_router.get_stream_url,
+        asset_id=_uuid(asset_id, "asset_id"),
+        version_id=None,
+        download=download,
+    )
+    kind = getattr(res, "asset_type", None)
+    return {
+        "url": res.url,
+        "asset_type": getattr(kind, "value", None) or (str(kind) if kind else None),
+        "expires_in": res.expires_in,
+    }
+
+
+@mcp.tool(
+    description=(
+        "Rename a submitted file. Renames the file only — it stays in the same "
+        "folder and keeps every version it has."
+    )
+)
+def rename_file(asset_id: str, name: str) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files; name — the new filename."""
+    _require_scope(SCOPE_WRITE)
+    new_name = name.strip()
+    if not new_name:
+        raise ValueError("name must not be blank")
+    return _file_summary(_call(
+        assets_router.update_asset,
+        asset_id=_uuid(asset_id, "asset_id"),
+        body=AssetUpdate(name=new_name),
+    ))
+
+
+@mcp.tool(
+    description=(
+        "Move a submitted file into a folder of the same project. Pass an empty "
+        "string to move it to the project root. Cross-project moves are refused: "
+        "a folder only ever holds files from its own project."
+    )
+)
+def move_file(asset_id: str, folder_id: str) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files; folder_id — target, "" for root.
+
+    folder_id is required rather than defaulted: an omitted argument that quietly
+    means "root" would move a file out of its folder every time a caller forgot it.
+    """
+    _require_scope(SCOPE_WRITE)
+    aid = _uuid(asset_id, "asset_id")
+    target = _uuid(folder_id, "folder_id") if folder_id else None
+    _call(folders_router.move_asset, asset_id=aid, body=AssetMoveRequest(folder_id=target))
+    return {"asset_id": str(aid), "folder_id": str(target) if target else None}
+
+
+@mcp.tool(
+    description=(
+        "Delete a submitted file. Soft delete — the file is hidden but kept, and "
+        "restore_file brings it back with its versions intact."
+    )
+)
+def delete_file(asset_id: str) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files."""
+    _require_scope(SCOPE_WRITE)
+    aid = _uuid(asset_id, "asset_id")
+    _call(assets_router.delete_asset, asset_id=aid)
+    return {
+        "deleted": str(aid),
+        "note": "Soft delete — call restore_file with this id to undo.",
+    }
+
+
+@mcp.tool(
+    description=(
+        "Undo delete_file. If the folder the file was in has since been deleted "
+        "too, the file comes back at the project root."
+    )
+)
+def restore_file(asset_id: str) -> dict[str, Any]:
+    """Args: asset_id — the deleted file to bring back."""
+    _require_scope(SCOPE_WRITE)
+    aid = _uuid(asset_id, "asset_id")
+    _call(folders_router.restore_asset, asset_id=aid)
+    return {"restored": str(aid)}
+
+
+@mcp.tool(
+    description=(
+        "Approve or reject a submitted file, with an optional note as feedback. "
+        "Applies to the file's newest version. This emails the person who "
+        "uploaded it and raises a notification for them, so only call it when the "
+        "decision is final."
+    )
+)
+def review_file(asset_id: str, decision: str, note: str | None = None) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files; decision — "approve" or
+    "reject"; note — feedback sent with the decision."""
+    _require_scope(SCOPE_WRITE)
+    choice = decision.strip().casefold()
+    if choice not in ("approve", "reject"):
+        raise ValueError('decision must be "approve" or "reject"')
+    aid = _uuid(asset_id, "asset_id")
+    version_id = _latest_version_id(aid)
+    endpoint = (
+        approvals_router.approve_asset if choice == "approve"
+        else approvals_router.reject_asset
+    )
+    _call(endpoint, asset_id=aid, body=ApprovalCreate(version_id=version_id, note=note))
+    return {
+        "asset_id": str(aid),
+        "decision": choice,
+        "version_id": str(version_id),
+        "note": note,
+        "notified": "The uploader was emailed and notified in-app.",
+    }
+
+
+@mcp.tool(
+    description=(
+        "Look inside one folder: its subfolders, the files in it, and the briefs "
+        "filed there. Omit folder_id for the project root. Use this instead of "
+        "listing a whole project when you already know where you are."
+    )
+)
+def list_folder_contents(
+    project_id: str,
+    folder_id: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Args: project_id; folder_id — omit for the root; limit — 1..200 files.
+
+    Every defaulted parameter of list_assets is passed explicitly. Called
+    directly rather than through FastAPI, an omitted argument is left as the
+    Query object itself — which is truthy, so include_failed would silently
+    turn on.
+    """
+    _require_scope(SCOPE_READ)
+    if not 1 <= limit <= 200:
+        raise ValueError("limit must be between 1 and 200")
+    pid = _uuid(project_id, "project_id")
+    tree = _call(folders_router.get_folder_tree, project_id=pid)
+
+    if folder_id:
+        fid = _uuid(folder_id, "folder_id")
+        node = _find_node(tree, fid)
+        if node is None:
+            raise ValueError(f"No folder {folder_id} in project {project_id}")
+        children, scope, here = node.children, str(fid), str(fid)
+    else:
+        children, scope, here = tree, "root", None
+
+    assets = _call(
+        assets_router.list_assets,
+        project_id=pid,
+        include_failed=False,
+        folder_id=scope,
+        tag=None,
+        frame_label=None,
+        exclude_archived=False,
+        skip=0,
+        limit=limit,
+    )
+    links = _call(submissions_router.list_submission_links)
+    briefs = [
+        _brief_summary(l) for l in links
+        if str(l.home_project_id) == str(pid)
+        and (str(l.home_folder_id) if l.home_folder_id else None) == here
+    ]
+
+    return {
+        "folder_id": here,
+        "subfolders": [
+            {"id": str(c.id), "name": c.name, "item_count": c.item_count}
+            for c in children
+        ],
+        "files": [_file_summary(a) for a in assets],
+        "briefs": briefs,
+    }
+
+
+# ── Public share links ───────────────────────────────────────────────────────
+
+# A share link is reachable by anyone holding the URL — no Freeframe account, no
+# membership of the project it points into. That is the point of it, and it is also
+# why every tool below says so out loud: an agent that cannot tell a presigned
+# get_file_url from a standing public link will hand out the wrong one.
+_SHARE_PERMISSIONS = ("view", "comment", "approve")
+
+
+def _share_url(token: str) -> str:
+    return f"{settings.frontend_url}/share/{token}"
+
+
+def _share_permission(permission: str) -> SharePermission:
+    choice = permission.strip().casefold()
+    if choice not in _SHARE_PERMISSIONS:
+        raise ValueError(
+            f'permission must be one of {", ".join(_SHARE_PERMISSIONS)}, got {permission!r}'
+        )
+    return SharePermission(choice)
+
+
+def _share_expiry(expires_in_days: int | None) -> datetime | None:
+    """Days-from-now rather than a timestamp.
+
+    A tool taking an absolute expires_at invites an agent to invent one from a
+    date it believes today to be, and a link that expired before it was created
+    fails only when the recipient opens it.
+    """
+    if expires_in_days is None:
+        return None
+    if expires_in_days < 1:
+        raise ValueError(
+            "expires_in_days must be 1 or more — omit it for a link that never expires"
+        )
+    return datetime.now(timezone.utc) + timedelta(days=expires_in_days)
+
+
+def _share_body(
+    permission: str,
+    allow_download: bool,
+    password: str | None,
+    expires_in_days: int | None,
+    title: str | None,
+) -> dict[str, Any]:
+    return {
+        "permission": _share_permission(permission),
+        "allow_download": allow_download,
+        "password": password or None,
+        "expires_at": _share_expiry(expires_in_days),
+        "title": title,
+    }
+
+
+def _permission_value(perm: Any) -> str | None:
+    return getattr(perm, "value", None) or (str(perm) if perm else None)
+
+
+def _share_summary(link: Any) -> dict[str, Any]:
+    """What the link is and where it points, plus the URL to hand out.
+
+    The password is deliberately not echoed back. The caller passed it in, and
+    repeating it here would copy it into a second tool-call log for no gain.
+    """
+    return {
+        "token": link.token,
+        "url": _share_url(link.token),
+        "title": link.title,
+        "shares": (
+            "file" if link.asset_id
+            else "folder" if link.folder_id
+            else "selection"
+        ),
+        "asset_id": str(link.asset_id) if link.asset_id else None,
+        "folder_id": str(link.folder_id) if link.folder_id else None,
+        "project_id": str(link.project_id) if link.project_id else None,
+        "permission": _permission_value(getattr(link, "permission", None)),
+        "allow_download": link.allow_download,
+        "password_protected": bool(link.password_hash),
+        "is_enabled": link.is_enabled,
+        "expires_at": link.expires_at.isoformat() if link.expires_at else None,
+    }
+
+
+@mcp.tool(
+    description=(
+        "Create a public share link for one submitted file. ANYONE WITH THE URL "
+        "CAN OPEN IT — no account, no project membership — and it stands until "
+        "revoked. Use get_file_url instead for a private, expiring link you fetch "
+        "and use yourself. Defaults to view-only with downloading off; pass "
+        "allow_download to let the recipient save the file."
+    )
+)
+def share_file(
+    asset_id: str,
+    permission: str = "view",
+    allow_download: bool = False,
+    password: str | None = None,
+    expires_in_days: int | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files. permission — "view",
+    "comment" or "approve". allow_download — let the viewer save the file.
+    password — gate the link. expires_in_days — omit for no expiry. title —
+    defaults to the file's name."""
+    _require_scope(SCOPE_WRITE)
+    link = _call(
+        share_router.create_share_link,
+        asset_id=_uuid(asset_id, "asset_id"),
+        body=ShareLinkCreate(
+            **_share_body(permission, allow_download, password, expires_in_days, title)
+        ),
+    )
+    return _share_summary(link)
+
+
+@mcp.tool(
+    description=(
+        "Create a public share link for a whole folder — everything in it, and "
+        "everything in its subfolders. ANYONE WITH THE URL CAN OPEN IT, and the "
+        "link keeps up with the folder: files added later appear to whoever "
+        "already has it. Defaults to view-only with downloading off."
+    )
+)
+def share_folder(
+    folder_id: str,
+    permission: str = "view",
+    allow_download: bool = False,
+    password: str | None = None,
+    expires_in_days: int | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Args: folder_id — from list_folder_contents or create_folder.
+    permission — "view", "comment" or "approve". allow_download — let viewers
+    save files. password — gate the link. expires_in_days — omit for no expiry.
+    title — defaults to the folder's name."""
+    _require_scope(SCOPE_WRITE)
+    link = _call(
+        share_router.create_folder_share_link,
+        folder_id=_uuid(folder_id, "folder_id"),
+        body=ShareLinkCreate(
+            **_share_body(permission, allow_download, password, expires_in_days, title)
+        ),
+    )
+    return _share_summary(link)
+
+
+@mcp.tool(
+    description=(
+        "Create one public share link covering a hand-picked set of files and "
+        "folders — for sending a client three cuts out of ten without exposing "
+        "the rest. ANYONE WITH THE URL CAN OPEN IT. Everything picked must live "
+        "in the one project_id given; a file from elsewhere is refused rather "
+        "than skipped. Defaults to view-only with downloading off."
+    )
+)
+def share_many(
+    project_id: str,
+    asset_ids: list[str] | None = None,
+    folder_ids: list[str] | None = None,
+    permission: str = "view",
+    allow_download: bool = False,
+    password: str | None = None,
+    expires_in_days: int | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Args: project_id — the project everything picked belongs to. asset_ids /
+    folder_ids — what to include; at least one between them. permission —
+    "view", "comment" or "approve". allow_download — let viewers save files.
+    password — gate the link. expires_in_days — omit for no expiry. title —
+    defaults to a count of the items."""
+    _require_scope(SCOPE_WRITE)
+    body = _share_body(permission, allow_download, password, expires_in_days, title)
+    link = _call(
+        share_router.create_multi_share_link,
+        project_id=_uuid(project_id, "project_id"),
+        body=MultiShareCreate(
+            asset_ids=[_uuid(a, "asset_ids") for a in (asset_ids or [])],
+            folder_ids=[_uuid(f, "folder_ids") for f in (folder_ids or [])],
+            **body,
+        ),
+    )
+    return _share_summary(link)
+
+
+@mcp.tool(
+    description=(
+        "List the public share links pointing at one file or one folder, with "
+        "each link's permission, whether downloading is on, whether it has a "
+        "password, and when it expires. Pass exactly one of asset_id or "
+        "folder_id. Call this before sharing again — a file can carry several "
+        "live links, and the one already sent may be the one to fix."
+    )
+)
+def list_shares(asset_id: str | None = None, folder_id: str | None = None) -> list[dict[str, Any]]:
+    """Args: asset_id — a file's links; folder_id — a folder's links. Exactly one."""
+    _require_scope(SCOPE_READ)
+    if bool(asset_id) == bool(folder_id):
+        raise ValueError("Pass exactly one of asset_id or folder_id")
+    if asset_id:
+        links = _call(share_router.list_share_links, asset_id=_uuid(asset_id, "asset_id"))
+    else:
+        links = _call(
+            share_router.list_folder_share_links,
+            folder_id=_uuid(folder_id, "folder_id"),
+        )
+    return [_share_summary(l) for l in links]
+
+
+@mcp.tool(
+    description=(
+        "List every public share link in a project, with how many times each has "
+        "been opened. This is how a link made by share_many is found again — it "
+        "belongs to the project rather than to any one file. Reports less per "
+        "link than list_shares does: for download, password and expiry, look the "
+        "file or folder up there."
+    )
+)
+def list_project_shares(project_id: str, query: str | None = None) -> list[dict[str, Any]]:
+    """Args: project_id; query — match part of a link's title."""
+    _require_scope(SCOPE_READ)
+    links = _call(
+        share_router.list_project_share_links,
+        project_id=_uuid(project_id, "project_id"),
+        search=query,
+    )
+    return [
+        {
+            "token": l.token,
+            "url": _share_url(l.token),
+            "title": l.title,
+            # share_type is what the project listing reports, and it labels a
+            # hand-picked selection "folder". Passed through rather than
+            # corrected here: the admin UI reads the same field.
+            "share_type": l.share_type,
+            "target_name": l.target_name,
+            "permission": _permission_value(l.permission),
+            "is_enabled": l.is_enabled,
+            "view_count": l.view_count,
+            "last_viewed_at": l.last_viewed_at.isoformat() if l.last_viewed_at else None,
+        }
+        for l in links
+    ]
+
+
+@mcp.tool(
+    description=(
+        "Revoke a public share link, by the token from the URL. Whoever holds "
+        "the URL loses access immediately; the file or folder itself is "
+        "untouched. Takes the token — the part after /share/ — not a file or "
+        "folder id."
+    )
+)
+def revoke_share(token: str) -> dict[str, Any]:
+    """Args: token — the trailing segment of the share URL."""
+    _require_scope(SCOPE_WRITE)
+    cleaned = token.strip().rstrip("/").rsplit("/", 1)[-1]
+    if not cleaned:
+        raise ValueError("token must be the part of the share URL after /share/")
+    _call(share_router.revoke_share_link, token=cleaned)
+    return {"token": cleaned, "revoked": True}
+
 # ── Task pipeline ────────────────────────────────────────────────────────────
 
 def _stage_summary(stage: Any) -> dict[str, Any]:
@@ -890,6 +1526,17 @@ def _brief_task_summary(item: Any) -> dict[str, Any]:
         "task_stage_id": str(item.task_stage_id) if item.task_stage_id else None,
         "assignee_id": str(item.assignee_id) if item.assignee_id else None,
         "assignee_name": item.assignee_name,
+        # Who is making it, and how far each of them is. An agent that can
+        # assign work but cannot read its progress can only ever assign more.
+        "editors": [
+            {
+                "id": str(e.id),
+                "name": e.name,
+                "email": e.email,
+                "task_stage_id": str(e.task_stage_id) if e.task_stage_id else None,
+            }
+            for e in (item.editors or [])
+        ],
         "submit_url": item.submit_url,
         "created_at": item.created_at.isoformat() if item.created_at else None,
     }
@@ -919,9 +1566,9 @@ def set_brief_task_stage(link_id: str, task_stage_id: str | None) -> dict[str, A
 @mcp.tool(
     description=(
         "Set the internal owner of a brief — whose desk it sits on — or pass "
-        "null to unassign it. Distinct from the editors who accepted the link, "
-        "which is derived and not settable here. Get a real user id from "
-        "list_assignable_users first. Platform-admin only."
+        "null to unassign it. Distinct from the editors making it — put those on "
+        "with assign_brief_editor. Get a real user id from list_assignable_users "
+        "first. Platform-admin only."
     )
 )
 def assign_brief_owner(link_id: str, assignee_id: str | None) -> dict[str, Any]:
@@ -933,6 +1580,53 @@ def assign_brief_owner(link_id: str, assignee_id: str | None) -> dict[str, Any]:
         link_id=_uuid(link_id, "link_id"),
         body=BriefAssigneeAssign(
             assignee_id=_uuid(assignee_id, "assignee_id") if assignee_id else None
+        ),
+    )
+    return _brief_task_summary(updated)
+
+
+@mcp.tool(
+    description=(
+        "Put an editor on a brief so it appears on their task list and they can "
+        "upload against it. This provisions their private upload folder and "
+        "CANNOT BE UNDONE — there is no unassign, because that folder holds "
+        "their work. Assigning the same person twice is harmless. Get a real "
+        "user id from list_assignable_users first. Platform-admin only."
+    )
+)
+def assign_brief_editor(link_id: str, user_id: str) -> dict[str, Any]:
+    """Args: link_id — the brief to staff. user_id — a user id from
+    list_assignable_users. Cannot be undone."""
+    _require_scope(SCOPE_WRITE)
+    updated = _call(
+        tasks_router.assign_brief_editor,
+        link_id=_uuid(link_id, "link_id"),
+        body=BriefEditorAssign(user_id=_uuid(user_id, "user_id")),
+    )
+    return _brief_task_summary(updated)
+
+
+@mcp.tool(
+    description=(
+        "Move one editor along the pipeline on a brief, or pass null to clear "
+        "their stage. Each editor on a brief carries their own status, and this "
+        "leaves the brief's own status alone. Get a real stage id from "
+        "list_task_stages first. Platform admins may move any editor; anyone "
+        "else only themselves."
+    )
+)
+def set_brief_editor_stage(
+    link_id: str, user_id: str, task_stage_id: str | None
+) -> dict[str, Any]:
+    """Args: link_id — the brief. user_id — which editor on it. task_stage_id —
+    a stage id from list_task_stages, or null to clear their stage."""
+    _require_scope(SCOPE_WRITE)
+    updated = _call(
+        tasks_router.set_brief_editor_task_stage,
+        link_id=_uuid(link_id, "link_id"),
+        user_id=_uuid(user_id, "user_id"),
+        body=TaskStageAssign(
+            task_stage_id=_uuid(task_stage_id, "task_stage_id") if task_stage_id else None
         ),
     )
     return _brief_task_summary(updated)
