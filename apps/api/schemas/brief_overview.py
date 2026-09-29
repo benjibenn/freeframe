@@ -50,3 +50,14 @@ class BriefOverviewRow(BaseModel):
     submission_count: int = 0
     asset_count: int = 0
     submissions: list[BriefOverviewSubmission] = []
+
+
+class BriefLabelsUpdate(BaseModel):
+    """Set persona and/or angle on a batch of briefs.
+
+    None keeps a field as it is; "" clears it. That split lets one call tag the
+    angle on briefs whose persona someone already fixed by hand.
+    """
+    link_ids: list[uuid.UUID]
+    persona_label: Optional[str] = None
+    angle_label: Optional[str] = None
