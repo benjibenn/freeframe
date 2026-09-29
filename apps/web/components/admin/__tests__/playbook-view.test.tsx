@@ -25,7 +25,11 @@ describe('PlaybookView', () => {
       row('a', 'iPhone 17', 'Battery'), row('b', 'iPhone 9', 'Battery', 0), row('c', 'iPhone 17', 'Price'),
     ]} />)
 
-    await user.selectOptions(screen.getByLabelText('Folder'), 'ecom/Phones/Stokora')
+    // Drill in the way an admin does: top level, then each subfolder chip.
+    for (const name of ['ecom', 'Phones', 'Stokora']) {
+      await user.click(screen.getByRole('button', { name: new RegExp(`^${name} \\d+$`) }))
+    }
+    expect(window.location.search).toBe('?folder=ecom%2FPhones%2FStokora')
     // Frugal Phone Buyer × A1: 3 briefs, 2 with files. b has a submission but no files.
     expect(screen.getByRole('button', { name: '2/3' })).toBeInTheDocument()
     await user.selectOptions(screen.getByLabelText('Group'), 'model')
@@ -36,5 +40,13 @@ describe('PlaybookView', () => {
       'iPhone 9\nBattery: https://ff.test/submit/tok-b\n\niPhone 17\nBattery: https://ff.test/submit/tok-a',
     )
     expect(screen.getByRole('status')).toHaveTextContent('Copied 2 links across 2 models.')
+  })
+
+  it('opens the folder named in the URL, so a brand view can be bookmarked', () => {
+    window.history.replaceState(null, '', '/admin/playbook?folder=ecom%2FPhones%2FStokora')
+    render(<PlaybookView origin="https://ff.test" rows={[row('a', 'iPhone 17', 'Battery')]} />)
+
+    expect(screen.getByText('1 briefs · 1 with files · 1 files')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^iPhone 17 1$/ })).toBeInTheDocument()
   })
 })

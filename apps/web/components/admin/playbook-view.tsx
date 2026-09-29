@@ -8,13 +8,13 @@
  * an empty submission is not coverage. Pure props — the page owns fetching.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   copyText,
   group,
   matrix,
   NONE,
-  scopes,
+  subfolders,
   toBriefs,
   type GroupBy,
   type PlaybookBrief,
@@ -29,8 +29,8 @@ const button =
   'h-8 rounded-md border border-border px-2.5 text-sm text-text-primary hover:bg-bg-hover disabled:opacity-50'
 
 export function PlaybookView({ rows, origin }: { rows: PlaybookSource[]; origin: string }) {
-  const folders = useMemo(() => scopes(rows), [rows])
-  const [scope, setScope] = useState('')
+  const [scope, setScopeState] = useState('')
+  const children = useMemo(() => subfolders(rows, scope), [rows, scope])
   const [filters, setFilters] = useState<Filters>({ persona: '', angle: '', files: '' })
   const [groupBy, setGroupBy] = useState<GroupBy | ''>('')
   const [picked, setPicked] = useState<Set<string>>(new Set())
@@ -45,6 +45,24 @@ export function PlaybookView({ rows, origin }: { rows: PlaybookSource[]; origin:
       (!filters.files || (filters.files === 'yes' ? b.files > 0 : b.files === 0)),
   )
   const groups = groupBy ? group(shown, groupBy) : [['', shown] as [string, PlaybookBrief[]]]
+
+  // The folder lives in ?folder= so a brand's view can be bookmarked and shared.
+  useEffect(() => {
+    setScopeState(new URLSearchParams(window.location.search).get('folder') ?? '')
+  }, [])
+
+  function setScope(path: string) {
+    setScopeState(path)
+    setFilters({ persona: '', angle: '', files: '' })
+    setPicked(new Set())
+    setNote('')
+    const url = new URL(window.location.href)
+    if (path) url.searchParams.set('folder', path)
+    else url.searchParams.delete('folder')
+    window.history.replaceState(null, '', url)
+  }
+
+  const crumbs = scope ? scope.split('/') : []
 
   const toggle = (ids: string[], on: boolean) =>
     setPicked((prev) => {
@@ -64,26 +82,37 @@ export function PlaybookView({ rows, origin }: { rows: PlaybookSource[]; origin:
 
   return (
     <div className="flex flex-col gap-5">
-      <label className="flex items-center gap-2 text-sm text-text-secondary">
-        Folder
-        <select
-          aria-label="Folder"
-          className={select}
-          value={scope}
-          onChange={(e) => {
-            setScope(e.target.value)
-            setFilters({ persona: '', angle: '', files: '' })
-            setPicked(new Set())
-          }}
-        >
-          <option value="">Pick a brand folder…</option>
-          {folders.map((f) => (
-            <option key={f.path} value={f.path}>
-              {f.path} ({f.count})
-            </option>
-          ))}
-        </select>
-      </label>
+      <nav aria-label="Folder" className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-1 text-sm">
+          <button type="button" onClick={() => setScope('')}
+            className={scope ? 'text-accent hover:underline' : 'font-medium text-text-primary'}>
+            All folders
+          </button>
+          {crumbs.map((c, i) => {
+            const path = crumbs.slice(0, i + 1).join('/')
+            return (
+              <span key={path} className="flex items-center gap-1">
+                <span className="text-text-tertiary">/</span>
+                <button type="button" onClick={() => setScope(path)}
+                  className={path === scope ? 'font-medium text-text-primary' : 'text-accent hover:underline'}>
+                  {c}
+                </button>
+              </span>
+            )
+          })}
+        </div>
+        {children.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {children.map((f) => (
+              <button key={f.path} type="button" onClick={() => setScope(f.path)}
+                className="rounded-full border border-border px-3 py-1 text-sm text-text-primary hover:bg-bg-hover">
+                {f.name} <span className="text-xs text-text-tertiary">{f.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {!scope && <p className="text-sm text-text-tertiary">Open a folder to see its playbook.</p>}
+      </nav>
 
       {scope && (
         <>

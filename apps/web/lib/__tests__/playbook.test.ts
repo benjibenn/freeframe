@@ -4,7 +4,7 @@
  * nobody delivered files for.
  */
 import { describe, it, expect } from 'vitest'
-import { copyText, group, matrix, NO_MODEL, parseTitle, scopes, toBriefs, type PlaybookSource } from '../playbook'
+import { copyText, group, matrix, NO_MODEL, parseTitle, scopes, subfolders, toBriefs, type PlaybookSource } from '../playbook'
 
 const row = (id: string, path: string, title: string, over: Partial<PlaybookSource> = {}): PlaybookSource => ({
   id, token: `tok-${id}`, title, home_path: path, persona_label: null, angle_label: null,
@@ -33,6 +33,14 @@ describe('playbook', () => {
     expect(b.find((x) => x.id === 'd')!.model).toBe(NO_MODEL)
     expect(b.find((x) => x.id === 'a')!.url).toBe('https://ff.test/submit/tok-a')
     expect(scopes(ROWS).find((s) => s.path === 'ecom/Phones/Stokora')!.count).toBe(4)
+  })
+
+  it('lists only the folders one level down, so each brand is one click', () => {
+    expect(subfolders(ROWS, '').map((f) => f.name)).toEqual(['ecom'])
+    expect(subfolders(ROWS, 'ecom/Phones')).toEqual([
+      { path: 'ecom/Phones/Joolabs', name: 'Joolabs', count: 1 },
+      { path: 'ecom/Phones/Stokora', name: 'Stokora', count: 4 },
+    ])
   })
 
   it('groups by model in natural order, unfiled last', () => {

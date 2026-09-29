@@ -69,6 +69,14 @@ export function scopes(rows: PlaybookSource[]): { path: string; count: number }[
   return Array.from(counts).map(([path, count]) => ({ path, count })).sort((a, b) => natural(a.path, b.path))
 }
 
+/** The folders one level below `scope` ('' = the top level), each with its brief count. */
+export function subfolders(rows: PlaybookSource[], scope: string): { path: string; name: string; count: number }[] {
+  const depth = scope ? scope.split('/').length + 1 : 1
+  return scopes(rows)
+    .filter((f) => f.path.split('/').length === depth && (!scope || f.path.startsWith(`${scope}/`)))
+    .map((f) => ({ ...f, name: f.path.split('/').pop()! }))
+}
+
 export function toBriefs(rows: PlaybookSource[], scope: string, origin: string): PlaybookBrief[] {
   return rows
     .filter((r) => inScope(r.home_path, scope))
