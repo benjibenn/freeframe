@@ -17,7 +17,7 @@ ContextVar and the app stays safe to run behind more than one worker.
 import secrets
 import uuid
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -29,11 +29,13 @@ from ..database import SessionLocal
 from ..middleware.api_key import resolve_api_key_user
 from ..services import mcp_oauth
 from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE, SCOPE_USERS_ADMIN
+from ..models.share import SharePermission
 from ..models.user import User
 from ..schemas.approval import ApprovalCreate
 from ..schemas.asset import AssetUpdate
 from ..schemas.auth import AdminSetPasswordRequest, InviteRequest
 from ..schemas.folder import AssetMoveRequest, FolderCreate, FolderUpdate
+from ..schemas.share import MultiShareCreate, ShareLinkCreate
 from ..schemas.submission import (
     BriefJsonUpdate,
     BulkDeleteRequest,
@@ -47,6 +49,7 @@ from . import approvals as approvals_router
 from . import assets as assets_router
 from . import folders as folders_router
 from . import projects as projects_router
+from . import share as share_router
 from . import submissions as submissions_router
 from . import tasks as tasks_router
 from . import users as users_router
@@ -104,7 +107,8 @@ mcp = FastMCP(
         "Folders to file briefs into are made with create_folder, which takes a "
         "path and creates whatever part of it is missing. The work editors send "
         "back is reached with list_submitted_files, and every file tool below "
-        "takes an asset_id from it."
+        "takes an asset_id from it. To send work outside Freeframe, share_file "
+        "and share_folder mint a public link anyone can open."
     ),
     stateless_http=True,
     json_response=True,
@@ -1182,6 +1186,268 @@ def list_folder_contents(
         "briefs": briefs,
     }
 
+
+# ── Public share links ───────────────────────────────────────────────────────
+
+# A share link is reachable by anyone holding the URL — no Freeframe account, no
+# membership of the project it points into. That is the point of it, and it is also
+# why every tool below says so out loud: an agent that cannot tell a presigned
+# get_file_url from a standing public link will hand out the wrong one.
+_SHARE_PERMISSIONS = ("view", "comment", "approve")
+
+
+def _share_url(token: str) -> str:
+    return f"{settings.frontend_url}/share/{token}"
+
+
+def _share_permission(permission: str) -> SharePermission:
+    choice = permission.strip().casefold()
+    if choice not in _SHARE_PERMISSIONS:
+        raise ValueError(
+            f'permission must be one of {", ".join(_SHARE_PERMISSIONS)}, got {permission!r}'
+        )
+    return SharePermission(choice)
+
+
+def _share_expiry(expires_in_days: int | None) -> datetime | None:
+    """Days-from-now rather than a timestamp.
+
+    A tool taking an absolute expires_at invites an agent to invent one from a
+    date it believes today to be, and a link that expired before it was created
+    fails only when the recipient opens it.
+    """
+    if expires_in_days is None:
+        return None
+    if expires_in_days < 1:
+        raise ValueError(
+            "expires_in_days must be 1 or more — omit it for a link that never expires"
+        )
+    return datetime.now(timezone.utc) + timedelta(days=expires_in_days)
+
+
+def _share_body(
+    permission: str,
+    allow_download: bool,
+    password: str | None,
+    expires_in_days: int | None,
+    title: str | None,
+) -> dict[str, Any]:
+    return {
+        "permission": _share_permission(permission),
+        "allow_download": allow_download,
+        "password": password or None,
+        "expires_at": _share_expiry(expires_in_days),
+        "title": title,
+    }
+
+
+def _permission_value(perm: Any) -> str | None:
+    return getattr(perm, "value", None) or (str(perm) if perm else None)
+
+
+def _share_summary(link: Any) -> dict[str, Any]:
+    """What the link is and where it points, plus the URL to hand out.
+
+    The password is deliberately not echoed back. The caller passed it in, and
+    repeating it here would copy it into a second tool-call log for no gain.
+    """
+    return {
+        "token": link.token,
+        "url": _share_url(link.token),
+        "title": link.title,
+        "shares": (
+            "file" if link.asset_id
+            else "folder" if link.folder_id
+            else "selection"
+        ),
+        "asset_id": str(link.asset_id) if link.asset_id else None,
+        "folder_id": str(link.folder_id) if link.folder_id else None,
+        "project_id": str(link.project_id) if link.project_id else None,
+        "permission": _permission_value(getattr(link, "permission", None)),
+        "allow_download": link.allow_download,
+        "password_protected": bool(link.password_hash),
+        "is_enabled": link.is_enabled,
+        "expires_at": link.expires_at.isoformat() if link.expires_at else None,
+    }
+
+
+@mcp.tool(
+    description=(
+        "Create a public share link for one submitted file. ANYONE WITH THE URL "
+        "CAN OPEN IT — no account, no project membership — and it stands until "
+        "revoked. Use get_file_url instead for a private, expiring link you fetch "
+        "and use yourself. Defaults to view-only with downloading off; pass "
+        "allow_download to let the recipient save the file."
+    )
+)
+def share_file(
+    asset_id: str,
+    permission: str = "view",
+    allow_download: bool = False,
+    password: str | None = None,
+    expires_in_days: int | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Args: asset_id — from list_submitted_files. permission — "view",
+    "comment" or "approve". allow_download — let the viewer save the file.
+    password — gate the link. expires_in_days — omit for no expiry. title —
+    defaults to the file's name."""
+    _require_scope(SCOPE_WRITE)
+    link = _call(
+        share_router.create_share_link,
+        asset_id=_uuid(asset_id, "asset_id"),
+        body=ShareLinkCreate(
+            **_share_body(permission, allow_download, password, expires_in_days, title)
+        ),
+    )
+    return _share_summary(link)
+
+
+@mcp.tool(
+    description=(
+        "Create a public share link for a whole folder — everything in it, and "
+        "everything in its subfolders. ANYONE WITH THE URL CAN OPEN IT, and the "
+        "link keeps up with the folder: files added later appear to whoever "
+        "already has it. Defaults to view-only with downloading off."
+    )
+)
+def share_folder(
+    folder_id: str,
+    permission: str = "view",
+    allow_download: bool = False,
+    password: str | None = None,
+    expires_in_days: int | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Args: folder_id — from list_folder_contents or create_folder.
+    permission — "view", "comment" or "approve". allow_download — let viewers
+    save files. password — gate the link. expires_in_days — omit for no expiry.
+    title — defaults to the folder's name."""
+    _require_scope(SCOPE_WRITE)
+    link = _call(
+        share_router.create_folder_share_link,
+        folder_id=_uuid(folder_id, "folder_id"),
+        body=ShareLinkCreate(
+            **_share_body(permission, allow_download, password, expires_in_days, title)
+        ),
+    )
+    return _share_summary(link)
+
+
+@mcp.tool(
+    description=(
+        "Create one public share link covering a hand-picked set of files and "
+        "folders — for sending a client three cuts out of ten without exposing "
+        "the rest. ANYONE WITH THE URL CAN OPEN IT. Everything picked must live "
+        "in the one project_id given; a file from elsewhere is refused rather "
+        "than skipped. Defaults to view-only with downloading off."
+    )
+)
+def share_many(
+    project_id: str,
+    asset_ids: list[str] | None = None,
+    folder_ids: list[str] | None = None,
+    permission: str = "view",
+    allow_download: bool = False,
+    password: str | None = None,
+    expires_in_days: int | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Args: project_id — the project everything picked belongs to. asset_ids /
+    folder_ids — what to include; at least one between them. permission —
+    "view", "comment" or "approve". allow_download — let viewers save files.
+    password — gate the link. expires_in_days — omit for no expiry. title —
+    defaults to a count of the items."""
+    _require_scope(SCOPE_WRITE)
+    body = _share_body(permission, allow_download, password, expires_in_days, title)
+    link = _call(
+        share_router.create_multi_share_link,
+        project_id=_uuid(project_id, "project_id"),
+        body=MultiShareCreate(
+            asset_ids=[_uuid(a, "asset_ids") for a in (asset_ids or [])],
+            folder_ids=[_uuid(f, "folder_ids") for f in (folder_ids or [])],
+            **body,
+        ),
+    )
+    return _share_summary(link)
+
+
+@mcp.tool(
+    description=(
+        "List the public share links pointing at one file or one folder, with "
+        "each link's permission, whether downloading is on, whether it has a "
+        "password, and when it expires. Pass exactly one of asset_id or "
+        "folder_id. Call this before sharing again — a file can carry several "
+        "live links, and the one already sent may be the one to fix."
+    )
+)
+def list_shares(asset_id: str | None = None, folder_id: str | None = None) -> list[dict[str, Any]]:
+    """Args: asset_id — a file's links; folder_id — a folder's links. Exactly one."""
+    _require_scope(SCOPE_READ)
+    if bool(asset_id) == bool(folder_id):
+        raise ValueError("Pass exactly one of asset_id or folder_id")
+    if asset_id:
+        links = _call(share_router.list_share_links, asset_id=_uuid(asset_id, "asset_id"))
+    else:
+        links = _call(
+            share_router.list_folder_share_links,
+            folder_id=_uuid(folder_id, "folder_id"),
+        )
+    return [_share_summary(l) for l in links]
+
+
+@mcp.tool(
+    description=(
+        "List every public share link in a project, with how many times each has "
+        "been opened. This is how a link made by share_many is found again — it "
+        "belongs to the project rather than to any one file. Reports less per "
+        "link than list_shares does: for download, password and expiry, look the "
+        "file or folder up there."
+    )
+)
+def list_project_shares(project_id: str, query: str | None = None) -> list[dict[str, Any]]:
+    """Args: project_id; query — match part of a link's title."""
+    _require_scope(SCOPE_READ)
+    links = _call(
+        share_router.list_project_share_links,
+        project_id=_uuid(project_id, "project_id"),
+        search=query,
+    )
+    return [
+        {
+            "token": l.token,
+            "url": _share_url(l.token),
+            "title": l.title,
+            # share_type is what the project listing reports, and it labels a
+            # hand-picked selection "folder". Passed through rather than
+            # corrected here: the admin UI reads the same field.
+            "share_type": l.share_type,
+            "target_name": l.target_name,
+            "permission": _permission_value(l.permission),
+            "is_enabled": l.is_enabled,
+            "view_count": l.view_count,
+            "last_viewed_at": l.last_viewed_at.isoformat() if l.last_viewed_at else None,
+        }
+        for l in links
+    ]
+
+
+@mcp.tool(
+    description=(
+        "Revoke a public share link, by the token from the URL. Whoever holds "
+        "the URL loses access immediately; the file or folder itself is "
+        "untouched. Takes the token — the part after /share/ — not a file or "
+        "folder id."
+    )
+)
+def revoke_share(token: str) -> dict[str, Any]:
+    """Args: token — the trailing segment of the share URL."""
+    _require_scope(SCOPE_WRITE)
+    cleaned = token.strip().rstrip("/").rsplit("/", 1)[-1]
+    if not cleaned:
+        raise ValueError("token must be the part of the share URL after /share/")
+    _call(share_router.revoke_share_link, token=cleaned)
+    return {"token": cleaned, "revoked": True}
 
 # ── Task pipeline ────────────────────────────────────────────────────────────
 
