@@ -190,28 +190,28 @@ export function Sidebar({ collapsed: collapsedProp, onToggle, mobileOpen = false
           </Link>
         )}
 
-        {/* Task list — admins & sub-admins only */}
-        {isPlatformAdmin && (
-          <Link
-            href="/tasks"
-            onClick={() => setNotifOpen(false)}
-            className={cn(
-              'group relative flex items-center rounded-md transition-colors duration-100',
-              collapsed ? 'justify-center h-9 w-9 mx-auto' : 'gap-2.5 px-2.5 h-9',
-              pathname.startsWith('/tasks')
-                ? 'bg-bg-hover text-text-primary'
-                : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
-            )}
-            title={collapsed ? 'Tasks' : undefined}
-          >
-            <ListChecks className="h-[18px] w-[18px] shrink-0" strokeWidth={pathname.startsWith('/tasks') ? 2 : 1.5} />
-            {!collapsed && (
-              <span className={cn('text-[13px]', pathname.startsWith('/tasks') && 'font-medium')}>
-                Tasks
-              </span>
-            )}
-          </Link>
-        )}
+        {/* Task list — everyone. Not gated like Activity: the page and
+            /task-board scope a non-admin to the briefs they own or edit, and
+            that is where an editor moves their own status. */}
+        <Link
+          href="/tasks"
+          onClick={() => setNotifOpen(false)}
+          className={cn(
+            'group relative flex items-center rounded-md transition-colors duration-100',
+            collapsed ? 'justify-center h-9 w-9 mx-auto' : 'gap-2.5 px-2.5 h-9',
+            pathname.startsWith('/tasks')
+              ? 'bg-bg-hover text-text-primary'
+              : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
+          )}
+          title={collapsed ? 'Tasks' : undefined}
+        >
+          <ListChecks className="h-[18px] w-[18px] shrink-0" strokeWidth={pathname.startsWith('/tasks') ? 2 : 1.5} />
+          {!collapsed && (
+            <span className={cn('text-[13px]', pathname.startsWith('/tasks') && 'font-medium')}>
+              Tasks
+            </span>
+          )}
+        </Link>
 
         {/* Brief overview — superadmins only (not sub-admins) */}
         {isSuperAdmin && (
