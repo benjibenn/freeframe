@@ -108,3 +108,55 @@ def test_mcp_tool_passes_keep_and_clear_through(mock_db):
     body = fn.call_args.kwargs["body"]
     assert out == {"updated": 1}
     assert body.persona_label is None and body.angle_label == ""
+
+
+# ── Labels at creation ────────────────────────────────────────────────────────
+
+def test_creating_a_brief_tags_it_in_the_same_write(mock_db):
+    """Create carries the labels rather than needing a second PATCH.
+
+    PATCH /labels is superadmin-only, but creating a brief is open to any
+    platform admin — so for a subadmin a second call would 403 and leave the
+    brief in the matrix with no angle at all. One write also means the coverage
+    matrix is never briefly wrong.
+    """
+    from apps.api.routers import submissions
+    from apps.api.schemas.submission import SubmissionLinkCreate
+
+    body = SubmissionLinkCreate(
+        title="20260910 - iPhone 17 - Frugal Phone Buyer - Fear - Battery - Static",
+        home_project_id=uuid.uuid4(),
+        persona_label="Frugal Phone Buyer",
+        angle_label="A28 Battery anxiety",
+    )
+    with patch.object(submissions, "_resolve_home", return_value=(MagicMock(), None)), \
+         patch.object(submissions, "_apply_home"), \
+         patch.object(submissions.SubmissionLinkResponse, "model_validate", return_value=MagicMock()):
+        submissions.create_submission_link(
+            body=body, db=mock_db, current_user=_user(is_superadmin=False),
+        )
+
+    added = mock_db.add.call_args.args[0]
+    assert added.persona_label == "Frugal Phone Buyer"
+    assert added.angle_label == "A28 Battery anxiety"
+
+
+def test_creating_without_labels_leaves_them_unset(mock_db):
+    """Blank is not a label: "" would show as a persona named empty string in the
+    matrix instead of falling back to the title's own persona slot."""
+    from apps.api.routers import submissions
+    from apps.api.schemas.submission import SubmissionLinkCreate
+
+    body = SubmissionLinkCreate(
+        title="X", home_project_id=uuid.uuid4(), persona_label="  ", angle_label=None,
+    )
+    with patch.object(submissions, "_resolve_home", return_value=(MagicMock(), None)), \
+         patch.object(submissions, "_apply_home"), \
+         patch.object(submissions.SubmissionLinkResponse, "model_validate", return_value=MagicMock()):
+        submissions.create_submission_link(
+            body=body, db=mock_db, current_user=_user(),
+        )
+
+    added = mock_db.add.call_args.args[0]
+    assert added.persona_label is None
+    assert added.angle_label is None

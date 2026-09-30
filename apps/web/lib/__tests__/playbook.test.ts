@@ -4,7 +4,10 @@
  * nobody delivered files for.
  */
 import { describe, it, expect } from 'vitest'
-import { copyText, group, matrix, NO_MODEL, parseTitle, scopes, subfolders, toBriefs, type PlaybookSource } from '../playbook'
+import {
+  buildTitle, copyText, group, matrix, NO_MODEL, parseTitle, scopes, subfolders, titleProblem,
+  todayStamp, toBriefs, type PlaybookSource, type TitleParts,
+} from '../playbook'
 
 const row = (id: string, path: string, title: string, over: Partial<PlaybookSource> = {}): PlaybookSource => ({
   id, token: `tok-${id}`, title, home_path: path, persona_label: null, angle_label: null,
@@ -67,5 +70,49 @@ describe('playbook', () => {
     const m = matrix(briefs())
     expect(m.cell('Frugal Phone Buyer', 'A1')).toEqual({ total: 1, withFiles: 0 })
     expect(m.angles).toEqual(['A1', '—'])
+  })
+})
+
+/**
+ * buildTitle is parseTitle's inverse, and the two must not drift: the create form
+ * writes titles with one and the playbook reads them with the other. A round trip
+ * is the only assertion that fails when either side changes alone.
+ */
+describe('buildTitle', () => {
+  const parts: TitleParts = {
+    date: '20260910', sku: 'iPhone 17 Pro Max', persona: 'Frugal Phone Buyer',
+    lens: 'Fear', hook: 'Battery dies by 3pm', format: 'Static',
+  }
+
+  it('writes a title parseTitle reads back unchanged', () => {
+    const title = buildTitle(parts)
+    expect(title).toBe('20260910 - iPhone 17 Pro Max - Frugal Phone Buyer - Fear - Battery dies by 3pm - Static')
+    expect(parseTitle(title)).toEqual({
+      persona: 'Frugal Phone Buyer', lens: 'Fear', hook: 'Battery dies by 3pm', format: 'Static',
+    })
+  })
+
+  it('round-trips a hook that contains the separator', () => {
+    const title = buildTitle({ ...parts, hook: 'Cracked screen - again' })
+    expect(parseTitle(title).hook).toBe('Cracked screen - again')
+    expect(parseTitle(title).lens).toBe('Fear')
+  })
+
+  it('stamps today when no date is given', () => {
+    expect(buildTitle({ ...parts, date: '' }).startsWith(`${todayStamp()} - `)).toBe(true)
+    expect(todayStamp()).toMatch(/^\d{8}$/)
+  })
+
+  it('names the part that is missing, so the form can say which box to fill', () => {
+    expect(titleProblem({ ...parts, lens: '  ' })).toMatch(/lens/i)
+    expect(titleProblem({ ...parts, hook: '' })).toMatch(/hook/i)
+    expect(titleProblem(parts)).toBeNull()
+  })
+
+  it('refuses the separator in any part but the hook', () => {
+    // Anywhere else it shifts every later slot: the lens would be read as the hook.
+    expect(titleProblem({ ...parts, persona: 'Frugal - Buyer' })).toMatch(/persona/i)
+    expect(titleProblem({ ...parts, sku: 'iPhone - 17' })).toMatch(/sku/i)
+    expect(titleProblem({ ...parts, hook: 'Cracked - again' })).toBeNull()
   })
 })

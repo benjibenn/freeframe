@@ -37,6 +37,7 @@ from ..schemas.auth import AdminSetPasswordRequest, InviteRequest
 from ..schemas.brief_overview import BriefLabelsUpdate
 from ..schemas.folder import AssetMoveRequest, FolderCreate, FolderUpdate
 from ..schemas.share import MultiShareCreate, ShareLinkCreate
+from ..services.brief_title import build_title
 from ..schemas.submission import (
     BriefJsonUpdate,
     BulkDeleteRequest,
@@ -485,35 +486,87 @@ def set_brief_json(link_id: str, brief_json: dict[str, Any] | None) -> dict[str,
 
 # ── Lifecycle ────────────────────────────────────────────────────────────────
 
+_TITLE_CONVENTION = "YYYYMMDD - <sku> - <Persona> - <Lens> - <Hook> - <Format>."
+
+# Parts that exist only to build the title. Persona is not among them: it is also
+# a label, so it stays meaningful alongside a whole title.
+_TITLE_PARTS = ("sku", "lens", "hook", "ad_format", "date")
+
+
+def _title(*, title, sku, persona, lens, hook, ad_format, date) -> str:
+    """The brief's title: the one given, or one built from its parts.
+
+    Refusing a title together with its parts is deliberate. Ignoring the parts
+    would create a brief whose title and whose labels disagree about what it is,
+    and honouring them would silently overwrite the title the caller asked for.
+    """
+    given = [n for n, v in zip(_TITLE_PARTS, (sku, lens, hook, ad_format, date)) if v]
+    if title and title.strip():
+        if given:
+            raise ValueError(
+                "title is already a whole title — drop " + ", ".join(given)
+                + ", or drop title and let them build one"
+            )
+        return title
+    if not given and not persona:
+        raise ValueError(
+            "pass title, or the parts to build one: sku, persona, lens, hook, ad_format "
+            f"({_TITLE_CONVENTION})"
+        )
+    return build_title(
+        sku=sku, persona=persona, lens=lens, hook=hook, ad_format=ad_format, date_str=date,
+    )
+
+
 @mcp.tool(
     description=(
         "Create a new video request brief and return its public submit URL. "
         "home_project_id is required — get one from list_destinations. Omit "
-        "home_folder_id to file the brief at the project root. Pass brief_json "
-        "to attach the structured brief in the same call. brief_json: " + _BRIEF_SHAPE
+        "home_folder_id to file the brief at the project root. "
+        "Title it by passing sku, persona, lens, hook and ad_format and the "
+        "convention is applied for you: " + _TITLE_CONVENTION + " Pass angle too "
+        "— it is not part of the title and the playbook's coverage matrix counts "
+        "it, so a brief without one is uncounted. A whole title instead of the "
+        "parts is accepted for a brief that does not follow the convention. Pass "
+        "brief_json to attach the structured brief in the same call. brief_json: "
+        + _BRIEF_SHAPE
     )
 )
 def create_brief(
-    title: str,
     home_project_id: str,
+    title: str | None = None,
+    sku: str | None = None,
+    persona: str | None = None,
+    lens: str | None = None,
+    hook: str | None = None,
+    ad_format: str | None = None,
+    date: str | None = None,
+    angle: str | None = None,
     home_folder_id: str | None = None,
     instructions: str | None = None,
     expires_at: str | None = None,
     brief_json: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Args: expires_at — optional ISO 8601 timestamp after which the link stops accepting work."""
+    """Args: date — YYYYMMDD, today unless given; expires_at — optional ISO 8601
+    timestamp after which the link stops accepting work."""
     _require_scope(SCOPE_WRITE)
-    # Validated before the request exists. The underlying API has no way to create
-    # a request and attach a brief in one write, so a brief rejected afterwards
-    # would strand an empty request with a live submit URL.
+    # Everything below is validated before the request exists. The underlying API
+    # has no way to create a request and attach a brief in one write, so anything
+    # rejected afterwards would strand an empty request with a live submit URL.
+    final_title = _title(
+        title=title, sku=sku, persona=persona, lens=lens, hook=hook,
+        ad_format=ad_format, date=date,
+    )
     checked = _brief(brief_json) if brief_json is not None else None
 
     body = SubmissionLinkCreate(
-        title=title,
+        title=final_title,
         instructions=instructions,
         home_project_id=_uuid(home_project_id, "home_project_id"),
         home_folder_id=_uuid(home_folder_id, "home_folder_id") if home_folder_id else None,
         expires_at=datetime.fromisoformat(expires_at) if expires_at else None,
+        persona_label=persona,
+        angle_label=angle,
     )
     created = _call(submissions_router.create_submission_link, body=body)
     if checked is None:
