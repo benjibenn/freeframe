@@ -178,6 +178,65 @@ def test_assigning_the_briefs_own_creator_is_allowed(mock_db):
     prov.assert_called_once()
 
 
+# ── Unassigning ──────────────────────────────────────────────────────────────
+
+def _submission():
+    s = MagicMock()
+    s.project_id = uuid.uuid4()
+    return s
+
+
+def test_a_plain_editor_cannot_unassign_anyone(mock_db):
+    """Taking work off someone is an admin decision, same as handing it out."""
+    client = _client(mock_db, _user())
+    r = client.delete(f"/submission-links/{uuid.uuid4()}/editors/{uuid.uuid4()}")
+    assert r.status_code == 403
+    mock_db.commit.assert_not_called()
+
+
+def test_unassigning_someone_not_on_the_brief_is_a_404(mock_db):
+    link = _link()
+    mock_db.first.side_effect = [link, None]  # link found, no submissions row
+    client = _client(mock_db, _user(is_superadmin=True, name="Admin"))
+    r = client.delete(f"/submission-links/{link.id}/editors/{uuid.uuid4()}")
+    assert r.status_code == 404
+    mock_db.delete.assert_not_called()
+    mock_db.commit.assert_not_called()
+
+
+def test_an_editor_who_has_uploaded_cannot_be_unassigned(mock_db):
+    """Their project holds their work. Removing the assignment would strand or
+    destroy it, which is the one outcome this endpoint exists to never cause."""
+    link = _link()
+    submission = _submission()
+    # link, submission, then the asset probe finds a file (deleted or not).
+    mock_db.first.side_effect = [link, submission, (uuid.uuid4(),)]
+    client = _client(mock_db, _user(is_superadmin=True, name="Admin"))
+    r = client.delete(f"/submission-links/{link.id}/editors/{uuid.uuid4()}")
+    assert r.status_code == 409
+    mock_db.delete.assert_not_called()
+    mock_db.update.assert_not_called()
+    mock_db.commit.assert_not_called()
+
+
+def test_unassigning_an_editor_with_no_uploads_removes_them_and_their_empty_folder(mock_db):
+    """The submissions row must go, not just the project: it is what lists them
+    on the brief, and it would block assigning the same person again."""
+    link = _link()
+    link.reference_project_id = None
+    submission = _submission()
+    project = MagicMock()
+    project.deleted_at = None
+    mock_db.first.side_effect = [link, submission, None, project]
+    mock_db.all.return_value = []
+    client = _client(mock_db, _user(is_superadmin=True, name="Admin"))
+    r = client.delete(f"/submission-links/{link.id}/editors/{uuid.uuid4()}")
+    assert r.status_code == 200
+    mock_db.delete.assert_any_call(submission)
+    assert project.deleted_at is not None
+    mock_db.commit.assert_called_once()
+
+
 # ── Moving an editor's status ────────────────────────────────────────────────
 
 def test_an_editor_cannot_move_a_co_editors_status(mock_db):

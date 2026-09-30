@@ -1647,20 +1647,42 @@ def assign_brief_owner(link_id: str, assignee_id: str | None) -> dict[str, Any]:
 @mcp.tool(
     description=(
         "Put an editor on a brief so it appears on their task list and they can "
-        "upload against it. This provisions their private upload folder and "
-        "CANNOT BE UNDONE — there is no unassign, because that folder holds "
-        "their work. Assigning the same person twice is harmless. Get a real "
-        "user id from list_assignable_users first. Platform-admin only."
+        "upload against it. This provisions their private upload folder. Once "
+        "they upload a file it CANNOT BE UNDONE, because that folder holds their "
+        "work; before that, unassign_brief_editor takes them off. Assigning the "
+        "same person twice is harmless. Get a real user id from "
+        "list_assignable_users first. Platform-admin only."
     )
 )
 def assign_brief_editor(link_id: str, user_id: str) -> dict[str, Any]:
     """Args: link_id — the brief to staff. user_id — a user id from
-    list_assignable_users. Cannot be undone."""
+    list_assignable_users. Cannot be undone once they upload."""
     _require_scope(SCOPE_WRITE)
     updated = _call(
         tasks_router.assign_brief_editor,
         link_id=_uuid(link_id, "link_id"),
         body=BriefEditorAssign(user_id=_uuid(user_id, "user_id")),
+    )
+    return _brief_task_summary(updated)
+
+
+@mcp.tool(
+    description=(
+        "Take an editor off a brief. Only works while they have uploaded nothing "
+        "to it (deleted files count too) — once any file is in their upload "
+        "folder this refuses, because that folder holds their work. Removes "
+        "their empty upload folder, so the brief drops off their task list. "
+        "Platform-admin only."
+    )
+)
+def unassign_brief_editor(link_id: str, user_id: str) -> dict[str, Any]:
+    """Args: link_id — the brief. user_id — the editor to remove, as listed in
+    the brief's editors."""
+    _require_scope(SCOPE_WRITE)
+    updated = _call(
+        tasks_router.unassign_brief_editor,
+        link_id=_uuid(link_id, "link_id"),
+        user_id=_uuid(user_id, "user_id"),
     )
     return _brief_task_summary(updated)
 
