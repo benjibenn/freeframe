@@ -13,6 +13,12 @@ class SubmissionLinkCreate(BaseModel):
     home_project_id: uuid.UUID
     home_folder_id: Optional[uuid.UUID] = None
     expires_at: Optional[datetime] = None
+    # The playbook's two coverage axes. Set here rather than by a follow-up PATCH
+    # /brief-overview/labels, which is superadmin-only: creating a brief is open to
+    # any platform admin, so a subadmin's second call would 403 and leave the brief
+    # with no angle. Angle in particular exists nowhere in the title convention.
+    persona_label: Optional[str] = None
+    angle_label: Optional[str] = None
 
 
 class DuplicateLinkRequest(BaseModel):

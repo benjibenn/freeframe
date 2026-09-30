@@ -26,6 +26,13 @@ import { Input } from "@/components/ui/input";
 import { ProjectCard } from "@/components/projects/project-card";
 import { RequestCard, type VideoRequest } from "@/components/projects/request-card";
 import { HomePicker, type HomeValue } from "@/components/projects/home-picker";
+import {
+  BriefTitleFields,
+  briefTitleOf,
+  briefTitleProblem,
+  EMPTY_BRIEF_TITLE,
+  type BriefTitleValue,
+} from "@/components/shared/brief-title-fields";
 import { RequestRows } from "@/components/projects/request-rows";
 import { DuplicateRequestDialog } from "@/components/projects/duplicate-request-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -289,8 +296,11 @@ export default function ProjectsPage() {
     projectId: null,
     folderId: null,
   });
+  // The title's slots are held separately because the playbook reads them by
+  // position out of the finished name. See components/shared/brief-title-fields.
+  const [requestTitle, setRequestTitle] =
+    React.useState<BriefTitleValue>(EMPTY_BRIEF_TITLE);
   const [requestForm, setRequestForm] = React.useState({
-    title: "",
     instructions: "",
   });
 
@@ -363,8 +373,9 @@ export default function ProjectsPage() {
 
   const handleCreateRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!requestForm.title.trim()) {
-      setRequestError("Request name is required.");
+    const titleFault = briefTitleProblem(requestTitle);
+    if (titleFault) {
+      setRequestError(titleFault);
       return;
     }
     if (!requestHome.projectId) {
@@ -375,14 +386,19 @@ export default function ProjectsPage() {
     setRequestError("");
     try {
       const created = await api.post<{ id: string }>("/submission-links", {
-        title: requestForm.title.trim(),
+        title: briefTitleOf(requestTitle),
         instructions: requestForm.instructions.trim() || null,
         home_project_id: requestHome.projectId,
         home_folder_id: requestHome.folderId,
+        persona_label: requestTitle.useConvention
+          ? requestTitle.persona.trim() || null
+          : null,
+        angle_label: requestTitle.angle.trim() || null,
       });
       await mutateRequests();
       setRequestDialogOpen(false);
-      setRequestForm({ title: "", instructions: "" });
+      setRequestTitle(EMPTY_BRIEF_TITLE);
+      setRequestForm({ instructions: "" });
       setRequestHome({ projectId: null, folderId: null });
       router.push(`/projects/requests/${created.id}`);
     } catch (err) {
@@ -607,7 +623,8 @@ export default function ProjectsPage() {
             onOpenChange={(open) => {
               setRequestDialogOpen(open);
               if (!open) {
-                setRequestForm({ title: "", instructions: "" });
+                setRequestTitle(EMPTY_BRIEF_TITLE);
+                setRequestForm({ instructions: "" });
                 setRequestHome({ projectId: null, folderId: null });
                 setRequestError("");
               }
@@ -629,14 +646,9 @@ export default function ProjectsPage() {
                 </Dialog.Description>
 
                 <form onSubmit={handleCreateRequest} className="mt-5 space-y-4">
-                  <Input
-                    label="Request name"
-                    placeholder="e.g. P01-B03-Girls who want to travel"
-                    value={requestForm.title}
-                    onChange={(e) =>
-                      setRequestForm((f) => ({ ...f, title: e.target.value }))
-                    }
-                    required
+                  <BriefTitleFields
+                    value={requestTitle}
+                    onChange={setRequestTitle}
                   />
 
                   <div className="flex flex-col gap-1.5">

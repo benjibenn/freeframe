@@ -1049,3 +1049,92 @@ def test_the_mcp_endpoint_answers_with_or_without_a_trailing_slash():
                 r = c.post(path, json=body, headers=headers, follow_redirects=False)
                 # 401 is the endpoint answering. A 3xx means it redirected instead.
                 assert r.status_code == 401, f"{path} returned {r.status_code}, not the endpoint"
+
+
+# ── Titles built from parts ───────────────────────────────────────────────────
+#
+# The playbook reads persona, lens, hook and format out of a brief's title by
+# position (parseTitle, apps/web/lib/playbook.ts). A hand-typed title that misses
+# a slot makes all four read as null, so the brief sits in the coverage matrix
+# with no persona and no lens. These tests pin that an agent cannot create one.
+
+def _created(as_admin):
+    """Patch the create route and hand back the mock so the body can be read."""
+    return patch.object(
+        mcp_router.submissions_router, "create_submission_link", return_value=_link()
+    )
+
+
+def test_create_brief_assembles_the_title_from_its_parts(as_admin):
+    with _created(as_admin) as create:
+        mcp_router.create_brief(
+            home_project_id=str(uuid.uuid4()),
+            sku="iPhone 17 Pro Max",
+            persona="Frugal Phone Buyer",
+            lens="Fear",
+            hook="Battery dies by 3pm",
+            ad_format="Static",
+            date="20260910",
+        )
+    assert create.call_args.kwargs["body"].title == (
+        "20260910 - iPhone 17 Pro Max - Frugal Phone Buyer - Fear - Battery dies by 3pm - Static"
+    )
+
+
+def test_create_brief_tags_the_persona_and_angle_it_was_given(as_admin):
+    """Angle appears nowhere in the title, so without this the brief lands in the
+    matrix's "—" angle column however well it is titled."""
+    with _created(as_admin) as create:
+        mcp_router.create_brief(
+            home_project_id=str(uuid.uuid4()),
+            sku="x", persona="Frugal Phone Buyer", lens="Fear", hook="Battery",
+            ad_format="Static", angle="A28 Battery anxiety",
+        )
+    body = create.call_args.kwargs["body"]
+    assert body.persona_label == "Frugal Phone Buyer"
+    assert body.angle_label == "A28 Battery anxiety"
+
+
+def test_create_brief_still_takes_a_whole_title(as_admin):
+    """The escape hatch stays: not every brief follows the convention."""
+    with _created(as_admin) as create:
+        mcp_router.create_brief(home_project_id=str(uuid.uuid4()), title="Spring campaign")
+    assert create.call_args.kwargs["body"].title == "Spring campaign"
+
+
+def test_create_brief_refuses_a_title_and_its_parts_together(as_admin):
+    """Silently ignoring the parts would create a brief whose title and labels
+    disagree about what it is."""
+    with _created(as_admin) as create:
+        with pytest.raises(ValueError, match="hook"):
+            mcp_router.create_brief(
+                home_project_id=str(uuid.uuid4()), title="Spring campaign", hook="Battery",
+            )
+    create.assert_not_called()
+
+
+def test_create_brief_refuses_an_incomplete_set_of_parts(as_admin):
+    """Named refusal before anything exists — a half-built title would otherwise
+    strand a live submit URL that no one was told about."""
+    with _created(as_admin) as create:
+        with pytest.raises(ValueError, match="lens"):
+            mcp_router.create_brief(
+                home_project_id=str(uuid.uuid4()), sku="x", persona="P", hook="H", ad_format="Static",
+            )
+    create.assert_not_called()
+
+
+def test_create_brief_says_what_it_needs_when_given_nothing(as_admin):
+    with pytest.raises(ValueError, match="title"):
+        mcp_router.create_brief(home_project_id=str(uuid.uuid4()))
+
+
+def test_create_brief_refuses_a_separator_inside_a_part(as_admin):
+    """" - " in a part shifts every later slot, so lens would be read as the hook."""
+    with _created(as_admin) as create:
+        with pytest.raises(ValueError, match="persona"):
+            mcp_router.create_brief(
+                home_project_id=str(uuid.uuid4()),
+                sku="x", persona="Frugal - Buyer", lens="Fear", hook="Battery", ad_format="Static",
+            )
+    create.assert_not_called()

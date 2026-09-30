@@ -39,6 +39,54 @@ export type PlaybookBrief = {
 
 export type GroupBy = 'model' | 'brief'
 
+export const TITLE_SEPARATOR = ' - '
+
+export type TitleParts = {
+  date: string
+  sku: string
+  persona: string
+  lens: string
+  hook: string
+  format: string
+}
+
+/** Today as YYYYMMDD, the date slot's format. */
+export function todayStamp(): string {
+  const d = new Date()
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+}
+
+// The hook is absent on purpose: parseTitle recovers it by joining the slots
+// between lens and format, so a separator there displaces nothing. In any other
+// part it shifts every later field — the lens would be read as the hook.
+const SEPARATOR_FREE = ['sku', 'persona', 'lens', 'format'] as const
+
+/**
+ * Why a title is not yet writable, or null when it is. Message names the part so
+ * the form can point at the box to fill rather than saying "invalid".
+ */
+export function titleProblem(parts: TitleParts): string | null {
+  for (const key of ['sku', 'persona', 'lens', 'hook', 'format'] as const) {
+    if (!parts[key].trim()) return `${key} is required — a title missing a slot reads as having no persona or lens at all`
+  }
+  for (const key of SEPARATOR_FREE) {
+    if (parts[key].includes(TITLE_SEPARATOR)) return `${key} must not contain "${TITLE_SEPARATOR}" — it would shift every later part of the title`
+  }
+  if (parts.date.trim() && !/^\d{8}$/.test(parts.date.trim())) return 'date must be YYYYMMDD'
+  return null
+}
+
+/**
+ * parseTitle's inverse: the six-slot title for a new brief, today's date unless
+ * one is given. Joins whatever it is handed — call titleProblem first.
+ */
+export function buildTitle(parts: TitleParts): string {
+  return [
+    parts.date.trim() || todayStamp(),
+    parts.sku, parts.persona, parts.lens, parts.hook, parts.format,
+  ].map((p) => p.trim()).join(TITLE_SEPARATOR)
+}
+
 /** Title parts; anything the title does not follow the convention for is null. */
 export function parseTitle(title: string) {
   const parts = title.split(' - ').map((p) => p.trim())

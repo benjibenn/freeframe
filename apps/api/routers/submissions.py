@@ -203,6 +203,10 @@ def create_submission_link(
         instructions=body.instructions,
         grant_role=ProjectRole.editor,
         expires_at=body.expires_at,
+        # Blank is not a label: "" would show in the coverage matrix as a persona
+        # whose name is the empty string instead of falling back to the title.
+        persona_label=(body.persona_label or "").strip() or None,
+        angle_label=(body.angle_label or "").strip() or None,
     )
     db.add(link)
     _apply_home(db, link, project, folder)

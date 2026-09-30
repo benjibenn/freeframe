@@ -16,6 +16,13 @@ import { Input } from '@/components/ui/input'
 import { Copy, Check, Trash2, ChevronDown, ChevronRight, Plus, Pencil, X, Film, FolderOpen, FolderPlus, FileText } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 import { PreAssignFolderDialog } from '@/components/shared/pre-assign-folder-dialog'
+import {
+  BriefTitleFields,
+  briefTitleOf,
+  briefTitleProblem,
+  EMPTY_BRIEF_TITLE,
+  type BriefTitleValue,
+} from '@/components/shared/brief-title-fields'
 
 interface SubmissionLink {
   id: string
@@ -136,7 +143,10 @@ export default function SubmissionsPage() {
   const [error, setError] = useState('')
 
   // create form
-  const [title, setTitle] = useState('')
+  // One piece of state for the title's six slots plus the angle: the playbook
+  // reads those slots by position, so they are entered separately rather than as
+  // one free-text name. See components/shared/brief-title-fields.
+  const [titleValue, setTitleValue] = useState<BriefTitleValue>(EMPTY_BRIEF_TITLE)
   const [instructions, setInstructions] = useState('')
   // Where this request's output belongs. Stamped onto every asset submitted
   // under the link — submitted work lands in a per-submitter project and so
@@ -171,7 +181,11 @@ export default function SubmissionsPage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    if (!title.trim()) return
+    const titleFault = briefTitleProblem(titleValue)
+    if (titleFault) {
+      setError(titleFault)
+      return
+    }
     if (briefFile && briefFile.type !== 'application/pdf') {
       setError('Brief must be a PDF.')
       return
@@ -199,10 +213,14 @@ export default function SubmissionsPage() {
     setCreating(true)
     try {
       const link = await api.post<SubmissionLink>('/submission-links', {
-        title: title.trim(),
+        title: briefTitleOf(titleValue),
         instructions: instructions.trim() || null,
         home_project_id: home.projectId,
         home_folder_id: home.folderId,
+        // Written with the request, not by a follow-up call: PATCH
+        // /brief-overview/labels is superadmin-only and creating is not.
+        persona_label: titleValue.useConvention ? titleValue.persona.trim() || null : null,
+        angle_label: titleValue.angle.trim() || null,
       })
       // Attach the optional brief PDF as a second step (the create endpoint is JSON;
       // the brief endpoint is multipart).
@@ -230,7 +248,7 @@ export default function SubmissionsPage() {
         // reason the files do: there is no link id until the request exists.
         await refs.attachAll(link.id)
       }
-      setTitle('')
+      setTitleValue(EMPTY_BRIEF_TITLE)
       setInstructions('')
       setHome({ projectId: null, folderId: null })
       setBriefFile(null)
@@ -298,12 +316,7 @@ export default function SubmissionsPage() {
           onSubmit={handleCreate}
           className="mb-6 flex flex-col gap-3 rounded-lg border border-border bg-bg-secondary p-4"
         >
-          <Input
-            label="Title"
-            placeholder="e.g. Video Editor Interview — June 2026"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
+          <BriefTitleFields value={titleValue} onChange={setTitleValue} />
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-text-secondary">Instructions (optional)</label>
             <textarea
