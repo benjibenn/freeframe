@@ -67,3 +67,9 @@ def test_both_tools_are_registered_under_the_names_agents_will_call():
     """A tool renamed by a decorator default is a tool no prompt can reach."""
     names = {t.name for t in asyncio.new_event_loop().run_until_complete(mcp_router.mcp.list_tools())}
     assert {"assign_brief_editor", "set_brief_editor_stage"} <= names
+
+
+def test_the_unassign_tool_says_it_refuses_once_files_exist():
+    """An agent must know up front that uploaded work pins an editor in place."""
+    d = (_tool("unassign_brief_editor").description or "").lower()
+    assert "uploaded nothing" in d and "refuses" in d

@@ -18,7 +18,8 @@ from ..config import settings
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User, UserStatus
-from ..models.project import Project
+from ..models.project import Project, ProjectMember, ProjectRole
+from ..models.share import ShareLink
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType
 from ..models.task_stage import TaskStage
 from ..models.submission import Submission, SubmissionLink
@@ -672,11 +673,11 @@ def assign_brief_editor(
     creates — so a brief reaches an editor the same way whichever route they
     arrived by, and there is one answer to "who is on this".
 
-    One-way on purpose: that row owns a project with their uploads in it, so
-    there is no unassign. Both the brief and the editor are therefore checked
-    before anything is provisioned: a dead brief or a dead account would
-    otherwise acquire a live project, membership rows and a share link that
-    nothing can undo.
+    One-way once work exists: that row owns a project with their uploads in it,
+    so unassign_brief_editor refuses as soon as a file lands there. Both the
+    brief and the editor are therefore checked before anything is provisioned:
+    a dead brief or a dead account would otherwise acquire a live project,
+    membership rows and a share link that nobody can ever use.
     """
     require_platform_admin(current_user)
     # Local imports: both live with the accept flow they were written for, and
@@ -711,6 +712,66 @@ def assign_brief_editor(
     # transaction (it commits, or rolls back on a lost race, internally) —
     # there is nothing left here to commit.
     _provision_submission_project(db, link, editor)
+    db.refresh(link)
+    return _brief_item(db, link, current_user)
+
+
+@router.delete("/submission-links/{link_id}/editors/{user_id}", response_model=BriefTaskItem)
+def unassign_brief_editor(
+    link_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Take an editor off a brief — only while they have uploaded nothing.
+
+    Once a file is in their project it holds their work, and removing the
+    assignment would orphan or destroy it, so that is refused (409). Soft-deleted
+    files count: they can still be restored. Before any upload the project is
+    empty and undoing the assignment is safe. The submissions row is deleted
+    outright, not soft-deleted: it is what "who is on this" reads, and its unique
+    (link, user) constraint would otherwise block assigning the same person again.
+    """
+    require_platform_admin(current_user)
+    link = db.query(SubmissionLink).filter(
+        SubmissionLink.id == link_id, SubmissionLink.deleted_at.is_(None)
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Request not found")
+    submission = db.query(Submission).filter(
+        Submission.submission_link_id == link_id,
+        Submission.user_id == user_id,
+    ).first()
+    if not submission:
+        raise HTTPException(status_code=404, detail="That editor is not on this brief")
+
+    has_files = db.query(Asset.id).filter(Asset.project_id == submission.project_id).first()
+    if has_files is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This editor has uploaded files to this brief, so they cannot be unassigned",
+        )
+
+    now = datetime.now(timezone.utc)
+    project = db.query(Project).filter(Project.id == submission.project_id).first()
+    if project:
+        project.deleted_at = now
+    db.query(ProjectMember).filter(
+        ProjectMember.project_id == submission.project_id, ProjectMember.deleted_at.is_(None)
+    ).update({ProjectMember.deleted_at: now}, synchronize_session=False)
+    db.query(ShareLink).filter(
+        ShareLink.project_id == submission.project_id, ShareLink.deleted_at.is_(None)
+    ).update({ShareLink.deleted_at: now}, synchronize_session=False)
+    # Hard delete: the (project, user) unique constraint would make a soft-deleted
+    # row block the viewer membership a later reassignment adds back.
+    if link.reference_project_id:
+        db.query(ProjectMember).filter(
+            ProjectMember.project_id == link.reference_project_id,
+            ProjectMember.user_id == user_id,
+            ProjectMember.role == ProjectRole.viewer,
+        ).delete(synchronize_session=False)
+    db.delete(submission)
+    db.commit()
     db.refresh(link)
     return _brief_item(db, link, current_user)
 
