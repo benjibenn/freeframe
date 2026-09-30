@@ -90,6 +90,10 @@ export default function ProjectDetailPage() {
   const [pendingFiles, setPendingFiles] = React.useState<File[]>([]);
   const [fileNames, setFileNames] = React.useState<string[]>([]);
   const [fileLanguages, setFileLanguages] = React.useState<string[]>([]);
+  // Where each file was made (Figma/Canva). Required on every upload — the
+  // server keeps it as the new version's first comment, and this dialog is the
+  // last moment the person who knows is still here.
+  const [fileSources, setFileSources] = React.useState<string[]>([]);
   const [selectedAsset, setSelectedAsset] =
     React.useState<AssetResponse | null>(null);
   const [shareLinksExpanded, setShareLinksExpanded] = React.useState(true);
@@ -552,6 +556,7 @@ export default function ProjectDetailPage() {
     setPendingFiles(files);
     setFileNames(files.map(() => ""));
     setFileLanguages(files.map(() => ""));
+    setFileSources(files.map(() => ""));
     if (files.length > 0) setAssetName(files[0].name.replace(/\.[^/.]+$/, ""));
   };
 
@@ -569,6 +574,7 @@ export default function ProjectDetailPage() {
         file,
         projectId,
         name,
+        fileSources[i].trim(),
         project?.name,
         currentFolderId,
         outputLanguages.length > 0 ? fileLanguages[i] : null,
@@ -577,6 +583,7 @@ export default function ProjectDetailPage() {
     setPendingFiles([]);
     setFileNames([]);
     setFileLanguages([]);
+    setFileSources([]);
     setAssetName("");
     setUploadOpen(false);
   };
@@ -1378,6 +1385,21 @@ export default function ProjectDetailPage() {
                                   ))}
                                 </select>
                               )}
+                              <input
+                                type="text"
+                                required
+                                aria-label={`Source link for ${f.name}`}
+                                placeholder="Figma or Canva link (required)"
+                                value={fileSources[i] ?? ""}
+                                onChange={(e) =>
+                                  setFileSources((prev) => {
+                                    const next = [...prev];
+                                    next[i] = e.target.value;
+                                    return next;
+                                  })
+                                }
+                                className="mt-1.5 w-full rounded-md border border-border bg-bg-primary px-2 py-1.5 text-sm text-text-primary placeholder:text-text-tertiary"
+                              />
                             </div>
                           ))}
                         </div>
@@ -1413,6 +1435,7 @@ export default function ProjectDetailPage() {
                             setPendingFiles([]);
                             setFileNames([]);
                             setFileLanguages([]);
+                            setFileSources([]);
                           }}
                         >
                           Change files
@@ -1424,7 +1447,8 @@ export default function ProjectDetailPage() {
                             (variationNames.length > 0 &&
                               pendingFiles.some((_, i) => !fileNames[i])) ||
                             (outputLanguages.length > 0 &&
-                              pendingFiles.some((_, i) => !fileLanguages[i]))
+                              pendingFiles.some((_, i) => !fileLanguages[i])) ||
+                            pendingFiles.some((_, i) => !fileSources[i]?.trim())
                           }
                         >
                           Start upload

@@ -52,8 +52,10 @@ interface UploadStore {
   historySkip: number
   setPanelOpen: (open: boolean) => void
   togglePanel: () => void
-  startUpload: (file: File, projectId: string, assetName: string, projectName?: string, folderId?: string | null, language?: string | null) => string
-  startVersionUpload: (file: File, assetId: string, assetName: string, projectId: string) => string
+  /** sourceUrl: where the artwork lives (Figma/Canva). Required by the API and
+   *  kept as the new version's first comment. */
+  startUpload: (file: File, projectId: string, assetName: string, sourceUrl: string, projectName?: string, folderId?: string | null, language?: string | null) => string
+  startVersionUpload: (file: File, assetId: string, assetName: string, projectId: string, sourceUrl: string) => string
   cancelUpload: (fileId: string) => void
   removeFile: (fileId: string) => void
   clearCompleted: () => void
@@ -123,7 +125,7 @@ const storeCreator: StateCreator<UploadStore, [['zustand/persist', unknown]]> = 
   setPanelOpen: (open) => set({ panelOpen: open }),
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
 
-  startUpload: (file, projectId, assetName, projectName, folderId, language) => {
+  startUpload: (file, projectId, assetName, sourceUrl, projectName, folderId, language) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
 
     const entry: UploadFile = {
@@ -173,6 +175,7 @@ const storeCreator: StateCreator<UploadStore, [['zustand/persist', unknown]]> = 
             // Only meaningful for request projects whose brief lists several
             // output languages; the server decides that and ignores it otherwise.
             language: language ?? null,
+            source_url: sourceUrl,
           },
         )
         upload_id = initRes.upload_id
@@ -252,7 +255,7 @@ const storeCreator: StateCreator<UploadStore, [['zustand/persist', unknown]]> = 
     return id
   },
 
-  startVersionUpload: (file, assetId, assetName, projectId) => {
+  startVersionUpload: (file, assetId, assetName, projectId, sourceUrl) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
     const entry: UploadFile = {
       id,
@@ -289,6 +292,7 @@ const storeCreator: StateCreator<UploadStore, [['zustand/persist', unknown]]> = 
             original_filename: file.name,
             file_size_bytes: file.size,
             mime_type: file.type,
+            source_url: sourceUrl,
           },
         )
         upload_id = initRes.upload_id

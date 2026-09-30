@@ -165,6 +165,8 @@ def _initiate_body(project_id):
         "original_filename": "clip.jpg",
         "mime_type": "image/jpeg",
         "file_size_bytes": 1024,
+        # Required on every upload — see services/source_link.
+        "source_url": "https://figma.com/file/abc",
     }
 
 

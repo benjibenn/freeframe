@@ -386,21 +386,27 @@ def add_brief_reference(link_id: str, url: str, kind: str = "auto") -> dict[str,
         "output_languages, language is required too and must be exactly one of "
         "them; the file is then stored as 'German — A. before you buy'. "
         "Submitting the same deliverable and language twice adds a new version to "
-        "it rather than a second one beside it."
+        "it rather than a second one beside it. source_url is required and is "
+        "where the file was made (the Figma or Canva link, not the render): it is "
+        "kept as the version's first comment so the next person can open the "
+        "working file."
     )
 )
 def submit_work(
     link_id: str,
     url: str,
+    source_url: str,
     asset_name: Optional[str] = None,
     language: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Args: url — a public http(s) URL; asset_name — which deliverable this is;
-    language — which of the brief's output_languages it is in."""
+    """Args: url — a public http(s) URL of the finished file; source_url — where it
+    was made (Figma, Canva, …), kept as the version's first comment; asset_name —
+    which deliverable this is; language — which of the brief's output_languages it
+    is in."""
     _require_scope(SCOPE_WRITE)
     link_uuid = _uuid(link_id, "link_id")
     body = submissions_router.SubmitWorkFromUrlRequest(
-        url=url, asset_name=asset_name, language=language
+        url=url, asset_name=asset_name, language=language, source_url=source_url
     )
     result = _call(submissions_router.submit_work_from_url, link_id=link_uuid, body=body)
     return {

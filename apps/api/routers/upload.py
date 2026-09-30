@@ -15,6 +15,7 @@ from ..services.s3_service import (
     complete_multipart_upload, abort_multipart_upload,
 )
 from ..services.permissions import get_project_member, require_project_role
+from ..services import source_link
 from ..models.project import ProjectRole
 from ..schemas.upload import (
     InitiateUploadRequest, InitiateUploadResponse,
@@ -147,6 +148,16 @@ def initiate_upload(
     )
     db.add(version)
     db.flush()
+
+    # The uploader's source link becomes this version's first comment. Recorded
+    # here, inside the same transaction as the version, so there is no window in
+    # which a version exists with no trace of what it was rendered from.
+    db.add(source_link.source_comment(
+        asset_id=asset.id,
+        version_id=version.id,
+        author_id=current_user.id,
+        source_url=body.source_url,
+    ))
 
     ext = os.path.splitext(body.original_filename)[1].lower()
     s3_key = f"raw/{body.project_id}/{asset.id}/{version.id}/original{ext}"

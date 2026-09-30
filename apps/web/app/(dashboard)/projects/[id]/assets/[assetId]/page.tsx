@@ -25,6 +25,7 @@ import { useComments } from '@/hooks/use-comments'
 import { api } from '@/lib/api'
 import { useUploadStore } from '@/stores/upload-store'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
+import { SourceLinkPrompt } from '@/components/shared/source-link-prompt'
 import {
   ArrowLeft,
   ChevronLeft,
@@ -120,6 +121,9 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const [activeTab, setActiveTab] = useState<'comments' | 'fields'>('fields')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [reprocessing, setReprocessing] = useState(false)
+  // Held back until its source link is given: the upload starts the moment a
+  // file is picked, and the API refuses a version with no source.
+  const [pendingVersionFile, setPendingVersionFile] = useState<File | null>(null)
   const isDesktop = useIsDesktop()
   const deepLinkApplied = useRef(false)
 
@@ -545,15 +549,31 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
             type="file"
             className="hidden"
             accept={acceptByType[asset.asset_type] ?? '*/*'}
-            onChange={async (e) => {
+            onChange={(e) => {
               const file = e.target.files?.[0]
-              if (!file || !asset) return
-              startVersionUpload(file, asset.id, asset.name, asset.project_id)
               e.target.value = ''
-              // Refetch versions after a short delay to show the new uploading version
-              setTimeout(() => refetchVersions(), 800)
+              if (!file || !asset) return
+              setPendingVersionFile(file)
             }}
           />
+          {pendingVersionFile && asset && (
+            <SourceLinkPrompt
+              fileName={pendingVersionFile.name}
+              onCancel={() => setPendingVersionFile(null)}
+              onConfirm={(sourceUrl) => {
+                startVersionUpload(
+                  pendingVersionFile,
+                  asset.id,
+                  asset.name,
+                  asset.project_id,
+                  sourceUrl,
+                )
+                setPendingVersionFile(null)
+                // Refetch versions after a short delay to show the new uploading version
+                setTimeout(() => refetchVersions(), 800)
+              }}
+            />
+          )}
           <AssetStatusSelect assetId={asset.id} taskStageId={asset.task_stage_id ?? null} label={false} />
           <RunAsAdToggle assetId={asset.id} initial={asset.run_as_ad ?? false} />
           <div className="hidden sm:block">
