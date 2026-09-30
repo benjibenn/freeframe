@@ -20,7 +20,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -59,6 +59,7 @@ from ..schemas.submission import (
 )
 from ..services.share_service import build_default_project_share_link
 from ..services import s3_service
+from ..services import source_link
 from ..services.url_fetch import RemoteFetchError, fetch_remote_file
 from ..services import brief_import_service
 from ..services.permissions import require_platform_admin, is_platform_admin, can_view_project, require_asset_access
@@ -1805,6 +1806,15 @@ class SubmitWorkFromUrlRequest(BaseModel):
     url: str
     asset_name: Optional[str] = None
     language: Optional[str] = None
+    # Where the artwork lives, like the browser upload path. url is the finished
+    # render; this is the file it was made in, and it becomes the version's first
+    # comment. See services/source_link.
+    source_url: str
+
+    @field_validator("source_url")
+    @classmethod
+    def _source_url_present(cls, v: str) -> str:
+        return source_link.normalize(v)
 
 
 class SubmitWorkResponse(BaseModel):
@@ -1973,6 +1983,14 @@ def submit_work_from_url(
     )
     db.add(version)
     db.flush()
+
+    # Same rule as the browser upload: every version says what it was made from.
+    db.add(source_link.source_comment(
+        asset_id=asset.id,
+        version_id=version.id,
+        author_id=current_user.id,
+        source_url=body.source_url,
+    ))
 
     ext = _IMAGE_EXT.get(content_type) or mimetypes.guess_extension(content_type) or ".bin"
     s3_key = f"raw/{project.id}/{asset.id}/{version.id}/original{ext}"

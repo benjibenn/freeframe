@@ -1138,3 +1138,34 @@ def test_create_brief_refuses_a_separator_inside_a_part(as_admin):
                 sku="x", persona="Frugal - Buyer", lens="Fear", hook="Battery", ad_format="Static",
             )
     create.assert_not_called()
+
+
+# ── Source links on submitted work ────────────────────────────────────────────
+
+def test_submit_work_carries_the_source_link(as_admin):
+    """An agent's submission records its source like a browser upload does.
+
+    submit-work/from-url is the browser's initiate → presign → complete collapsed
+    into one call, so it must not be the one way in that leaves a version with no
+    trace of what it was made from.
+    """
+    with patch.object(
+        mcp_router.submissions_router, "submit_work_from_url", return_value=MagicMock()
+    ) as submitted:
+        mcp_router.submit_work(
+            link_id=str(uuid.uuid4()),
+            url="https://cdn.example.com/hook1.png",
+            source_url="https://canva.com/design/abc",
+        )
+    assert submitted.call_args.kwargs["body"].source_url == "https://canva.com/design/abc"
+
+
+def test_submit_work_refuses_a_blank_source_link(as_admin):
+    with patch.object(mcp_router.submissions_router, "submit_work_from_url") as submitted:
+        with pytest.raises(ValueError, match="source_url"):
+            mcp_router.submit_work(
+                link_id=str(uuid.uuid4()),
+                url="https://cdn.example.com/hook1.png",
+                source_url="   ",
+            )
+    submitted.assert_not_called()

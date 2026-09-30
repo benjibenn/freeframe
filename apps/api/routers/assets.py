@@ -17,6 +17,7 @@ from ..models.activity import Mention, Notification, NotificationType, ActivityA
 from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse, TagsUpdate, TagCount
 from ..schemas.notification import AssignmentUpdate
 from ..services.permissions import require_project_role, require_asset_access, can_access_asset, is_public_project, get_project_member, can_view_project, is_platform_admin, require_platform_admin
+from ..services import source_link
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
 from .hls_proxy import create_hls_token
 from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, mime_to_asset_type
@@ -685,6 +686,15 @@ def initiate_new_version(
     )
     db.add(version)
     db.flush()
+
+    # A revision is usually a different Figma frame, so each version records its
+    # own source rather than inheriting v1's. Same transaction as the version.
+    db.add(source_link.source_comment(
+        asset_id=asset_id,
+        version_id=version.id,
+        author_id=current_user.id,
+        source_url=body.source_url,
+    ))
 
     ext = os.path.splitext(body.original_filename)[1].lower()
     s3_key = f"raw/{asset.project_id}/{asset_id}/{version.id}/original{ext}"

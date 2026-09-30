@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from ..services import source_link
 import uuid
 from ..models.asset import AssetType
 
@@ -36,6 +38,16 @@ class InitiateUploadRequest(BaseModel):
     # Which of the brief's output_languages this file is. Required only when the
     # request's brief lists more than one; ignored everywhere else.
     language: str | None = None
+    # Where the artwork lives (Figma, Canva, …). Required on every upload, new
+    # asset or new version: initiate is the last moment the uploader is present,
+    # and a delivered render carries no trace of what it was made from. Kept as
+    # the version's first comment — see services/source_link.
+    source_url: str
+
+    @field_validator("source_url")
+    @classmethod
+    def _source_url_present(cls, v: str) -> str:
+        return source_link.normalize(v)
 
 class InitiateUploadResponse(BaseModel):
     upload_id: str
