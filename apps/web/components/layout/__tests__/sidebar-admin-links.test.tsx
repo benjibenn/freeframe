@@ -1,9 +1,13 @@
 /**
- * The sidebar's other admin links (Activity, Tasks) are gated on
+ * The sidebar's other admin link (Activity) is gated on
  * `is_superadmin || is_subadmin`. Brief overview must NOT be: it spans every
  * owner's briefs and submitters, so a sub-admin who can review any asset still
  * cannot see it. That difference is easy to erase by copy-pasting the block
  * above it, so it gets its own test.
+ *
+ * Tasks is the opposite case: it is for everyone. The page and /task-board
+ * already scope a non-admin to the briefs they own or edit, so gating the link
+ * only hid an editor's own work from them.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
@@ -74,5 +78,21 @@ describe('Sidebar — Brief overview link', () => {
     authState.user = { id: 'u3', name: 'Ada', is_superadmin: false, is_subadmin: false }
     renderSidebar()
     expect(screen.queryByRole('link', { name: /brief overview/i })).toBeNull()
+  })
+})
+
+describe('Sidebar — Tasks link', () => {
+  it('shows Tasks to an ordinary editor, whose own briefs live there', () => {
+    // Editors are assigned to briefs and move their own status on /tasks. With
+    // the link hidden they could only reach it by typing the URL.
+    authState.user = { id: 'u3', name: 'Ada', is_superadmin: false, is_subadmin: false }
+    renderSidebar()
+    expect(screen.getByRole('link', { name: /tasks/i })).toHaveAttribute('href', '/tasks')
+  })
+
+  it('still shows Tasks to admins', () => {
+    authState.user = { id: 'u1', name: 'Boss', is_superadmin: true, is_subadmin: false }
+    renderSidebar()
+    expect(screen.getByRole('link', { name: /tasks/i })).toHaveAttribute('href', '/tasks')
   })
 })
