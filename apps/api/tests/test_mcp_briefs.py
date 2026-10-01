@@ -553,22 +553,22 @@ def _folder(name, folder_id=None, parent_id=None, project_id=None):
 
 
 def test_create_folder_reuses_the_part_of_the_path_that_exists(as_admin):
-    """Re-running the same path must not fork a second "Stokora" beside the first.
+    """Re-running the same path must not fork a second "Globex" beside the first.
 
     An agent filing a batch of briefs calls this once per destination and cannot
     be trusted to remember which folders it already made.
     """
-    stokora = _node("Stokora")
-    tree = [_node("Phones", children=[stokora])]
+    globex = _node("Globex")
+    tree = [_node("Phones", children=[globex])]
     made = _folder("iPhone 17e")
     with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=tree), \
          patch.object(mcp_router.folders_router, "create_folder", return_value=made) as create:
         out = mcp_router.create_folder(
-            project_id=str(uuid.uuid4()), path="Phones/Stokora/iPhone 17e"
+            project_id=str(uuid.uuid4()), path="Phones/Globex/iPhone 17e"
         )
 
     assert create.call_count == 1
-    assert create.call_args.kwargs["body"].parent_id == stokora.id
+    assert create.call_args.kwargs["body"].parent_id == globex.id
     assert out["created"] == ["iPhone 17e"]
     assert out["id"] == str(made.id)
 
@@ -579,7 +579,7 @@ def test_create_folder_chains_each_new_folder_under_the_last(as_admin):
     The rest are parented to folders that did not exist when that tree was
     fetched, so re-reading it would find nothing and file them all at the root.
     """
-    first = _folder("Stokora")
+    first = _folder("Globex")
     second = _folder("iPhone 17e")
     phones = _node("Phones")
     with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=[phones]), \
@@ -587,12 +587,12 @@ def test_create_folder_chains_each_new_folder_under_the_last(as_admin):
              mcp_router.folders_router, "create_folder", side_effect=[first, second]
          ) as create:
         out = mcp_router.create_folder(
-            project_id=str(uuid.uuid4()), path="Phones/Stokora/iPhone 17e"
+            project_id=str(uuid.uuid4()), path="Phones/Globex/iPhone 17e"
         )
 
     parents = [c.kwargs["body"].parent_id for c in create.call_args_list]
     assert parents == [phones.id, first.id]
-    assert out["created"] == ["Stokora", "iPhone 17e"]
+    assert out["created"] == ["Globex", "iPhone 17e"]
 
 
 def test_create_folder_refuses_an_ambiguous_segment(as_admin):
@@ -601,23 +601,23 @@ def test_create_folder_refuses_an_ambiguous_segment(as_admin):
     tree = [_node("Phones"), _node("phones")]
     with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=tree):
         with pytest.raises(ValueError, match="parent_folder_id"):
-            mcp_router.create_folder(project_id=str(uuid.uuid4()), path="Phones/Stokora")
+            mcp_router.create_folder(project_id=str(uuid.uuid4()), path="Phones/Globex")
 
 
 def test_create_folder_resolves_the_path_under_a_given_parent(as_admin):
     """parent_folder_id is how a caller disambiguates; the path must start there."""
-    stokora = _node("Stokora")
-    phones = _node("Phones", children=[stokora])
+    globex = _node("Globex")
+    phones = _node("Phones", children=[globex])
     made = _folder("iPhone 17e")
     with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=[phones]), \
          patch.object(mcp_router.folders_router, "create_folder", return_value=made) as create:
         mcp_router.create_folder(
             project_id=str(uuid.uuid4()),
-            path="Stokora/iPhone 17e",
+            path="Globex/iPhone 17e",
             parent_folder_id=str(phones.id),
         )
     assert create.call_count == 1
-    assert create.call_args.kwargs["body"].parent_id == stokora.id
+    assert create.call_args.kwargs["body"].parent_id == globex.id
 
 
 def test_create_folder_rejects_an_empty_path(as_admin):
@@ -638,7 +638,7 @@ def test_update_folder_leaves_the_parent_alone_when_only_renaming(as_admin):
 def test_update_folder_moves_to_the_root_on_an_empty_string(as_admin):
     """"" is the only way to say "no parent"; omitting it means "don't touch"."""
     with patch.object(
-        mcp_router.folders_router, "update_folder", return_value=_folder("Stokora")
+        mcp_router.folders_router, "update_folder", return_value=_folder("Globex")
     ) as update:
         mcp_router.update_folder(folder_id=str(uuid.uuid4()), parent_folder_id="")
     body = update.call_args.kwargs["body"]
@@ -674,7 +674,7 @@ def test_list_deleted_folders_omits_deleted_assets(as_admin):
     """Trash carries assets too, and MCP exposes no asset tools — listing them
     would spend the caller's context on ids no tool here can act on."""
     trash = {
-        "folders": [{"id": str(uuid.uuid4()), "name": "Stokora"}],
+        "folders": [{"id": str(uuid.uuid4()), "name": "Globex"}],
         "assets": [{"id": str(uuid.uuid4()), "name": "hook.mp4"}],
     }
     with patch.object(mcp_router.folders_router, "list_trash", return_value=trash):
@@ -836,7 +836,7 @@ def test_list_folder_contents_only_returns_briefs_filed_in_that_folder(as_admin)
     """A brief's home folder is what files it; listing the project's briefs in
     every folder would make the folder view meaningless."""
     pid, fid = uuid.uuid4(), uuid.uuid4()
-    node = _node("Stokora", folder_id=fid)
+    node = _node("Globex", folder_id=fid)
     here = _link(title="In here", home_project_id=pid, home_folder_id=fid)
     elsewhere = _link(title="Elsewhere", home_project_id=pid, home_folder_id=uuid.uuid4())
     with patch.object(mcp_router.folders_router, "get_folder_tree", return_value=[node]), \
@@ -868,17 +868,17 @@ def test_list_briefs_says_so_when_it_truncates(as_admin):
 
 
 def test_list_briefs_matches_title_or_folder_path_case_insensitively(as_admin):
-    """Ben types "stokora"; the folder is "Stokora". Matching the path as well as
-    the title is what makes "show me the Stokora briefs" work."""
-    by_title = _row(title="Stokora hero cut")
+    """Ben types "globex"; the folder is "Globex". Matching the path as well as
+    the title is what makes "show me the Globex briefs" work."""
+    by_title = _row(title="Globex hero cut")
     by_path = _row(title="Untitled")
     miss = _row(title="Something else")
-    paths = {by_path.id: "Phones/Stokora", miss.id: "Phones/Other"}
+    paths = {by_path.id: "Phones/Globex", miss.id: "Phones/Other"}
     with _listing([by_title, by_path, miss], paths=paths):
-        out = mcp_router.list_briefs(query="STOKORA")
+        out = mcp_router.list_briefs(query="GLOBEX")
 
     assert out["total_matched"] == 2
-    assert {b["title"] for b in out["briefs"]} == {"Stokora hero cut", "Untitled"}
+    assert {b["title"] for b in out["briefs"]} == {"Globex hero cut", "Untitled"}
 
 
 def test_list_deleted_briefs_rejects_an_out_of_range_limit(as_admin):
@@ -1292,10 +1292,10 @@ def test_count_briefs_answers_in_one_call(as_admin):
 
 def test_count_briefs_by_folder_uses_the_live_path(as_admin):
     a, b, c = _row(), _row(), _row()
-    with _listing([a, b, c], paths={a.id: "Phones/Stokora", b.id: "Phones/Stokora"}):
+    with _listing([a, b, c], paths={a.id: "Phones/Globex", b.id: "Phones/Globex"}):
         out = mcp_router.count_briefs(group_by="folder")
     assert out["groups"] == [
-        {"key": "Phones/Stokora", "count": 2},
+        {"key": "Phones/Globex", "count": 2},
         {"key": "Not filed", "count": 1},
     ]
 

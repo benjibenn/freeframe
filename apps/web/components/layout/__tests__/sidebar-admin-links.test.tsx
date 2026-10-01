@@ -41,7 +41,7 @@ vi.mock('@/stores/activity-store', () => ({
   useActivityStore: () => ({ unreadCount: 0, fetchUnreadCount: vi.fn() }),
 }))
 vi.mock('@/stores/branding-store', () => ({
-  useBrandingStore: () => ({ orgName: 'Joolabs', orgLogoDark: null, orgLogoLight: null }),
+  useBrandingStore: () => ({ orgName: 'Acme', orgLogoDark: null, orgLogoLight: null }),
 }))
 vi.mock('@/stores/theme-store', () => ({ useThemeStore: () => ({ theme: 'dark' }) }))
 vi.mock('./notification-drawer', () => ({ NotificationDrawer: () => null }))

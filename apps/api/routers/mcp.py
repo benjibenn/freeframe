@@ -1031,7 +1031,7 @@ def _find_node(nodes: list[Any], folder_id: uuid.UUID) -> Any | None:
 def _split_path(path: str) -> list[str]:
     segments = [s.strip() for s in path.split("/") if s.strip()]
     if not segments:
-        raise ValueError("path must name at least one folder, e.g. 'Phones/Stokora'")
+        raise ValueError("path must name at least one folder, e.g. 'Phones/Globex'")
     return segments
 
 

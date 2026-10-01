@@ -108,7 +108,7 @@ def matches_persona(title: Optional[str], persona_label: Optional[str], wanted: 
 
 
 def matches_query(title: Optional[str], home_path: Optional[str], needle: str) -> bool:
-    """Title or folder path, case-insensitively: "stokora" finds the Stokora folder."""
+    """Title or folder path, case-insensitively: "globex" finds the Globex folder."""
     n = needle.casefold().strip()
     return n in (title or "").casefold() or n in (home_path or "").casefold()
 

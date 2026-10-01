@@ -17,13 +17,13 @@ const row = (id: string, path: string, title: string, over: Partial<PlaybookSour
 const T = (model: string, hook: string) => `20260910 - ${model} - Frugal Phone Buyer - Fear - ${hook} - Two panel split static`
 
 const ROWS = [
-  row('a', 'ecom/Phones/Stokora/iPhone 17', T('i17', 'Tired of your battery')),
-  row('b', 'ecom/Phones/Stokora/iPhone 9', T('i9', 'tired of your battery'), { asset_count: 0, angle_label: 'A1' }),
-  row('c', 'ecom/Phones/Stokora/iPhone 17', T('i17', 'Cheaper - by far')),
-  row('d', 'ecom/Phones/Stokora', 'Loose brief at the brand root'),
-  row('x', 'ecom/Phones/Joolabs/iPhone 17', T('i17', 'Other brand')),
+  row('a', 'ecom/Phones/Globex/iPhone 17', T('i17', 'Tired of your battery')),
+  row('b', 'ecom/Phones/Globex/iPhone 9', T('i9', 'tired of your battery'), { asset_count: 0, angle_label: 'A1' }),
+  row('c', 'ecom/Phones/Globex/iPhone 17', T('i17', 'Cheaper - by far')),
+  row('d', 'ecom/Phones/Globex', 'Loose brief at the brand root'),
+  row('x', 'ecom/Phones/Acme/iPhone 17', T('i17', 'Other brand')),
 ]
-const briefs = () => toBriefs(ROWS, 'ecom/Phones/Stokora', 'https://ff.test')
+const briefs = () => toBriefs(ROWS, 'ecom/Phones/Globex', 'https://ff.test')
 
 describe('playbook', () => {
   it('keeps a hook that itself contains " - "', () => {
@@ -35,14 +35,14 @@ describe('playbook', () => {
     expect(b.map((x) => x.id).sort()).toEqual(['a', 'b', 'c', 'd'])
     expect(b.find((x) => x.id === 'd')!.model).toBe(NO_MODEL)
     expect(b.find((x) => x.id === 'a')!.url).toBe('https://ff.test/submit/tok-a')
-    expect(scopes(ROWS).find((s) => s.path === 'ecom/Phones/Stokora')!.count).toBe(4)
+    expect(scopes(ROWS).find((s) => s.path === 'ecom/Phones/Globex')!.count).toBe(4)
   })
 
   it('lists only the folders one level down, so each brand is one click', () => {
     expect(subfolders(ROWS, '').map((f) => f.name)).toEqual(['ecom'])
     expect(subfolders(ROWS, 'ecom/Phones')).toEqual([
-      { path: 'ecom/Phones/Joolabs', name: 'Joolabs', count: 1 },
-      { path: 'ecom/Phones/Stokora', name: 'Stokora', count: 4 },
+      { path: 'ecom/Phones/Acme', name: 'Acme', count: 1 },
+      { path: 'ecom/Phones/Globex', name: 'Globex', count: 4 },
     ])
   })
 

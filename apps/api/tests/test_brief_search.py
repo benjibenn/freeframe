@@ -99,9 +99,9 @@ def test_a_title_off_the_convention_has_no_persona():
 
 
 def test_query_matches_title_or_folder_path_case_insensitively():
-    assert brief_search.matches_query("Stokora hero cut", None, "STOKORA")
-    assert brief_search.matches_query("Untitled", "Phones/Stokora", "stokora")
-    assert not brief_search.matches_query("Other", "Phones/Other", "stokora")
+    assert brief_search.matches_query("Globex hero cut", None, "GLOBEX")
+    assert brief_search.matches_query("Untitled", "Phones/Globex", "globex")
+    assert not brief_search.matches_query("Other", "Phones/Other", "globex")
 
 
 def test_persona_filter_is_exact_not_a_substring():
