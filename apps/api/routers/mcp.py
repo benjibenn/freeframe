@@ -19,6 +19,7 @@ import os
 import secrets
 import shlex
 import uuid
+from types import SimpleNamespace
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -35,6 +36,7 @@ from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE, SCOPE_USERS_ADMIN
 from ..models.asset import Asset, AssetVersion, MediaFile
 from ..models.share import SharePermission
 from ..models.submission import SubmissionLink
+from ..models.task_stage import TaskStage
 from ..models.user import User
 from ..schemas.approval import ApprovalCreate
 from ..schemas.asset import AssetUpdate
@@ -43,7 +45,8 @@ from ..schemas.brief_overview import BriefLabelsUpdate
 from ..schemas.folder import AssetMoveRequest, FolderCreate, FolderUpdate
 from ..schemas.share import MultiShareCreate, ShareLinkCreate
 from ..schemas.upload import AbortUploadRequest, CompleteUploadRequest, InitiateUploadRequest
-from ..services import s3_service, source_link
+from ..services import brief_search, s3_service, source_link
+from ..services.folder_paths import link_home_paths
 from ..services.brief_title import build_title
 from ..services.hook_naming import compose_name
 from ..services.url_fetch import RemoteFetchError, fetch_remote_file
@@ -124,7 +127,9 @@ mcp = FastMCP(
         "and share_folder mint a public link anyone can open. To bring a file in, "
         "upload_from_url takes a link; a local file goes up with "
         "start_file_upload (or start_file_submission for a brief), a curl, then "
-        "finish_file_upload."
+        "finish_file_upload. To read or count many briefs, use list_briefs with "
+        "include_content=true and offset paging, or count_briefs — never get_brief "
+        "once per brief, which turns a bulk read into hours of round trips."
     ),
     stateless_http=True,
     json_response=True,
@@ -226,55 +231,208 @@ def _call(fn, **kwargs) -> Any:
 
 # ── Discovery ────────────────────────────────────────────────────────────────
 
+_GROUPINGS = ("folder", "persona", "angle", "status", "month", "enabled")
+
+
+def _date_arg(value: str | None, field: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        when = datetime.fromisoformat(value.strip())
+    except ValueError:
+        raise ValueError(f"{field} must be an ISO date like 2026-09-01, got {value!r}") from None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def _filters(
+    *,
+    project_id: str | None,
+    folder_id: str | None,
+    query: str | None,
+    persona: str | None,
+    angle: str | None,
+    enabled: bool | None,
+    created_after: str | None,
+    created_before: str | None,
+    has_submissions: bool | None,
+) -> brief_search.BriefFilters:
+    return brief_search.BriefFilters(
+        project_id=_uuid(project_id, "project_id") if project_id else None,
+        folder_id=_uuid(folder_id, "folder_id") if folder_id else None,
+        query=query or None,
+        persona=persona or None,
+        angle=angle or None,
+        enabled=enabled,
+        created_after=_date_arg(created_after, "created_after"),
+        created_before=_date_arg(created_before, "created_before"),
+        has_submissions=has_submissions,
+    )
+
+
+def _matching(f: brief_search.BriefFilters) -> tuple[list[Any], dict]:
+    """Every brief passing the filters, newest first, with its live folder path.
+
+    Light rows only: brief_json is left unloaded here and fetched afterwards for
+    the page that is actually returned.
+    """
+    def run(db: Session, current_user: User):
+        rows = brief_search.base_query(db, current_user, f, with_content=False).all()
+        paths = link_home_paths(db, rows)
+        if f.persona:
+            rows = [r for r in rows if brief_search.matches_persona(r.title, r.persona_label, f.persona)]
+        if f.query:
+            rows = [r for r in rows if brief_search.matches_query(r.title, paths.get(r.id), f.query)]
+        return rows, paths
+
+    return _call(run)
+
+
+def _listed(link: Any, path: str | None, count: int) -> dict[str, Any]:
+    out = _brief_summary(SimpleNamespace(
+        id=link.id,
+        title=link.title,
+        home_project_id=link.home_project_id,
+        home_folder_id=link.home_folder_id,
+        home_path=path,
+        submission_count=count,
+        is_enabled=link.is_enabled,
+        token=link.token,
+        created_at=link.created_at,
+    ))
+    # What persona/angle filters and count_briefs group by, so an agent can see
+    # why a brief matched.
+    out["persona"] = brief_search.persona_of(link.title, link.persona_label)
+    out["angle"] = (link.angle_label or "").strip() or None
+    return out
+
+
 @mcp.tool(
     description=(
-        "Search video request briefs. Returns each brief's id, title, where it is "
-        "filed, how many submissions it has received, and its public submit URL. "
-        "Narrow with query (matches the title or the folder path, case-insensitive), "
-        "project_id, or folder_id. A tenant can hold hundreds of briefs, so the "
-        "result is capped at limit and reports total_matched when it truncates — "
-        "narrow the search rather than raising limit."
+        "Search video request briefs, in pages. Returns each brief's id, title, "
+        "where it is filed, persona, angle, submission count and submit URL. "
+        "Filters, all optional and combined: query (title or folder path, "
+        "case-insensitive), project_id, folder_id, persona, angle, enabled, "
+        "created_after / created_before (ISO dates), has_submissions. Pass "
+        "include_content=true to get each brief's instructions and brief_json too "
+        "— use that instead of calling get_brief once per brief, which is what "
+        "made bulk reads take hours. Results come newest first; when truncated is "
+        "true, call again with offset=next_offset for the rest. limit is 1-200, or "
+        "1-50 with include_content. To count briefs, use count_briefs instead."
     )
 )
 def list_briefs(
     project_id: str | None = None,
     query: str | None = None,
     folder_id: str | None = None,
+    persona: str | None = None,
+    angle: str | None = None,
+    enabled: bool | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    has_submissions: bool | None = None,
+    include_content: bool = False,
+    offset: int = 0,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """Args: project_id, query, folder_id — all optional filters; limit — 1..200.
-
-    Filtering happens here rather than in the endpoint on purpose: the endpoint
-    backs the admin grid, which wants every row, and adding search parameters to
-    it would mean two places deciding what a brief matches.
-    """
+    """Args: has_submissions — whether any editor has accepted or been assigned."""
     _require_scope(SCOPE_READ)
-    if not 1 <= limit <= 200:
-        raise ValueError("limit must be between 1 and 200")
-    links = _call(submissions_router.list_submission_links)
-    out = [_brief_summary(l) for l in links]
-    if project_id:
-        wanted = str(_uuid(project_id, "project_id"))
-        out = [b for b in out if b["home_project_id"] == wanted]
-    if folder_id:
-        wanted = str(_uuid(folder_id, "folder_id"))
-        out = [b for b in out if b["home_folder_id"] == wanted]
-    if query:
-        needle = query.casefold().strip()
-        out = [
-            b for b in out
-            if needle in (b["title"] or "").casefold()
-            or needle in (b["home_path"] or "").casefold()
-        ]
-    total = len(out)
-    return {
-        "total_matched": total,
-        "returned": min(total, limit),
-        # Said out loud rather than left for the caller to infer from a length:
-        # a silently truncated list reads as "that is all of them".
-        "truncated": total > limit,
-        "briefs": out[:limit],
-    }
+    # Full briefs run to kilobytes each; two hundred would swamp the caller's context.
+    cap = 50 if include_content else 200
+    if not 1 <= limit <= cap:
+        raise ValueError(f"limit must be between 1 and {cap}" + (" with include_content" if include_content else ""))
+    if offset < 0:
+        raise ValueError("offset must be 0 or more")
+
+    f = _filters(
+        project_id=project_id, folder_id=folder_id, query=query, persona=persona,
+        angle=angle, enabled=enabled, created_after=created_after,
+        created_before=created_before, has_submissions=has_submissions,
+    )
+    rows, paths = _matching(f)
+    chunk, meta = brief_search.page(rows, offset=offset, limit=limit)
+
+    def fill(db: Session, current_user: User):
+        ids = [r.id for r in chunk]
+        counts = submissions_router._count_map(db, ids)
+        full = {}
+        if include_content and ids:
+            # A second, page-sized query: the heavy columns for these briefs only.
+            full = {
+                l.id: l for l in brief_search.base_query(
+                    db, current_user, brief_search.BriefFilters(), with_content=True,
+                ).filter(SubmissionLink.id.in_(ids)).all()
+            }
+        return counts, full
+
+    counts, full = _call(fill)
+    briefs = []
+    for r in chunk:
+        item = _listed(r, paths.get(r.id), counts.get(r.id, 0))
+        if include_content and r.id in full:
+            l = full[r.id]
+            item["instructions"] = l.instructions
+            item["brief_json"] = l.brief_json
+            item["has_brief_json"] = bool(l.brief_json)
+            item["has_brief_pdf"] = bool(l.brief_pdf_s3_key)
+            item["reference_video_count"] = len(submissions_router._ref_video_keys(l))
+            item["reference_image_count"] = len(submissions_router._ref_image_keys(l))
+        briefs.append(item)
+    return {**meta, "briefs": briefs}
+
+
+@mcp.tool(
+    description=(
+        "Count briefs in one call, optionally grouped. group_by is one of folder, "
+        "persona, angle, status, month or enabled; omit it for just the total. "
+        "Takes the same filters as list_briefs. Persona is read the way the "
+        "playbook reads it: the brief's label, or else the persona slot of its "
+        "title. Groups come largest first."
+    )
+)
+def count_briefs(
+    group_by: str | None = None,
+    project_id: str | None = None,
+    query: str | None = None,
+    folder_id: str | None = None,
+    persona: str | None = None,
+    angle: str | None = None,
+    enabled: bool | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    has_submissions: bool | None = None,
+) -> dict[str, Any]:
+    _require_scope(SCOPE_READ)
+    by = group_by.strip().casefold() if group_by else None
+    if by and by not in _GROUPINGS:
+        raise ValueError(f"group_by must be one of {', '.join(_GROUPINGS)}, got {group_by!r}")
+
+    f = _filters(
+        project_id=project_id, folder_id=folder_id, query=query, persona=persona,
+        angle=angle, enabled=enabled, created_after=created_after,
+        created_before=created_before, has_submissions=has_submissions,
+    )
+    rows, paths = _matching(f)
+    if not by:
+        return {"total": len(rows), "group_by": None, "groups": None}
+
+    if by == "folder":
+        groups = brief_search.tally((paths.get(r.id) for r in rows), blank="Not filed")
+    elif by == "persona":
+        groups = brief_search.tally(
+            (brief_search.persona_of(r.title, r.persona_label) for r in rows), blank="No persona",
+        )
+    elif by == "angle":
+        groups = brief_search.tally(((r.angle_label or "").strip() for r in rows), blank="No angle")
+    elif by == "status":
+        names = _call(lambda db, current_user: dict(db.query(TaskStage.id, TaskStage.name).all()))
+        groups = brief_search.tally((names.get(r.task_stage_id) for r in rows), blank="No status")
+    elif by == "month":
+        groups = brief_search.tally(
+            (r.created_at.strftime("%Y-%m") if r.created_at else None for r in rows), blank="Unknown",
+        )
+    else:  # enabled
+        groups = brief_search.tally(("enabled" if r.is_enabled else "disabled" for r in rows), blank="")
+    return {"total": len(rows), "group_by": by, "groups": groups}
 
 
 @mcp.tool(

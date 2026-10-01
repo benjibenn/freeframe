@@ -126,12 +126,10 @@ def test_tools_use_the_request_session_not_a_new_one(as_admin, mock_db):
     which is exactly what happened against a real database, invisibly to mocks.
     """
     with patch("apps.api.routers.mcp.SessionLocal") as fresh:
-        with patch.object(
-            mcp_router.submissions_router, "list_submission_links", return_value=[]
-        ) as listed:
+        with _listing([]) as (listed, _):
             mcp_router.list_briefs()
     fresh.assert_not_called()
-    assert listed.call_args.kwargs["db"] is mock_db
+    assert listed.call_args.args[0] is mock_db
 
 
 def test_a_failed_tool_rolls_back_so_the_next_one_is_usable(as_admin, mock_db):
@@ -256,12 +254,11 @@ def test_http_errors_become_actionable_tool_errors(as_admin):
 
 
 def test_list_briefs_filters_by_project(as_admin):
+    """Pushed into SQL, not filtered after loading every brief in the tenant."""
     wanted = uuid.uuid4()
-    links = [_link(home_project_id=wanted), _link(home_project_id=uuid.uuid4())]
-    with patch.object(mcp_router.submissions_router, "list_submission_links", return_value=links):
-        with patch("apps.api.routers.mcp.settings") as s:
-            s.frontend_url = "https://x.test"
-            out = mcp_router.list_briefs(project_id=str(wanted))
+    with _listing([_row(home_project_id=wanted)]) as (listed, _):
+        out = mcp_router.list_briefs(project_id=str(wanted))
+    assert listed.call_args.args[2].project_id == wanted
     assert out["total_matched"] == 1
     assert out["truncated"] is False
     assert out["briefs"][0]["home_project_id"] == str(wanted)
@@ -859,28 +856,25 @@ def test_list_briefs_says_so_when_it_truncates(as_admin):
     A tenant holds hundreds of briefs; an agent told it saw 50 of 550 narrows its
     search, one handed 50 rows concludes the rest do not exist.
     """
-    links = [_link(title=f"Brief {i}") for i in range(12)]
-    with patch.object(
-        mcp_router.submissions_router, "list_submission_links", return_value=links,
-    ):
+    with _listing([_row(title=f"Brief {i}") for i in range(12)]):
         out = mcp_router.list_briefs(limit=5)
 
     assert out["total_matched"] == 12
     assert out["returned"] == 5
     assert out["truncated"] is True
     assert len(out["briefs"]) == 5
+    # And how to get the rest, rather than "narrow your search" as the only way out.
+    assert out["next_offset"] == 5
 
 
 def test_list_briefs_matches_title_or_folder_path_case_insensitively(as_admin):
     """Ben types "stokora"; the folder is "Stokora". Matching the path as well as
     the title is what makes "show me the Stokora briefs" work."""
-    by_title = _link(title="Stokora hero cut")
-    by_path = _link(title="Untitled", home_path="Phones/Stokora")
-    miss = _link(title="Something else", home_path="Phones/Other")
-    with patch.object(
-        mcp_router.submissions_router, "list_submission_links",
-        return_value=[by_title, by_path, miss],
-    ):
+    by_title = _row(title="Stokora hero cut")
+    by_path = _row(title="Untitled")
+    miss = _row(title="Something else")
+    paths = {by_path.id: "Phones/Stokora", miss.id: "Phones/Other"}
+    with _listing([by_title, by_path, miss], paths=paths):
         out = mcp_router.list_briefs(query="STOKORA")
 
     assert out["total_matched"] == 2
@@ -1169,3 +1163,150 @@ def test_submit_work_refuses_a_blank_source_link(as_admin):
                 source_url="   ",
             )
     submitted.assert_not_called()
+
+
+# ── Bulk reading and counting ─────────────────────────────────────────────────
+#
+# Reading 300 briefs one get_brief at a time took about two hours of round trips.
+# These pin the calls that replace that: pages with content, and counts.
+
+from contextlib import contextmanager  # noqa: E402
+
+
+def _row(**over):
+    """A SubmissionLink row as the bulk query returns it."""
+    r = MagicMock()
+    r.id = over.get("id", uuid.uuid4())
+    r.token = over.get("token", "tok")
+    r.title = over.get("title", "Brief")
+    r.home_project_id = over.get("home_project_id", uuid.uuid4())
+    r.home_folder_id = over.get("home_folder_id")
+    r.is_enabled = over.get("is_enabled", True)
+    r.created_at = over.get("created_at", datetime(2026, 9, 10, tzinfo=timezone.utc))
+    r.persona_label = over.get("persona_label")
+    r.angle_label = over.get("angle_label")
+    r.task_stage_id = over.get("task_stage_id")
+    r.instructions = over.get("instructions")
+    r.brief_json = over.get("brief_json")
+    r.brief_pdf_s3_key = over.get("brief_pdf_s3_key")
+    r.brief_reference_video_s3_keys = over.get("brief_reference_video_s3_keys", [])
+    r.brief_reference_image_s3_keys = over.get("brief_reference_image_s3_keys", [])
+    return r
+
+
+@contextmanager
+def _listing(rows, *, paths=None, counts=None, content=None):
+    """Stand in for the database: the filtered rows, their paths and counts.
+
+    `content` is what the page-only content query returns; when it is called,
+    the second element yielded records the ids it was asked for.
+    """
+    asked = []
+
+    def base_query(db, user, filters, *, with_content):
+        q = MagicMock()
+        if with_content:
+            def only(*_a, **_k):
+                inner = MagicMock()
+                inner.all.return_value = content if content is not None else rows
+                return inner
+            q.filter.side_effect = lambda clause: (asked.append(clause), only())[1]
+        else:
+            q.all.return_value = rows
+        return q
+
+    with patch.object(mcp_router.brief_search, "base_query", side_effect=base_query) as listed, \
+         patch.object(mcp_router, "link_home_paths", return_value=paths or {}), \
+         patch.object(mcp_router.submissions_router, "_count_map", return_value=counts or {}):
+        yield listed, asked
+
+
+def test_list_briefs_pages_past_the_first_page(as_admin):
+    rows = [_row(title=f"Brief {i}") for i in range(7)]
+    with _listing(rows):
+        out = mcp_router.list_briefs(limit=5, offset=5)
+    assert [b["title"] for b in out["briefs"]] == ["Brief 5", "Brief 6"]
+    assert out["next_offset"] is None
+
+
+def test_list_briefs_with_content_replaces_a_get_brief_per_brief(as_admin):
+    """The whole point: one call returns what get_brief would, for every brief
+    on the page."""
+    full = _row(title="A", instructions="By Friday", brief_json={"title": "A"},
+                brief_pdf_s3_key="k", brief_reference_video_s3_keys=["v1", "v2"])
+    with _listing([full], content=[full]) as (listed, asked):
+        out = mcp_router.list_briefs(include_content=True)
+    brief = out["briefs"][0]
+    assert brief["brief_json"] == {"title": "A"}
+    assert brief["instructions"] == "By Friday"
+    assert brief["has_brief_pdf"] is True
+    assert brief["reference_video_count"] == 2
+    # Content is fetched in a second query for the page only, not for every match.
+    assert listed.call_args_list[0].kwargs["with_content"] is False
+    assert listed.call_args_list[1].kwargs["with_content"] is True
+    assert len(asked) == 1
+
+
+def test_list_briefs_without_content_stays_light(as_admin):
+    with _listing([_row(brief_json={"big": "x" * 1000})]) as (listed, asked):
+        out = mcp_router.list_briefs()
+    assert "brief_json" not in out["briefs"][0]
+    assert listed.call_count == 1 and asked == []
+
+
+def test_a_page_of_full_briefs_is_capped_lower(as_admin):
+    """Fifty full briefs is already a lot of context; two hundred would swamp it."""
+    with pytest.raises(ValueError, match="50"):
+        mcp_router.list_briefs(include_content=True, limit=51)
+
+
+def test_list_briefs_persona_filter_follows_the_playbook_rule(as_admin):
+    titled = _row(title="20260910 - x - Frugal Phone Buyer - Fear - Battery - Static")
+    labelled = _row(title="Off convention", persona_label="frugal phone buyer")
+    lens_lookalike = _row(title="20260910 - x - Upgrader - Frugal Phone Buyer - H - Static")
+    with _listing([titled, labelled, lens_lookalike]):
+        out = mcp_router.list_briefs(persona="Frugal Phone Buyer")
+    # The SQL prefilter lets the lookalike through; the exact rule drops it.
+    assert {b["title"] for b in out["briefs"]} == {titled.title, labelled.title}
+
+
+def test_list_briefs_explains_a_bad_date(as_admin):
+    with pytest.raises(ValueError, match="created_after"):
+        mcp_router.list_briefs(created_after="last tuesday")
+
+
+def test_count_briefs_answers_in_one_call(as_admin):
+    rows = [
+        _row(persona_label="Frugal"), _row(persona_label="Frugal"),
+        _row(persona_label="Upgrader"), _row(title="Untagged"),
+    ]
+    with _listing(rows):
+        out = mcp_router.count_briefs(group_by="persona")
+    assert out["total"] == 4
+    assert out["groups"] == [
+        {"key": "Frugal", "count": 2},
+        {"key": "No persona", "count": 1},
+        {"key": "Upgrader", "count": 1},
+    ]
+
+
+def test_count_briefs_by_folder_uses_the_live_path(as_admin):
+    a, b, c = _row(), _row(), _row()
+    with _listing([a, b, c], paths={a.id: "Phones/Stokora", b.id: "Phones/Stokora"}):
+        out = mcp_router.count_briefs(group_by="folder")
+    assert out["groups"] == [
+        {"key": "Phones/Stokora", "count": 2},
+        {"key": "Not filed", "count": 1},
+    ]
+
+
+def test_count_briefs_without_grouping_is_just_the_total(as_admin):
+    with _listing([_row(), _row()]):
+        out = mcp_router.count_briefs()
+    assert out == {"total": 2, "group_by": None, "groups": None}
+
+
+def test_count_briefs_rejects_an_unknown_grouping(as_admin):
+    with pytest.raises(ValueError, match="group_by"):
+        mcp_router.count_briefs(group_by="colour")
+
