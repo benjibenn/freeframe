@@ -14,13 +14,16 @@ Stateless by design: `stateless_http=True` means every request carries its own a
 and completes in its own task, so the resolved user propagates cleanly through a
 ContextVar and the app stays safe to run behind more than one worker.
 """
+import mimetypes
+import os
 import secrets
+import shlex
 import uuid
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from mcp.server.fastmcp import FastMCP
 from sqlalchemy.orm import Session
 
@@ -29,7 +32,9 @@ from ..database import SessionLocal
 from ..middleware.api_key import resolve_api_key_user
 from ..services import mcp_oauth
 from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE, SCOPE_USERS_ADMIN
+from ..models.asset import Asset, AssetVersion, MediaFile
 from ..models.share import SharePermission
+from ..models.submission import SubmissionLink
 from ..models.user import User
 from ..schemas.approval import ApprovalCreate
 from ..schemas.asset import AssetUpdate
@@ -37,7 +42,11 @@ from ..schemas.auth import AdminSetPasswordRequest, InviteRequest
 from ..schemas.brief_overview import BriefLabelsUpdate
 from ..schemas.folder import AssetMoveRequest, FolderCreate, FolderUpdate
 from ..schemas.share import MultiShareCreate, ShareLinkCreate
+from ..schemas.upload import AbortUploadRequest, CompleteUploadRequest, InitiateUploadRequest
+from ..services import s3_service, source_link
 from ..services.brief_title import build_title
+from ..services.hook_naming import compose_name
+from ..services.url_fetch import RemoteFetchError, fetch_remote_file
 from ..schemas.submission import (
     BriefJsonUpdate,
     BulkDeleteRequest,
@@ -55,6 +64,7 @@ from . import projects as projects_router
 from . import share as share_router
 from . import submissions as submissions_router
 from . import tasks as tasks_router
+from . import upload as upload_router
 from . import users as users_router
 
 # Set by the ASGI wrapper below, read by the tools. Safe because a stateless
@@ -111,7 +121,10 @@ mcp = FastMCP(
         "path and creates whatever part of it is missing. The work editors send "
         "back is reached with list_submitted_files, and every file tool below "
         "takes an asset_id from it. To send work outside Freeframe, share_file "
-        "and share_folder mint a public link anyone can open."
+        "and share_folder mint a public link anyone can open. To bring a file in, "
+        "upload_from_url takes a link; a local file goes up with "
+        "start_file_upload (or start_file_submission for a brief), a curl, then "
+        "finish_file_upload."
     ),
     stateless_http=True,
     json_response=True,
@@ -1534,6 +1547,289 @@ def revoke_share(token: str) -> dict[str, Any]:
         raise ValueError("token must be the part of the share URL after /share/")
     _call(share_router.revoke_share_link, token=cleaned)
     return {"token": cleaned, "revoked": True}
+
+# ── Uploads ──────────────────────────────────────────────────────────────────
+#
+# The MCP server runs beside the API, not on the caller's machine, so it cannot
+# open a local path. A local file goes up in three steps instead: start returns a
+# presigned URL, the caller PUTs the file to it with curl, finish registers it.
+# The bytes never pass through the conversation, so size is bounded by storage
+# rather than by context.
+#
+# Every step reuses the browser's own routes — initiate, complete, abort — so the
+# required source link, the brief naming rules and processing are exactly the
+# web's, not a second implementation of them.
+
+# One presigned part. Storage refuses a single part past 5 GB, and refusing here
+# is better than after an hour-long PUT; anything larger goes through the web.
+_PART_LIMIT_BYTES = 5 * 1024**3
+_PRESIGN_SECONDS = 3600
+
+
+def _mime_for(filename: str, mime_type: str | None) -> str:
+    guessed = mime_type or mimetypes.guess_type(filename)[0]
+    if not guessed:
+        raise ValueError(f"Cannot tell what kind of file {filename!r} is — pass mime_type, e.g. 'image/png'")
+    return guessed
+
+
+def _initiate(
+    *,
+    project_id: uuid.UUID,
+    filename: str,
+    mime_type: str,
+    size_bytes: int | None,
+    source_url: str,
+    folder_id: uuid.UUID | None = None,
+    asset_name: str | None = None,
+    language: str | None = None,
+    asset_id: uuid.UUID | None = None,
+) -> Any:
+    """Create the asset, version and multipart upload exactly as the browser does."""
+    if size_bytes is not None and size_bytes > _PART_LIMIT_BYTES:
+        raise ValueError("Files over 5 GB need the web uploader — an MCP upload is a single part")
+    body = InitiateUploadRequest(
+        project_id=project_id,
+        asset_name=asset_name or os.path.splitext(filename)[0],
+        original_filename=filename,
+        mime_type=mime_type,
+        # Unknown is fine: finish records the size storage actually holds.
+        file_size_bytes=size_bytes or 0,
+        folder_id=folder_id,
+        language=language,
+        source_url=source_url,
+        asset_id=asset_id,
+    )
+    return _call(upload_router.initiate_upload, body=body)
+
+
+def _handoff(init: Any, file_path: str) -> dict[str, Any]:
+    """What the caller runs next: the PUT, then finish_file_upload."""
+    url = s3_service.presign_upload_part(init.s3_key, init.upload_id, 1)
+    return {
+        "upload_url": url,
+        # Quoted: a space in a path or a & in the signed URL would split the command.
+        "curl": f"curl -sS --fail -X PUT --upload-file {shlex.quote(file_path)} {shlex.quote(url)}",
+        "upload_id": init.upload_id,
+        "asset_id": str(init.asset_id),
+        "version_id": str(init.version_id),
+        "expires_in_seconds": _PRESIGN_SECONDS,
+        "next": "Run the curl command, then call finish_file_upload with version_id and upload_id.",
+    }
+
+
+def _finish(version_id: uuid.UUID, upload_id: str) -> dict[str, Any]:
+    db = _current_db.get()
+    version = db.query(AssetVersion).filter(AssetVersion.id == version_id).first()
+    # Ownership before storage: complete_upload checks it too, but only after
+    # this function would already have asked storage about someone else's upload.
+    if version is None or version.created_by != _user().id:
+        raise ValueError("No upload of yours with that version_id")
+    media = db.query(MediaFile).filter(MediaFile.version_id == version_id).first()
+    if media is None:
+        raise ValueError("No upload of yours with that version_id")
+
+    parts = s3_service.list_uploaded_parts(media.s3_key_raw, upload_id)
+    if not parts:
+        raise ValueError(
+            "Nothing has been uploaded for this upload_id yet — run the curl command "
+            "from start_file_upload first"
+        )
+
+    queued = BackgroundTasks()
+    done = _call(
+        upload_router.complete_upload,
+        body=CompleteUploadRequest(
+            s3_key=media.s3_key_raw,
+            upload_id=upload_id,
+            asset_id=version.asset_id,
+            version_id=version_id,
+            parts=[{"PartNumber": p["PartNumber"], "ETag": p["ETag"]} for p in parts],
+        ),
+        background_tasks=queued,
+    )
+    # The size given at start was a claim, or absent; storage knows the real one.
+    media.file_size_bytes = sum(p["Size"] for p in parts)
+    db.commit()
+    # complete_upload queues processing as a response background task, which
+    # FastAPI only runs after sending a response. A tool call has no response, so
+    # run them here — without this the file is stored but never processed: no
+    # thumbnail for an image, no HLS for a video.
+    for task in queued.tasks:
+        task.func(*task.args, **task.kwargs)
+    return {"asset_id": str(version.asset_id), "version_id": str(version_id), "status": done.status}
+
+
+@mcp.tool(
+    description=(
+        "Start uploading a local file into a project, optionally into one of its "
+        "folders (ids from list_destinations). The server cannot read your disk: "
+        "this returns a curl command that sends the file straight to storage. Run "
+        "it, then call finish_file_upload. file_path is used only to name the file "
+        "and write that command. source_url is required — where the file was made "
+        "(the Figma or Canva link); it becomes the first comment. mime_type is "
+        "guessed from the extension when omitted. Up to 5 GB."
+    )
+)
+def start_file_upload(
+    project_id: str,
+    file_path: str,
+    source_url: str,
+    folder_id: str | None = None,
+    asset_name: str | None = None,
+    mime_type: str | None = None,
+    size_bytes: int | None = None,
+) -> dict[str, Any]:
+    """Args: asset_name — defaults to the file name without its extension."""
+    _require_scope(SCOPE_WRITE)
+    source = source_link.normalize(source_url)
+    filename = os.path.basename(file_path)
+    mime = _mime_for(filename, mime_type)
+    init = _initiate(
+        project_id=_uuid(project_id, "project_id"),
+        filename=filename,
+        mime_type=mime,
+        size_bytes=size_bytes,
+        source_url=source,
+        folder_id=_uuid(folder_id, "folder_id") if folder_id else None,
+        asset_name=asset_name,
+    )
+    return _handoff(init, file_path)
+
+
+@mcp.tool(
+    description=(
+        "Start submitting a local file against a brief — the local-file version of "
+        "submit_work, with the same rules: when the brief prescribes deliverable "
+        "names, asset_name must be one of them (get_brief lists them); when it "
+        "lists two or more output_languages, language is required. Submitting a "
+        "deliverable that already exists adds a new version to it. Returns a curl "
+        "command; run it, then call finish_file_upload. source_url is required — "
+        "where the file was made, kept as its first comment."
+    )
+)
+def start_file_submission(
+    link_id: str,
+    file_path: str,
+    source_url: str,
+    asset_name: str | None = None,
+    language: str | None = None,
+    mime_type: str | None = None,
+    size_bytes: int | None = None,
+) -> dict[str, Any]:
+    _require_scope(SCOPE_WRITE)
+    source = source_link.normalize(source_url)
+    filename = os.path.basename(file_path)
+    mime = _mime_for(filename, mime_type)
+    link_uuid = _uuid(link_id, "link_id")
+
+    def _slot(db: Session, current_user: User):
+        link = submissions_router._validate_active(
+            db.query(SubmissionLink).filter(SubmissionLink.id == link_uuid).first()
+        )
+        # Resolved before provisioning so a bad name or language creates nothing.
+        lang = submissions_router.resolve_submitted_language(link.brief_json, language)
+        name = submissions_router.resolve_submitted_asset_name(link.brief_json, asset_name)
+        project_id = submissions_router._provision_submission_project(db, link, current_user)
+        existing = None
+        if name is not None:
+            # A repeat of the same deliverable is a revision, as in submit_work.
+            existing = db.query(Asset).filter(
+                Asset.project_id == project_id,
+                Asset.name == compose_name(lang, name),
+                Asset.deleted_at.is_(None),
+            ).first()
+        return project_id, lang, name, existing.id if existing else None
+
+    project_id, lang, name, asset_id = _call(_slot)
+    init = _initiate(
+        project_id=project_id,
+        filename=filename,
+        mime_type=mime,
+        size_bytes=size_bytes,
+        source_url=source,
+        asset_name=name,
+        language=lang,
+        asset_id=asset_id,
+    )
+    return _handoff(init, file_path)
+
+
+@mcp.tool(
+    description=(
+        "Finish an upload begun with start_file_upload or start_file_submission, "
+        "after its curl command has run. Registers the file and starts processing "
+        "(thumbnails; transcoding for video)."
+    )
+)
+def finish_file_upload(version_id: str, upload_id: str) -> dict[str, Any]:
+    _require_scope(SCOPE_WRITE)
+    return _finish(_uuid(version_id, "version_id"), upload_id)
+
+
+def _filename_from_url(url: str, content_type: str) -> str:
+    from urllib.parse import unquote, urlparse
+
+    name = os.path.basename(unquote(urlparse(url).path)) or "upload"
+    # A CDN endpoint often has no extension, and a typeless name makes a typeless
+    # stored key and download name.
+    if not os.path.splitext(name)[1]:
+        name += mimetypes.guess_extension(content_type) or ""
+    return name
+
+
+@mcp.tool(
+    description=(
+        "Upload an image or video from a public URL into a project, optionally "
+        "into one of its folders (ids from list_destinations). The server fetches "
+        "it, so the URL must be publicly reachable; up to 200 MB. To submit work "
+        "against a brief from a URL, use submit_work instead. source_url is "
+        "required — where the file was made (the Figma or Canva link), kept as "
+        "its first comment; it is not the url being fetched."
+    )
+)
+def upload_from_url(
+    project_id: str,
+    url: str,
+    source_url: str,
+    folder_id: str | None = None,
+    asset_name: str | None = None,
+) -> dict[str, Any]:
+    """Args: asset_name — defaults to the file name in the URL."""
+    _require_scope(SCOPE_WRITE)
+    source = source_link.normalize(source_url)
+    pid = _uuid(project_id, "project_id")
+    fid = _uuid(folder_id, "folder_id") if folder_id else None
+    # Fetched before anything is created, so a bad link leaves nothing behind.
+    try:
+        data, content_type = fetch_remote_file(
+            url,
+            allowed_content_types=("image/", "video/"),
+            max_bytes=submissions_router._MAX_SUBMIT_WORK_BYTES,
+        )
+    except RemoteFetchError as exc:
+        raise ValueError(str(exc)) from exc
+
+    init = _initiate(
+        project_id=pid,
+        filename=_filename_from_url(url, content_type),
+        mime_type=content_type,
+        size_bytes=len(data),
+        source_url=source,
+        folder_id=fid,
+        asset_name=asset_name,
+    )
+    try:
+        s3_service.upload_part(init.s3_key, init.upload_id, 1, data)
+    except Exception:
+        # Without this the version sits at "uploading" forever.
+        _call(
+            upload_router.abort_upload,
+            body=AbortUploadRequest(s3_key=init.s3_key, upload_id=init.upload_id, version_id=init.version_id),
+        )
+        raise
+    return _finish(init.version_id, init.upload_id)
+
 
 # ── Task pipeline ────────────────────────────────────────────────────────────
 
