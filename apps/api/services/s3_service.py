@@ -170,6 +170,32 @@ def complete_multipart_upload(s3_key: str, upload_id: str, parts: list[dict]) ->
         MultipartUpload={"Parts": parts},
     )
 
+def list_uploaded_parts(s3_key: str, upload_id: str) -> list[dict]:
+    """Parts stored so far for a multipart upload: PartNumber, ETag, Size.
+
+    Lets a caller who PUT a part through a presigned URL finish the upload without
+    relaying the ETag back from the PUT response — storage already knows it, and
+    asking it is one less thing for an agent driving curl to get wrong.
+    """
+    s3 = get_s3_client()
+    response = s3.list_parts(Bucket=settings.s3_bucket, Key=s3_key, UploadId=upload_id)
+    return [
+        {"PartNumber": p["PartNumber"], "ETag": p["ETag"], "Size": p["Size"]}
+        for p in response.get("Parts", [])
+    ]
+
+def upload_part(s3_key: str, upload_id: str, part_number: int, body: bytes) -> str:
+    """Store one part of a multipart upload from bytes the server holds; returns its ETag."""
+    s3 = get_s3_client()
+    response = s3.upload_part(
+        Bucket=settings.s3_bucket,
+        Key=s3_key,
+        UploadId=upload_id,
+        PartNumber=part_number,
+        Body=body,
+    )
+    return response["ETag"]
+
 def abort_multipart_upload(s3_key: str, upload_id: str) -> None:
     """Abort a multipart upload and clean up uploaded parts."""
     s3 = get_s3_client()
