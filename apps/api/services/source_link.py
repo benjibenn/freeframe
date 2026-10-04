@@ -51,3 +51,25 @@ def source_comment(
         body=f"{PREFIX}{normalize(source_url)}",
         visibility=VISIBILITY,
     )
+
+
+def parse(body) -> "str | None":
+    """The link out of a source comment's body, or None when it is not one."""
+    if not body or not body.startswith(PREFIX):
+        return None
+    return body[len(PREFIX):].strip() or None
+
+
+def links_by_version(rows) -> dict:
+    """{version_id: link} from (version_id, body) rows ordered oldest first.
+
+    The first source comment on a version wins: it is the one written at upload.
+    """
+    out: dict = {}
+    for version_id, body in rows:
+        if version_id in out:
+            continue
+        link = parse(body)
+        if link:
+            out[version_id] = link
+    return out
