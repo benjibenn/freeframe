@@ -96,7 +96,9 @@ def intersect(*sets: Optional[set]) -> Optional[set]:
     return out
 
 
-def light_brief_rows(db: Session, *, owned_link_ids: Optional[set], editor_id: Optional[uuid.UUID]):
+def light_brief_rows(
+    db: Session, *, owned_link_ids: Optional[set], editor_id: Optional[uuid.UUID]
+) -> tuple[list, Optional[set]]:
     """The light SubmissionLink columns a brief list filters on, plus which
     briefs `editor_id` is assigned to make (None = no editor filter).
 
