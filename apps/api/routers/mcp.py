@@ -26,6 +26,7 @@ from typing import Any, Optional
 
 from fastapi import BackgroundTasks, HTTPException
 from mcp.server.fastmcp import FastMCP
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -35,7 +36,7 @@ from ..services import mcp_oauth
 from ..services.mcp_oauth import SCOPE_READ, SCOPE_WRITE, SCOPE_USERS_ADMIN
 from ..models.asset import Asset, AssetVersion, MediaFile
 from ..models.share import SharePermission
-from ..models.submission import SubmissionLink
+from ..models.submission import Submission, SubmissionLink
 from ..models.task_stage import TaskStage
 from ..models.user import User
 from ..schemas.approval import ApprovalCreate
@@ -47,7 +48,9 @@ from ..schemas.share import MultiShareCreate, ShareLinkCreate
 from ..schemas.upload import AbortUploadRequest, CompleteUploadRequest, InitiateUploadRequest
 from ..services import brief_search, s3_service, source_link
 from ..services.folder_paths import link_home_paths
+from ..services.brief_editors import visible_editors
 from ..services.brief_title import build_title
+from ..services.permissions import is_platform_admin
 from ..services.hook_naming import compose_name
 from ..services.url_fetch import RemoteFetchError, fetch_remote_file
 from ..schemas.submission import (
@@ -231,7 +234,7 @@ def _call(fn, **kwargs) -> Any:
 
 # ── Discovery ────────────────────────────────────────────────────────────────
 
-_GROUPINGS = ("folder", "persona", "angle", "status", "month", "enabled")
+_GROUPINGS = ("folder", "persona", "angle", "status", "month", "enabled", "editor", "editor_stage")
 
 
 def _date_arg(value: str | None, field: str) -> datetime | None:
@@ -306,13 +309,135 @@ def _listed(link: Any, path: str | None, count: int) -> dict[str, Any]:
     return out
 
 
+# ── Editors and their stages ─────────────────────────────────────────────────
+#
+# Each editor on a brief carries their own stage (Submission.task_stage_id),
+# separate from the brief's own status. Without a read for it, an agent can only
+# learn where work stands by re-assigning an editor and reading the reply — a
+# write, to answer a question.
+
+_NO_STAGE = "No stage"
+_UNASSIGNED = "Unassigned"
+
+
+def _editor_map(db: Session, viewer: User, link_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[dict[str, Any]]]:
+    """Every editor on these briefs, with their stage and how many files they uploaded.
+
+    Two queries for the whole set, not two per brief. Rows pass through
+    visible_editors, the same isolation the task board applies.
+    """
+    if not link_ids:
+        return {}
+    stages = dict(db.query(TaskStage.id, TaskStage.name).all())
+    files = (
+        db.query(Asset.project_id, func.count(Asset.id))
+        .join(Submission, Submission.project_id == Asset.project_id)
+        .filter(Submission.submission_link_id.in_(link_ids), Asset.deleted_at.is_(None))
+        .group_by(Asset.project_id)
+        .all()
+    )
+    file_counts = {pid: int(n) for pid, n in files}
+    rows = (
+        db.query(Submission.submission_link_id, Submission.project_id, Submission.task_stage_id, User)
+        .join(User, User.id == Submission.user_id)
+        .filter(Submission.submission_link_id.in_(link_ids))
+        .all()
+    )
+    by_link: dict[uuid.UUID, list[Any]] = {}
+    for link_id, project_id, stage_id, user in rows:
+        by_link.setdefault(link_id, []).append(SimpleNamespace(
+            id=user.id,
+            name=user.display_name,
+            email=user.email,
+            task_stage_id=str(stage_id) if stage_id else None,
+            task_stage=stages.get(stage_id) if stage_id else None,
+            file_count=file_counts.get(project_id, 0),
+        ))
+    admin = is_platform_admin(viewer)
+    return {
+        lid: [
+            {**vars(e), "id": str(e.id)}
+            for e in visible_editors(eds, viewer.id, admin)
+        ]
+        for lid, eds in by_link.items()
+    }
+
+
+def _stage_rows(db: Session) -> list[tuple[uuid.UUID, str]]:
+    return (
+        db.query(TaskStage.id, TaskStage.name)
+        .filter(TaskStage.deleted_at.is_(None))
+        .order_by(TaskStage.position)
+        .all()
+    )
+
+
+def _stage_arg(value: str | None) -> str | None:
+    """A stage name, a stage id, or "none". Returns the name to match on.
+
+    Names are what a person types ("Review"); ids are what list_task_stages
+    returns. Both are accepted so neither has to be translated first.
+    """
+    if value is None or not value.strip():
+        return None
+    wanted = value.strip()
+    if wanted.casefold() == "none":
+        return _NO_STAGE
+    stages = _call(lambda db, current_user: _stage_rows(db))
+    for sid, name in stages:
+        if wanted.casefold() in (name.casefold(), str(sid)):
+            return name
+    names = ", ".join(name for _, name in stages)
+    raise ValueError(f"editor_stage must be one of {names}, a stage id, or none — got {value!r}")
+
+
+def _editor_ok(e: dict[str, Any], *, editor: str | None, stage: str | None, has_files: bool | None) -> bool:
+    """Whether one editor row satisfies every editor filter at once.
+
+    Applied per editor, not per brief: "genesis, in Review" must not match a
+    brief where genesis is Pending and someone else is in Review.
+    """
+    if editor and editor.strip().casefold() not in {
+        (e["name"] or "").casefold(), (e["email"] or "").casefold(), e["id"],
+    }:
+        return False
+    if stage and (e["task_stage"] or _NO_STAGE) != stage:
+        return False
+    if has_files is not None and (e["file_count"] > 0) != has_files:
+        return False
+    return True
+
+
+def _filter_by_editor(
+    rows: list[Any], *, editor: str | None, editor_stage: str | None, has_files: bool | None,
+) -> tuple[list[Any], dict[uuid.UUID, list[dict[str, Any]]] | None]:
+    """Keep the briefs with at least one editor passing every editor filter.
+
+    Returns the editor map too, so a caller that needs it does not load it twice.
+    With no editor filter set, nothing is loaded and the rows come back as given.
+    """
+    if not (editor or editor_stage or has_files is not None):
+        return rows, None
+    stage = _stage_arg(editor_stage)
+    eds = _call(lambda db, current_user: _editor_map(db, current_user, [r.id for r in rows]))
+    kept = [
+        r for r in rows
+        if any(_editor_ok(e, editor=editor, stage=stage, has_files=has_files) for e in eds.get(r.id, []))
+    ]
+    return kept, eds
+
+
 @mcp.tool(
     description=(
         "Search video request briefs, in pages. Returns each brief's id, title, "
         "where it is filed, persona, angle, submission count and submit URL. "
         "Filters, all optional and combined: query (title or folder path, "
         "case-insensitive), project_id, folder_id, persona, angle, enabled, "
-        "created_after / created_before (ISO dates), has_submissions. Pass "
+        "created_after / created_before (ISO dates), has_submissions (any editor "
+        "assigned). Editor filters, matched against ONE editor at a time: editor "
+        "(name, email or user id), editor_stage (stage name like Review, a stage "
+        "id, or none), has_files. Each brief lists its editors with their stage "
+        "and file_count. Pass "
         "include_content=true to get each brief's instructions and brief_json too "
         "— use that instead of calling get_brief once per brief, which is what "
         "made bulk reads take hours. Results come newest first; when truncated is "
@@ -330,6 +455,9 @@ def list_briefs(
     created_after: str | None = None,
     created_before: str | None = None,
     has_submissions: bool | None = None,
+    editor: str | None = None,
+    editor_stage: str | None = None,
+    has_files: bool | None = None,
     include_content: bool = False,
     offset: int = 0,
     limit: int = 50,
@@ -349,11 +477,13 @@ def list_briefs(
         created_before=created_before, has_submissions=has_submissions,
     )
     rows, paths = _matching(f)
+    rows, _ = _filter_by_editor(rows, editor=editor, editor_stage=editor_stage, has_files=has_files)
     chunk, meta = brief_search.page(rows, offset=offset, limit=limit)
 
     def fill(db: Session, current_user: User):
         ids = [r.id for r in chunk]
         counts = submissions_router._count_map(db, ids)
+        editors = _editor_map(db, current_user, ids)
         full = {}
         if include_content and ids:
             # A second, page-sized query: the heavy columns for these briefs only.
@@ -362,12 +492,13 @@ def list_briefs(
                     db, current_user, brief_search.BriefFilters(), with_content=True,
                 ).filter(SubmissionLink.id.in_(ids)).all()
             }
-        return counts, full
+        return counts, editors, full
 
-    counts, full = _call(fill)
+    counts, editors, full = _call(fill)
     briefs = []
     for r in chunk:
         item = _listed(r, paths.get(r.id), counts.get(r.id, 0))
+        item["editors"] = editors.get(r.id, [])
         if include_content and r.id in full:
             l = full[r.id]
             item["instructions"] = l.instructions
@@ -383,7 +514,11 @@ def list_briefs(
 @mcp.tool(
     description=(
         "Count briefs in one call, optionally grouped. group_by is one of folder, "
-        "persona, angle, status, month or enabled; omit it for just the total. "
+        "persona, angle, status, month, enabled, editor or editor_stage; omit it "
+        "for just the total. status is the brief's own status; editor_stage is "
+        "each assigned editor's stage, the one shown on their task list. Under "
+        "editor and editor_stage a brief with two editors counts once per editor "
+        "and a brief with none counts as Unassigned, so groups can sum past total. "
         "Takes the same filters as list_briefs. Persona is read the way the "
         "playbook reads it: the brief's label, or else the persona slot of its "
         "title. Groups come largest first."
@@ -400,6 +535,9 @@ def count_briefs(
     created_after: str | None = None,
     created_before: str | None = None,
     has_submissions: bool | None = None,
+    editor: str | None = None,
+    editor_stage: str | None = None,
+    has_files: bool | None = None,
 ) -> dict[str, Any]:
     _require_scope(SCOPE_READ)
     by = group_by.strip().casefold() if group_by else None
@@ -412,6 +550,7 @@ def count_briefs(
         created_before=created_before, has_submissions=has_submissions,
     )
     rows, paths = _matching(f)
+    rows, eds = _filter_by_editor(rows, editor=editor, editor_stage=editor_stage, has_files=has_files)
     if not by:
         return {"total": len(rows), "group_by": None, "groups": None}
 
@@ -429,6 +568,14 @@ def count_briefs(
     elif by == "month":
         groups = brief_search.tally(
             (r.created_at.strftime("%Y-%m") if r.created_at else None for r in rows), blank="Unknown",
+        )
+    elif by in ("editor", "editor_stage"):
+        if eds is None:
+            eds = _call(lambda db, current_user: _editor_map(db, current_user, [r.id for r in rows]))
+        key = (lambda e: e["name"] or e["email"]) if by == "editor" else (lambda e: e["task_stage"] or _NO_STAGE)
+        groups = brief_search.tally(
+            (key(e) if e else _UNASSIGNED for r in rows for e in (eds.get(r.id) or [None])),
+            blank=_UNASSIGNED,
         )
     else:  # enabled
         groups = brief_search.tally(("enabled" if r.is_enabled else "disabled" for r in rows), blank="")
@@ -2026,6 +2173,31 @@ def list_assignable_users() -> list[dict[str, Any]]:
         {"id": str(u.id), "name": u.name, "email": u.email}
         for u in _call(users_router.list_assignable_users)
     ]
+
+
+@mcp.tool(
+    description=(
+        "Read who is on a brief and how far each of them is: every assigned "
+        "editor with their stage (name and id) and how many files they uploaded. "
+        "Read-only. For many briefs at once, use list_briefs or count_briefs "
+        "(group_by=editor_stage) instead of calling this once per brief."
+    )
+)
+def get_brief_editors(link_id: str) -> dict[str, Any]:
+    """Args: link_id — the brief to read."""
+    _require_scope(SCOPE_READ)
+    lid = _uuid(link_id, "link_id")
+
+    def run(db: Session, current_user: User):
+        link = brief_search.base_query(
+            db, current_user, brief_search.BriefFilters(), with_content=False,
+        ).filter(SubmissionLink.id == lid).first()
+        if link is None:
+            raise ValueError(f"No brief {link_id} that you can see")
+        return link, _editor_map(db, current_user, [lid]).get(lid, [])
+
+    link, editors = _call(run)
+    return {"id": str(link.id), "title": link.title, "editors": editors}
 
 
 def _brief_task_summary(item: Any) -> dict[str, Any]:
