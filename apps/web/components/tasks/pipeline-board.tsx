@@ -102,6 +102,7 @@ export function PipelineBoard({
   folderFilter,
   canManage = true,
   viewerId,
+  stageCounts,
 }: {
   briefs: BriefTaskItem[]
   stages: TaskStage[]
@@ -110,6 +111,11 @@ export function PipelineBoard({
   canManage?: boolean
   /** Which editor row belongs to the reader. */
   viewerId?: string
+  /** Per-stage totals across every page ('unassigned' for none) — the same
+   *  TaskBoardPage.stage_counts the list view's chips read. `briefs` only holds
+   *  the pages loaded so far, so a column header built from it would undercount
+   *  everything the board hasn't fetched yet. */
+  stageCounts: Record<string, number>
 }) {
   const refreshBoard = useTaskBoardRefresh()
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
@@ -132,6 +138,8 @@ export function PipelineBoard({
     briefs.filter((b) =>
       columnId === UNASSIGNED ? stage(b) === null : stage(b) === columnId,
     )
+
+  const countFor = (columnId: string) => stageCounts[columnId === UNASSIGNED ? 'unassigned' : columnId] ?? 0
 
   const drop = async (columnId: string) => {
     const id = draggingId
@@ -184,7 +192,7 @@ export function PipelineBoard({
                   style={{ backgroundColor: col.color || 'var(--text-tertiary, #6b7280)' }}
                 />
                 <span className="truncate text-xs font-medium text-text-secondary">{col.name}</span>
-                <span className="ml-auto text-xs text-text-tertiary">{items.length}</span>
+                <span className="ml-auto text-xs text-text-tertiary">{countFor(col.id)}</span>
               </div>
 
               <div className="flex flex-col gap-2">

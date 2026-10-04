@@ -97,6 +97,7 @@ export default function TasksPage() {
   // and already stripped of what they may not see.
   const {
     data: pages,
+    size,
     isLoading,
     isValidating,
     setSize,
@@ -114,7 +115,11 @@ export default function TasksPage() {
   const total = pages?.[0]?.total ?? 0
   const stageCounts = pages?.[0]?.stage_counts ?? {}
   const reachedEnd = briefs.length >= total
-  const loadingMore = isValidating && (pages?.length ?? 0) > 0
+  // isValidating alone also fires on a plain refresh (e.g. refreshBoard() after
+  // an edit), which would flash this banner even though no new page is coming.
+  // size > pages.length is specifically "a page beyond those already loaded is
+  // being fetched".
+  const loadingMore = isValidating && size > (pages?.length ?? 0)
   const sentinelRef = useInfiniteScroll({
     onLoadMore: () => setSize((s) => s + 1),
     enabled: !reachedEnd && !loadingMore && briefs.length > 0,
@@ -273,6 +278,7 @@ export default function TasksPage() {
           folderFilter={folderFilter}
           canManage={isPlatformAdmin}
           viewerId={user?.id}
+          stageCounts={stageCounts}
         />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border">
