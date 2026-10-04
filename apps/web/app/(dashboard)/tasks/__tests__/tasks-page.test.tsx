@@ -44,7 +44,7 @@ function renderTasks() {
 /** Same cache across mounts, so the second render sees a warm SWR cache
  *  instead of a fresh one — the only way to exercise "remount with cached
  *  pages" in a test. */
-function renderTasksWithCache(cache: Map<string, unknown>) {
+function renderTasksWithCache(cache: Map<string, any>) {
   return render(
     <SWRConfig value={{ provider: () => cache, dedupingInterval: 0 }}>
       <TasksPage />
@@ -122,7 +122,7 @@ describe('TasksPage — paged board', () => {
   })
 
   it('remounting with a warm cache refetches the first page (stale after /review decisions otherwise)', async () => {
-    const cache = new Map<string, unknown>()
+    const cache = new Map<string, any>()
     const { unmount } = renderTasksWithCache(cache)
     expect(await screen.findByText('First Brief')).toBeInTheDocument()
     unmount()

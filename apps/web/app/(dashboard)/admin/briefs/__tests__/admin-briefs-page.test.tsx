@@ -33,7 +33,7 @@ function row(id: string, title: string): BriefOverviewRow {
 const overviewCalls = () =>
   vi.mocked(api.get).mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith('/brief-overview'))
 
-function renderPage(cache: Map<string, unknown> = new Map()) {
+function renderPage(cache: Map<string, any> = new Map()) {
   return render(
     <SWRConfig value={{ provider: () => cache, dedupingInterval: 0 }}>
       <AdminBriefsPage />
@@ -54,7 +54,7 @@ beforeEach(() => {
 
 describe('AdminBriefsPage — paged overview', () => {
   it('remounting with a warm cache refetches the first page', async () => {
-    const cache = new Map<string, unknown>()
+    const cache = new Map<string, any>()
     const { unmount } = renderPage(cache)
     expect(await screen.findAllByText('First Brief')).not.toHaveLength(0)
     unmount()
