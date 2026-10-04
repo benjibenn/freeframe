@@ -113,11 +113,15 @@ class BriefTaskItem(BaseModel):
     assets: list[TaskItem] = []
 
 
-class TaskBoardResponse(BaseModel):
-    briefs: list[BriefTaskItem]
-    # Assets uploaded straight into a project rather than against a request.
-    # They still need somewhere to live or the board silently loses them.
-    unbriefed: list[TaskItem] = []
+class TaskBoardPage(BaseModel):
+    """One page of briefs, plus what the page needs about the whole filtered set."""
+    items: list[BriefTaskItem]
+    # Briefs matching the filters, across every page.
+    total: int
+    # Briefs per stage id ("unassigned" for none), counted BEFORE the stage
+    # filter and by the reader's own stage on briefs they edit — what the
+    # stage chips show.
+    stage_counts: dict[str, int] = {}
 
 
 class BriefAssigneeAssign(BaseModel):

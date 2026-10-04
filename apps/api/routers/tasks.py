@@ -43,11 +43,21 @@ from ..schemas.task_stage import (
     BriefTaskItem,
     BriefAssigneeAssign,
     BriefEditorAssign,
-    TaskBoardResponse,
+    TaskBoardPage,
+)
+from ..services.board_paging import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    brief_matches,
+    intersect,
+    light_brief_rows,
+    page_briefs,
+    parse_stage_filter,
 )
 from ..services.brief_editors import may_move_editor_stage, visible_editors, visible_owner
 from ..services.permissions import require_platform_admin, is_platform_admin
 from ..services.s3_service import generate_presigned_get_url
+from ..services.thumbnails import thumbnail_key
 
 router = APIRouter(tags=["tasks"])
 
@@ -230,7 +240,7 @@ def _build_task_items(db: Session, assets: list[Asset]) -> list[TaskItem]:
     out: list[TaskItem] = []
     for a in assets:
         version = version_by_asset.get(a.id)
-        thumb_key = thumb_by_version.get(version.id) if version else None
+        thumb_key = thumbnail_key(a.asset_type, thumb_by_version.get(version.id)) if version else None
         submitter = users.get(a.created_by)
         project = projects.get(a.project_id)
         req_id = project.submission_link_id if project else None
@@ -316,36 +326,50 @@ def _owned_brief_or_403(db: Session, link_id: uuid.UUID, user: User) -> Submissi
     return link
 
 
-@router.get("/task-board", response_model=TaskBoardResponse)
+@router.get("/task-board", response_model=TaskBoardPage)
 def get_task_board(
     folder_path: Optional[str] = Query(
         None, description="Restrict to a taxonomy path and everything under it."
     ),
+    stage_id: Optional[str] = Query(
+        None, description="A stage UUID, or 'unassigned'. Read as the viewer's own stage on briefs they edit."
+    ),
+    editor_id: Optional[uuid.UUID] = Query(
+        None, description="Admins only: briefs this user is assigned to make."
+    ),
+    q: Optional[str] = Query(None, description="Case-insensitive match on the title or the folder path."),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """The to-do view: every brief as a work item, with its delivered files nested.
+    """The to-do view: one page of briefs as work items, with their delivered files nested.
 
-    Briefs come from submission_links, so one appears the moment it is created —
-    before anything has been uploaded against it. That is the row /tasks can never
-    show, because /tasks lists assets and an un-started brief has none.
+    Briefs come from submission_links, so one appears the moment it is created,
+    before anything has been uploaded against it.
 
-    Assets uploaded straight into a project (no request behind them) are returned
-    separately rather than dropped, so the board still accounts for everything.
+    Every brief in scope is filtered on its light columns first (services/
+    board_paging.py). Only the briefs on the requested page then get their files,
+    editors and thumbnails loaded. That replaces loading every asset on the
+    platform to draw the first 25 rows.
     """
     admin = is_platform_admin(current_user)
+    stage_filter = parse_stage_filter(stage_id)
+    if editor_id is not None and not admin:
+        # Which briefs another editor is on is exactly what isolation withholds.
+        raise HTTPException(status_code=403, detail="Only admins can filter by editor")
 
-    # Non-admins see only briefs they own. Scoped here rather than in the UI: the
-    # response body would otherwise carry every other editor's brief titles and
-    # file names, which is exactly the isolation submission links exist to provide.
+    # Non-admins see only briefs they own or are assigned to make. Scoped here
+    # rather than in the UI: the response would otherwise carry every other
+    # editor's brief titles and file names.
     owned_link_ids = None
     owner_link_ids: set = set()
     editor_link_ids: set = set()
     my_project_ids: set = set()
+    my_stage_by_link: dict = {}
     if not admin:
-        # Two ways a brief reaches a non-admin, and they grant different sight.
-        # Owning it (assignee_id — whose desk it sits on) is an internal role:
-        # that person reviews every editor's work, so they see all of it.
+        # Owning a brief (assignee_id) is an internal role: that person reviews
+        # every editor's work on it, so they see all of it.
         owner_link_ids = {
             lid for (lid,) in db.query(SubmissionLink.id).filter(
                 SubmissionLink.assignee_id == current_user.id,
@@ -353,26 +377,50 @@ def get_task_board(
             ).all()
         }
         # Being assigned to MAKE it grants sight of the brief and of your own
-        # uploads, nothing more. Every editor on a link gets a separate private
-        # project, but all of those projects carry the same submission_link_id —
-        # so filtering assets by link id alone would hand each editor every
-        # other editor's filenames, names and thumbnails. The project id is
-        # what actually separates them.
+        # uploads only. Every editor's private project carries the same
+        # submission_link_id, so the project id is what separates them. Their
+        # own stage is read here too: it is the stage they file the brief under.
         editor_rows = (
-            db.query(Submission.submission_link_id, Submission.project_id)
+            db.query(Submission.submission_link_id, Submission.project_id, Submission.task_stage_id)
             .join(SubmissionLink, SubmissionLink.id == Submission.submission_link_id)
             .filter(
                 Submission.user_id == current_user.id,
                 SubmissionLink.deleted_at.is_(None),
             ).all()
         )
-        editor_link_ids = {lid for lid, _ in editor_rows}
-        my_project_ids = {pid for _, pid in editor_rows}
+        editor_link_ids = {lid for lid, _, _ in editor_rows}
+        my_project_ids = {pid for _, pid, _ in editor_rows}
+        my_stage_by_link = {lid: sid for lid, _, sid in editor_rows}
         owned_link_ids = owner_link_ids | editor_link_ids
         if not owned_link_ids:
-            return TaskBoardResponse(briefs=[], unbriefed=[])
+            return TaskBoardPage(items=[], total=0, stage_counts={})
 
-    asset_q = db.query(Asset).filter(Asset.deleted_at.is_(None))
+    light, editor_filter_ids = light_brief_rows(db, owned_link_ids=owned_link_ids, editor_id=editor_id)
+
+    # Derived from where each brief is filed, not read off the row, so a renamed
+    # folder shows at once. A brief matches on its own path, so an un-started
+    # brief is still filterable even though it has no assets to match through.
+    link_path = link_home_paths(db, light)
+    only = intersect(editor_filter_ids)
+    light = [
+        r for r in light
+        if brief_matches(r, link_path.get(r.id), q=q, folder=folder_path, only_ids=only)
+    ]
+    page_ids, total, stage_counts = page_briefs(
+        light, my_stage_by_link=my_stage_by_link, stage_filter=stage_filter, offset=offset, limit=limit,
+    )
+    if not page_ids:
+        return TaskBoardPage(items=[], total=total, stage_counts=stage_counts)
+
+    by_id = {l.id: l for l in db.query(SubmissionLink).filter(SubmissionLink.id.in_(page_ids)).all()}
+    links = [by_id[i] for i in page_ids if i in by_id]
+
+    # Files for the briefs on this page only.
+    asset_q = (
+        db.query(Asset)
+        .join(Project, Project.id == Asset.project_id)
+        .filter(Project.submission_link_id.in_([l.id for l in links]), Asset.deleted_at.is_(None))
+    )
     if folder_path:
         asset_q = asset_q.filter(asset_path_filter(db, folder_path))
     items = _build_task_items(db, asset_q.order_by(Asset.created_at.desc()).all())
@@ -382,33 +430,9 @@ def get_task_board(
             if it.request_id in owner_link_ids
             or (it.request_id in editor_link_ids and it.project_id in my_project_ids)
         ]
-
     by_request: dict = {}
-    unbriefed: list[TaskItem] = []
     for it in items:
-        (by_request.setdefault(it.request_id, []) if it.request_id else unbriefed).append(it)
-
-    links = (
-        db.query(SubmissionLink)
-        .filter(SubmissionLink.deleted_at.is_(None))
-        .order_by(SubmissionLink.created_at.desc())
-        .all()
-    )
-    # Derived from where each request is filed rather than read off the row, so a
-    # renamed folder is reflected immediately. Filtering therefore happens here in
-    # Python instead of in SQL — briefs number in the dozens, not the millions, and
-    # a filter that disagreed with the path on screen would be worse than slower.
-    if owned_link_ids is not None:
-        links = [l for l in links if l.id in owned_link_ids]
-    link_path = link_home_paths(db, links)
-    if folder_path:
-        # A brief matches on its own path, so an un-started brief is still
-        # filterable — it has no assets to match through.
-        prefix = folder_path.strip("/")
-        links = [
-            l for l in links
-            if (p := link_path.get(l.id)) and (p == prefix or p.startswith(prefix + "/"))
-        ]
+        by_request.setdefault(it.request_id, []).append(it)
 
     owners = {
         u.id: u for u in db.query(User)
@@ -432,13 +456,13 @@ def get_task_board(
             .filter(Submission.submission_link_id.in_([l.id for l in links]))
             .all()
         )
-        for link_id, paid_at, stage_id, user in rows:
+        for link_id, paid_at, editor_stage_id, user in rows:
             editors_by_link.setdefault(link_id, []).append(
                 BriefEditor(
                     id=user.id,
                     name=user.display_name,
                     email=user.email,
-                    task_stage_id=stage_id,
+                    task_stage_id=editor_stage_id,
                 )
             )
             sub_counts[link_id] = sub_counts.get(link_id, 0) + 1
@@ -477,9 +501,7 @@ def get_task_board(
             )
         )
 
-    # Assets uploaded straight into a project have no owner, so there is no
-    # version of them that belongs to a given editor.
-    return TaskBoardResponse(briefs=briefs, unbriefed=unbriefed if admin else [])
+    return TaskBoardPage(items=briefs, total=total, stage_counts=stage_counts)
 
 
 @router.patch("/assets/{asset_id}/task-stage", response_model=TaskItem)

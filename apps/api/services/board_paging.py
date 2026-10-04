@@ -12,6 +12,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
+from ..models.submission import Submission, SubmissionLink
 
 UNASSIGNED = "unassigned"
 DEFAULT_LIMIT = 25
@@ -91,6 +94,35 @@ def intersect(*sets: Optional[set]) -> Optional[set]:
         if s is not None:
             out = set(s) if out is None else out & s
     return out
+
+
+def light_brief_rows(db: Session, *, owned_link_ids: Optional[set], editor_id: Optional[uuid.UUID]):
+    """The light SubmissionLink columns a brief list filters on, plus which
+    briefs `editor_id` is assigned to make (None = no editor filter).
+
+    Shared by /task-board and /brief-overview so they never drift on either
+    query. Query order matters for the tests (db sessions are MagicMocks with
+    no real database): the editor filter is read first, then the light rows.
+    """
+    editor_filter_ids = (
+        {lid for (lid,) in db.query(Submission.submission_link_id).filter(
+            Submission.user_id == editor_id
+        ).all()}
+        if editor_id is not None else None
+    )
+    light_q = db.query(
+        SubmissionLink.id,
+        SubmissionLink.title,
+        SubmissionLink.task_stage_id,
+        SubmissionLink.created_at,
+        SubmissionLink.home_folder_id,
+        SubmissionLink.home_project_id,
+        SubmissionLink.taxonomy_path,
+    ).filter(SubmissionLink.deleted_at.is_(None))
+    if owned_link_ids is not None:
+        light_q = light_q.filter(SubmissionLink.id.in_(owned_link_ids))
+    rows = light_q.order_by(SubmissionLink.created_at.desc(), SubmissionLink.id.desc()).all()
+    return rows, editor_filter_ids
 
 
 def page_briefs(rows, *, my_stage_by_link: dict, stage_filter: Optional[str], offset: int, limit: int):
