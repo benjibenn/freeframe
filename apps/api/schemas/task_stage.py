@@ -32,14 +32,18 @@ class TaskStageReorder(BaseModel):
 
 
 class TaskStageAssign(BaseModel):
-    # Null moves the video back to "unassigned" (no stage).
+    """A stage move, for a file (PATCH /assets/{id}/task-stage) or for one editor
+    on a brief (PATCH /submission-links/{link}/editors/{user}/task-stage)."""
+    # Null moves it back to "unassigned" (no stage).
     task_stage_id: Optional[uuid.UUID] = None
-    # Set by the /review page: the stage the reviewer saw the file in. The move
-    # is refused (409) if the file has left it since. With this set, a move to
-    # Revision requires `comment`.
+    # Set by the /review page: the stage the reviewer saw the file or editor in.
+    # The move is refused (409) if it has left that stage since. With this set,
+    # a move to Revision requires `comment`.
     expected_stage_id: Optional[uuid.UUID] = None
-    # Why the file is going back. Accepted only on a move to Revision; saved as a
-    # normal comment on `version_id` (default: newest) and emailed to the uploader.
+    # Why it is going back. Accepted only on a move to Revision; saved as a
+    # normal comment on `version_id` and emailed to the file's uploader / the
+    # editor. For a file, `version_id` defaults to the newest; for an editor it
+    # is required and must be a file in their project.
     comment: Optional[str] = None
     version_id: Optional[uuid.UUID] = None
 

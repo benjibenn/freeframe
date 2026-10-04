@@ -679,23 +679,34 @@ export interface OAuthClient {
 // ─── Review queue ─────────────────────────────────────────────────────────────
 
 /** A file waiting in the Review stage (GET /review-queue). */
-export interface ReviewQueueItem {
+/** One file an editor delivered, at its newest version. */
+export interface ReviewFile {
   asset_id: string;
-  /** The newest version: the one under review, and where a reject comment goes. */
+  /** The newest version: the one under review, and where a revision comment goes. */
   version_id: string;
-  project_id: string;
-  asset_type: AssetType;
   file_name: string;
-  brief_id: string | null;
-  brief_title: string | null;
-  brief_token: string | null;
-  editor_name: string | null;
+  asset_type: AssetType;
   thumbnail_url: string | null;
   /** Null until the version is ready. Video is a relative /stream/hls/... URL. */
   preview_url: string | null;
   /** The upload's "Source: " link. Null when none was given. */
   canva_url: string | null;
-  submitted_at: string;
+}
+
+/** One editor on one brief, waiting in the Review stage. */
+export interface ReviewQueueItem {
+  submission_id: string;
+  brief_id: string;
+  brief_title: string;
+  brief_token: string;
+  /** The editor's private upload project, where their files live. */
+  project_id: string;
+  editor_id: string;
+  editor_name: string | null;
+  /** Sent back with the decision; the server 409s if the editor moved since. */
+  expected_stage_id: string;
+  waited_since: string;
+  files: ReviewFile[];
 }
 
 export interface ReviewQueuePage {
