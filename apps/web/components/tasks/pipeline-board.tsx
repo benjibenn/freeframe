@@ -2,15 +2,14 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { mutate } from 'swr'
 import { FileText, FolderOpen } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { relativePath } from './brief-row'
 import { ownEditorRow, stageOf } from '@/lib/brief-stage'
+import { useTaskBoardRefresh } from '@/lib/task-board-refresh'
 import type { BriefTaskItem, TaskStage } from '@/types'
 
-const BOARD_KEY = '/task-board'
 const UNASSIGNED = '__unassigned__'
 
 /** One brief as a card. Deliberately the same unit as a to-do row: the two views
@@ -112,6 +111,7 @@ export function PipelineBoard({
   /** Which editor row belongs to the reader. */
   viewerId?: string
 }) {
+  const refreshBoard = useTaskBoardRefresh()
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [overColumn, setOverColumn] = React.useState<string | null>(null)
 
@@ -147,7 +147,7 @@ export function PipelineBoard({
       : `/submission-links/${id}/task-stage`
     try {
       await api.patch(url, { task_stage_id: target })
-      mutate(BOARD_KEY)
+      refreshBoard()
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Could not move that brief')
     }

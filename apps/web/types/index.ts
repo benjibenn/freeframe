@@ -108,10 +108,14 @@ export interface BriefTaskItem {
   assets: TaskItem[];
 }
 
-export interface TaskBoardResponse {
-  briefs: BriefTaskItem[];
-  /** Uploaded straight into a project, with no request behind them. */
-  unbriefed: TaskItem[];
+/** One page of the task board (GET /task-board). */
+export interface TaskBoardPage {
+  items: BriefTaskItem[];
+  /** Briefs matching the filters, across every page. */
+  total: number;
+  /** Briefs per stage id ('unassigned' for none), counted before the stage
+   *  filter and by the reader's own stage on briefs they edit. */
+  stage_counts: Record<string, number>;
 }
 
 // ─── Core Entities ────────────────────────────────────────────────────────────

@@ -8,10 +8,10 @@ import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useTaskBoardRefresh } from '@/lib/task-board-refresh'
 import type { TaskStage } from '@/types'
 
 const STAGES_KEY = '/task-stages'
-const TASKS_KEY = '/task-board'
 
 function StageDot({ color }: { color: string | null }) {
   return (
@@ -23,6 +23,7 @@ function StageDot({ color }: { color: string | null }) {
 }
 
 export function ManageStagesDialog({ stages }: { stages: TaskStage[] }) {
+  const refreshBoard = useTaskBoardRefresh()
   const [open, setOpen] = React.useState(false)
   const [newName, setNewName] = React.useState('')
   const [newColor, setNewColor] = React.useState('#3b82f6')
@@ -30,7 +31,7 @@ export function ManageStagesDialog({ stages }: { stages: TaskStage[] }) {
 
   const refresh = () => {
     mutate(STAGES_KEY)
-    mutate(TASKS_KEY)
+    refreshBoard()
   }
 
   const handleAdd = async (e: React.FormEvent) => {

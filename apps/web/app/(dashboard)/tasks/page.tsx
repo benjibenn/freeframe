@@ -2,21 +2,24 @@
 
 import * as React from 'react'
 import useSWR from 'swr'
+import useSWRInfinite from 'swr/infinite'
 import { Columns3, List, ListChecks } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { EmptyState } from '@/components/shared/empty-state'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useAuthStore } from '@/stores/auth-store'
 import { ManageStagesDialog } from '@/components/tasks/manage-stages-dialog'
-import { BriefRow, relativePath } from '@/components/tasks/brief-row'
+import { BriefRow } from '@/components/tasks/brief-row'
 import { PipelineBoard } from '@/components/tasks/pipeline-board'
-import { stageOf } from '@/lib/brief-stage'
-import type { TaskStage, TaskBoardResponse, User } from '@/types'
+import { TaskBoardRefreshProvider } from '@/lib/task-board-refresh'
+import type { TaskStage, TaskBoardPage, User } from '@/types'
 
 const STAGES_KEY = '/task-stages'
-const BOARD_KEY = '/task-board'
+const BOARD_PATH = '/task-board'
 const OWNERS_KEY = '/users/assignable'
+const PAGE_SIZE = 25
 
 function StageChip({
   label,
@@ -59,8 +62,7 @@ export default function TasksPage() {
   const isPlatformAdmin = Boolean(user?.is_superadmin || user?.is_subadmin)
 
   // Two readings of the same briefs: 'list' answers "what is on my plate and
-  // whose", 'pipeline' answers "where is everything in review". Neither is a
-  // subset of the other, so both stay.
+  // whose", 'pipeline' answers "where is everything in review".
   const [view, setView] = React.useState<'list' | 'pipeline'>('list')
   const [stageFilter, setStageFilter] = React.useState<string | null>(null)
   const [folderFilter, setFolderFilter] = React.useState<string | null>(null)
@@ -69,49 +71,77 @@ export default function TasksPage() {
   const { data: stages } = useSWR<TaskStage[]>(STAGES_KEY, () =>
     api.get<TaskStage[]>(STAGES_KEY),
   )
-  // The board is scoped server-side to the briefs this reader owns OR is assigned
-  // to make, and the rows are already stripped of what they may not see — so there
-  // is nothing here to filter or hide. Note the two halves are not the same right:
-  // being on your board does not mean you own it.
-  const { data: board, isLoading } = useSWR<TaskBoardResponse>(BOARD_KEY, () =>
-    api.get<TaskBoardResponse>(BOARD_KEY),
+
+  // Filters run on the server. The board is paged, so a filter applied here
+  // would only ever see the briefs loaded so far. The stage filter belongs to
+  // the list view; the pipeline shows every stage as a column.
+  const boardQuery = React.useMemo(() => {
+    const qp = new URLSearchParams()
+    if (view === 'list' && stageFilter) qp.set('stage_id', stageFilter)
+    if (folderFilter) qp.set('folder_path', folderFilter)
+    return qp.toString()
+  }, [view, stageFilter, folderFilter])
+
+  const getBoardKey = React.useCallback(
+    (index: number, previous: TaskBoardPage | null) => {
+      if (previous && index * PAGE_SIZE >= previous.total) return null
+      const qp = new URLSearchParams(boardQuery)
+      qp.set('limit', String(PAGE_SIZE))
+      qp.set('offset', String(index * PAGE_SIZE))
+      return `${BOARD_PATH}?${qp}`
+    },
+    [boardQuery],
   )
+
+  // Scoped server-side to the briefs this reader owns OR is assigned to make,
+  // and already stripped of what they may not see.
+  const {
+    data: pages,
+    isLoading,
+    isValidating,
+    setSize,
+    mutate: mutateBoard,
+  } = useSWRInfinite<TaskBoardPage>(getBoardKey, (key: string) => api.get<TaskBoardPage>(key), {
+    revalidateFirstPage: false,
+  })
+
+  // Back to one page whenever the filters change.
+  React.useEffect(() => {
+    setSize(1)
+  }, [boardQuery, setSize])
+
+  const briefs = React.useMemo(() => (pages ?? []).flatMap((p) => p.items), [pages])
+  const total = pages?.[0]?.total ?? 0
+  const stageCounts = pages?.[0]?.stage_counts ?? {}
+  const reachedEnd = briefs.length >= total
+  const loadingMore = isValidating && (pages?.length ?? 0) > 0
+  const sentinelRef = useInfiniteScroll({
+    onLoadMore: () => setSize((s) => s + 1),
+    enabled: !reachedEnd && !loadingMore && briefs.length > 0,
+  })
+  const refreshBoard = React.useCallback(() => {
+    void mutateBoard()
+  }, [mutateBoard])
+
   const { data: owners } = useSWR<User[]>(
     isPlatformAdmin ? OWNERS_KEY : null,
     () => api.get<User[]>(OWNERS_KEY),
   )
 
   const stageList = stages ?? []
-  const allBriefs = board?.briefs ?? []
 
-  // Folder filter applies to a brief's own path — an un-started brief has no
-  // assets to match through, and it is the row most worth keeping visible.
-  const inFolder = (path: string | null) =>
-    folderFilter === null ||
-    (path !== null && (path === folderFilter || path.startsWith(folderFilter + '/')))
-
-  const folderBriefs = allBriefs.filter((b) => inFolder(b.taxonomy_path))
-
-  // Chips and rows read the same status the pipeline columns do — an editor's own,
-  // an admin's the brief's. Reading the brief's here would put an editor's brief in
-  // one chip, the pipeline column for another, and their sub-row on a third.
-  const stageFor = (b: (typeof folderBriefs)[number]) => stageOf(b, user?.id, isPlatformAdmin)
-
-  const countByStage = (id: string | null) =>
-    folderBriefs.filter((b) => stageFor(b) === id).length
-
-  const briefs = folderBriefs.filter((b) => {
-    if (view === 'pipeline') return true
-    if (stageFilter === null) return true
-    if (stageFilter === 'unassigned') return stageFor(b) === null
-    return stageFor(b) === stageFilter
-  })
+  // Counted by the server over the whole filtered set, by the rule the pipeline
+  // columns use (an editor's own status, an admin's the brief's). See
+  // reader_stage in apps/api/services/board_paging.py.
+  const countByStage = (id: string | null) => stageCounts[id ?? 'unassigned'] ?? 0
+  const countAll = Object.values(stageCounts).reduce((n, c) => n + c, 0)
 
   const crumbs = folderFilter
     ? folderFilter.split('/').map((seg, i, all) => ({ label: seg, path: all.slice(0, i + 1).join('/') }))
     : []
 
   return (
+    <TaskBoardRefreshProvider value={refreshBoard}>
     <div className="p-4 sm:p-6 max-w-6xl space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div>
@@ -158,7 +188,7 @@ export default function TasksPage() {
         <div className="flex flex-wrap items-center gap-1">
           <StageChip
             label="All"
-            count={folderBriefs.length}
+            count={countAll}
             active={stageFilter === null}
             onClick={() => setStageFilter(null)}
           />
@@ -274,6 +304,11 @@ export default function TasksPage() {
           </table>
         </div>
       )}
+
+      {/* Infinite scroll: fires when this scrolls into view. */}
+      <div ref={sentinelRef} aria-hidden className="h-6" />
+      {loadingMore && <p className="text-center text-xs text-text-tertiary">Loading more…</p>}
     </div>
+    </TaskBoardRefreshProvider>
   )
 }
