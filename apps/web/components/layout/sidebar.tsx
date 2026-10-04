@@ -14,6 +14,7 @@ import {
   User,
   ChevronsLeft,
   Activity,
+  ClipboardCheck,
   ListChecks,
   ClipboardList,
   LayoutGrid,
@@ -185,6 +186,29 @@ export function Sidebar({ collapsed: collapsedProp, onToggle, mobileOpen = false
             {!collapsed && (
               <span className={cn('text-[13px]', pathname.startsWith('/activity') && 'font-medium')}>
                 Activity
+              </span>
+            )}
+          </Link>
+        )}
+
+        {/* Review queue — admins & sub-admins. Page and /review-queue are admin-only. */}
+        {isPlatformAdmin && (
+          <Link
+            href="/review"
+            onClick={() => setNotifOpen(false)}
+            className={cn(
+              'group relative flex items-center rounded-md transition-colors duration-100',
+              collapsed ? 'justify-center h-9 w-9 mx-auto' : 'gap-2.5 px-2.5 h-9',
+              pathname.startsWith('/review')
+                ? 'bg-bg-hover text-text-primary'
+                : 'text-text-secondary hover:bg-bg-hover/60 hover:text-text-primary',
+            )}
+            title={collapsed ? 'Review' : undefined}
+          >
+            <ClipboardCheck className="h-[18px] w-[18px] shrink-0" strokeWidth={pathname.startsWith('/review') ? 2 : 1.5} />
+            {!collapsed && (
+              <span className={cn('text-[13px]', pathname.startsWith('/review') && 'font-medium')}>
+                Review
               </span>
             )}
           </Link>
