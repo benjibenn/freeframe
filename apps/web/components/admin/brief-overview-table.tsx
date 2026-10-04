@@ -7,13 +7,18 @@
  * navigates. The structured brief, the submitter list and thumbnails of what each
  * submitter uploaded all render in the right-hand pane, so an admin can sweep the
  * whole pipeline without opening an edit form or walking into a per-submitter
- * project. Pure props — the page owns fetching, this owns presentation.
+ * project. The page owns the list and its filters. This owns presentation,
+ * plus fetching the opened brief's structured JSON, which is no longer in the
+ * list.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import useSWR from 'swr'
 import { Check, Copy } from 'lucide-react'
+import { api } from '@/lib/api'
 import { BriefView } from '@/components/projects/brief-view'
+import type { OverviewFilters } from '@/lib/brief-overview-query'
 
 export type BriefOverviewFile = {
   asset_id: string
@@ -49,7 +54,7 @@ export type BriefOverviewRow = {
   angle_label: string | null
   problem: string | null
   has_brief: boolean
-  brief_json: Record<string, unknown> | null
+  has_brief_json: boolean
   reference_image_count: number
   reference_video_count: number
   submission_count: number
@@ -74,21 +79,6 @@ function Chip({ children }: { children: React.ReactNode }) {
       {children}
     </span>
   )
-}
-
-/**
- * The brief's creation day in the VIEWER's timezone, as YYYY-MM-DD.
- *
- * `<input type="date">` yields a local calendar day, while created_at is a UTC
- * instant. Comparing the two as strings on the same local footing avoids the
- * classic off-by-one where `new Date('2026-09-10')` parses as UTC midnight and
- * silently drops a brief created that evening.
- */
-function localDay(iso: string): string {
-  const d = new Date(iso)
-  const m = `${d.getMonth() + 1}`.padStart(2, '0')
-  const day = `${d.getDate()}`.padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${day}`
 }
 
 /**
@@ -145,50 +135,52 @@ function CopyBriefLink({ token }: { token: string }) {
   )
 }
 
-type Filters = { query: string; from: string; to: string; withFiles: boolean; userId: string }
-
-/**
- * Name search spans the title AND the folder path because both are rendered on
- * the row — an admin searching "Iphone 17" is reading the line they can see, not
- * guessing which of the two fields the string happens to live in.
- */
-function matches(r: BriefOverviewRow, f: Filters): boolean {
-  if (f.withFiles && r.asset_count === 0) return false
-  if (f.userId && !r.submissions.some((s) => s.user_id === f.userId)) return false
-
-  const day = localDay(r.created_at)
-  if (f.from && day < f.from) return false
-  if (f.to && day > f.to) return false
-
-  const q = f.query.trim().toLowerCase()
-  if (!q) return true
-  return `${r.title} ${r.home_path ?? ''}`.toLowerCase().includes(q)
+/** The opened brief's structured JSON. Fetched on open, not carried by the list. */
+function BriefJsonPane({ briefId, hasBriefJson }: { briefId: string; hasBriefJson: boolean }) {
+  const { data, error, isLoading } = useSWR<{ brief_json: Record<string, unknown> | null }>(
+    hasBriefJson ? `/submission-links/${briefId}` : null,
+    (k: string) => api.get<{ brief_json: Record<string, unknown> | null }>(k),
+  )
+  const note = (text: string) => (
+    <p className="mt-4 border-t border-border pt-4 text-sm text-text-tertiary">{text}</p>
+  )
+  if (!hasBriefJson) return note('No structured brief attached.')
+  if (error) return note('Could not load the brief.')
+  if (isLoading || !data) return note('Loading brief…')
+  if (!data.brief_json) return note('No structured brief attached.')
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <BriefView data={data.brief_json} />
+    </div>
+  )
 }
 
-const NO_FILTERS: Filters = { query: '', from: '', to: '', withFiles: false, userId: '' }
-
-export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS)
+export function BriefOverviewTable({
+  rows,
+  total,
+  filters,
+  onFiltersChange,
+  submitters,
+  loadMoreRef,
+  loadingMore = false,
+}: {
+  rows: BriefOverviewRow[]
+  /** Briefs matching the filters, across every page. */
+  total: number
+  filters: OverviewFilters
+  onFiltersChange: (next: OverviewFilters) => void
+  /** Everyone who can submit, for the submitter filter. */
+  submitters: { id: string; label: string }[]
+  /** Infinite-scroll sentinel, placed after the last row. */
+  loadMoreRef?: React.Ref<HTMLDivElement>
+  loadingMore?: boolean
+}) {
   const [selectedId, setSelectedId] = useState<string | null>(rows[0]?.id ?? null)
 
-  const visible = useMemo(() => rows.filter((r) => matches(r, filters)), [rows, filters])
-
-  // Every distinct submitter across all briefs, sorted for a stable dropdown.
-  const submitters = useMemo(() => {
-    const byId = new Map<string, string>()
-    for (const r of rows) {
-      for (const s of r.submissions) byId.set(s.user_id, s.user_name || s.user_email)
-    }
-    return Array.from(byId, ([id, label]) => ({ id, label })).sort((a, b) =>
-      a.label.localeCompare(b.label),
-    )
-  }, [rows])
-
-  // Selection is DERIVED, not stored-and-corrected. Narrowing the filters can
-  // hide whatever was selected; falling through to the first visible brief keeps
-  // the detail pane populated without an effect that would flash the old brief
-  // for a frame before resetting it.
-  const selected = visible.find((r) => r.id === selectedId) ?? visible[0] ?? null
+  // Selection is DERIVED, not stored-and-corrected. A refetch can drop whatever
+  // was selected; falling through to the first row keeps the detail pane
+  // populated without flashing the old brief for a frame.
+  const selected = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null
   // When a submitter filter is active, the detail pane shows only THEIR
   // submissions — that's what "view submissions by user" means once a brief
   // is open, not every submitter's work on that brief.
@@ -197,10 +189,8 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
       ? selected.submissions.filter((s) => s.user_id === filters.userId)
       : selected.submissions
     : []
-  const set = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }))
-  // Judged on whether a control is SET, not on whether the count changed: a
-  // date bound that happens to admit every brief is still an active filter, and
-  // the admin needs the Clear affordance to see that.
+  const set = (patch: Partial<OverviewFilters>) => onFiltersChange({ ...filters, ...patch })
+  // Judged on whether a control is SET, not on whether the count changed.
   const isFiltered =
     filters.query.trim() !== '' ||
     filters.from !== '' ||
@@ -269,7 +259,7 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
             {isFiltered && (
               <button
                 type="button"
-                onClick={() => setFilters(NO_FILTERS)}
+                onClick={() => onFiltersChange({ query: '', from: '', to: '', withFiles: false, userId: '' })}
                 className="text-xs text-text-tertiary underline hover:text-text-secondary"
               >
                 Clear
@@ -278,18 +268,18 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
           </div>
           {isFiltered && (
             <p className="text-2xs text-text-tertiary">
-              Showing {visible.length} of {rows.length}
+              {total} brief{total === 1 ? '' : 's'} match
             </p>
           )}
         </div>
 
-        {rows.length === 0 && (
+        {rows.length === 0 && !isFiltered && (
           <p className="px-2 py-4 text-sm text-text-tertiary">No briefs yet.</p>
         )}
-        {rows.length > 0 && visible.length === 0 && (
+        {rows.length === 0 && isFiltered && (
           <p className="px-2 py-4 text-sm text-text-tertiary">No briefs match these filters.</p>
         )}
-        {visible.map((r) => (
+        {rows.map((r) => (
           <button
             key={r.id}
             type="button"
@@ -321,6 +311,8 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
             </span>
           </button>
         ))}
+        <div ref={loadMoreRef} aria-hidden className="h-6 shrink-0" />
+        {loadingMore && <p className="px-2 py-2 text-xs text-text-tertiary">Loading more…</p>}
       </div>
 
       {/* ── Detail ─────────────────────────────────────────────── */}
@@ -339,15 +331,7 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
               <CopyBriefLink key={selected.id} token={selected.token} />
             </div>
 
-            {selected.brief_json ? (
-              <div className="mt-4 border-t border-border pt-4">
-                <BriefView data={selected.brief_json} />
-              </div>
-            ) : (
-              <p className="mt-4 border-t border-border pt-4 text-sm text-text-tertiary">
-                No structured brief attached.
-              </p>
-            )}
+            <BriefJsonPane key={selected.id} briefId={selected.id} hasBriefJson={selected.has_brief_json} />
 
             {(selected.reference_image_count > 0 || selected.reference_video_count > 0) && (
               <div className="mt-5 border-t border-border pt-4">
@@ -362,6 +346,8 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
                             <img
                               src={url}
                               alt={`Reference ${i + 1}`}
+                              loading="lazy"
+                              decoding="async"
                               className="h-28 w-28 rounded border border-border object-cover transition-opacity hover:opacity-80"
                             />
                           </a>
@@ -440,6 +426,8 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
                                   <img
                                     src={f.thumbnail_url}
                                     alt={f.name}
+                                    loading="lazy"
+                                    decoding="async"
                                     className="h-16 w-24 rounded border border-border object-cover transition-opacity hover:opacity-80"
                                   />
                                 ) : (
