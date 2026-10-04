@@ -47,10 +47,13 @@ export default function AdminBriefsPage() {
     qp.set('offset', String(index * PAGE_SIZE))
     return `/brief-overview?${qp}`
   }
-  const { data: pages, error, isLoading, isValidating, setSize } = useSWRInfinite<OverviewPage>(
+  const { data: pages, error, isLoading, isValidating, size, setSize } = useSWRInfinite<OverviewPage>(
     getKey,
     (k: string) => api.get<OverviewPage>(k),
-    { revalidateFirstPage: false, keepPreviousData: true },
+    // false: a scroll-triggered setSize must not also refetch every earlier
+    // page. true: a remount must still see fresh data instead of serving a
+    // warm-but-stale cache forever (see /tasks, which has the same pair).
+    { revalidateFirstPage: false, keepPreviousData: true, revalidateOnMount: true },
   )
   useEffect(() => {
     setSize(1)
@@ -59,7 +62,9 @@ export default function AdminBriefsPage() {
   const rows = useMemo(() => (pages ?? []).flatMap((p) => p.items), [pages])
   const total = pages?.[0]?.total ?? 0
   const reachedEnd = rows.length >= total
-  const loadingMore = isValidating && (pages?.length ?? 0) > 0
+  // pages is undefined on the very first load, where size (1) > 0 would
+  // otherwise also be true and show this next to the initial load.
+  const loadingMore = isValidating && pages !== undefined && size > pages.length
   const loadMoreRef = useInfiniteScroll({
     onLoadMore: () => setSize((s) => s + 1),
     enabled: !reachedEnd && !loadingMore && rows.length > 0,
