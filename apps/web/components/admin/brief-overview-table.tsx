@@ -18,7 +18,7 @@ import useSWR from 'swr'
 import { Check, Copy } from 'lucide-react'
 import { api } from '@/lib/api'
 import { BriefView } from '@/components/projects/brief-view'
-import type { OverviewFilters } from '@/lib/brief-overview-query'
+import { NO_FILTERS, type OverviewFilters } from '@/lib/brief-overview-query'
 
 export type BriefOverviewFile = {
   asset_id: string
@@ -259,7 +259,7 @@ export function BriefOverviewTable({
             {isFiltered && (
               <button
                 type="button"
-                onClick={() => onFiltersChange({ query: '', from: '', to: '', withFiles: false, userId: '' })}
+                onClick={() => onFiltersChange(NO_FILTERS)}
                 className="text-xs text-text-tertiary underline hover:text-text-secondary"
               >
                 Clear
