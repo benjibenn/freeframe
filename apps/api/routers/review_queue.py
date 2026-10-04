@@ -64,7 +64,15 @@ def _queue_page(db: Session, review_id, *, project_id, editor_id, limit: int, of
             AssetVersion,
             and_(AssetVersion.asset_id == Asset.id, AssetVersion.version_number == latest.c.vn),
         )
-        .filter(Asset.task_stage_id == review_id, Asset.deleted_at.is_(None))
+        # A soft-deleted brief's project is not removed, just marked deleted_at.
+        # Without this join+filter its files stay queued and 404 when clicked
+        # through from the queue into a brief that no longer resolves.
+        .join(Project, Project.id == Asset.project_id)
+        .filter(
+            Asset.task_stage_id == review_id,
+            Asset.deleted_at.is_(None),
+            Project.deleted_at.is_(None),
+        )
     )
     if project_id is not None:
         q = q.filter(Asset.project_id == project_id)

@@ -103,3 +103,27 @@ def test_items_are_built_from_the_page(mock_db):
     assert body["items"][0]["asset_id"] == str(asset.id)
     assert body["items"][0]["version_id"] == str(version.id)
     assert body["items"][0]["canva_url"] is None
+
+
+def test_queue_page_excludes_soft_deleted_projects(mock_db):
+    """A deleted brief's project is soft-deleted (Project.deleted_at set), not
+    removed. Its files must not stay queued — they would 404 when an admin
+    clicks through from the queue into a brief that no longer resolves.
+    """
+    from apps.api.routers.review_queue import _queue_page
+
+    mock_db.join.return_value = mock_db
+    mock_db.group_by.return_value = mock_db
+    mock_db.subquery.return_value = mock_db
+    mock_db.order_by.return_value = mock_db
+    mock_db.offset.return_value = mock_db
+    mock_db.limit.return_value = mock_db
+    mock_db.count.return_value = 0
+    mock_db.all.return_value = []
+
+    _queue_page(mock_db, uuid.uuid4(), project_id=None, editor_id=None, limit=25, offset=0)
+
+    filter_args = [arg for call in mock_db.filter.call_args_list for arg in call.args]
+    rendered = " ".join(str(arg) for arg in filter_args)
+    assert "projects.deleted_at" in rendered
+    assert "IS NULL" in rendered
