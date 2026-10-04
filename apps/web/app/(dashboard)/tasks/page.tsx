@@ -12,7 +12,7 @@ import { ManageStagesDialog } from '@/components/tasks/manage-stages-dialog'
 import { BriefRow, relativePath } from '@/components/tasks/brief-row'
 import { PipelineBoard } from '@/components/tasks/pipeline-board'
 import { stageOf } from '@/lib/brief-stage'
-import type { TaskStage, TaskBoardResponse, User } from '@/types'
+import type { BriefEditor, TaskStage, TaskBoardResponse, User } from '@/types'
 
 const STAGES_KEY = '/task-stages'
 const BOARD_KEY = '/task-board'
@@ -65,6 +65,8 @@ export default function TasksPage() {
   const [stageFilter, setStageFilter] = React.useState<string | null>(null)
   const [folderFilter, setFolderFilter] = React.useState<string | null>(null)
   const [typeFilter, setTypeFilter] = React.useState<string>('all')
+  // Admin only: one editor's desk, read as they read it. Null is everyone.
+  const [editorFilter, setEditorFilter] = React.useState<string | null>(null)
 
   const { data: stages } = useSWR<TaskStage[]>(STAGES_KEY, () =>
     api.get<TaskStage[]>(STAGES_KEY),
@@ -84,18 +86,38 @@ export default function TasksPage() {
   const stageList = stages ?? []
   const allBriefs = board?.briefs ?? []
 
+  // Picked from the people actually on a brief, not every assignable user — an
+  // editor with nothing accepted would only ever show an empty board.
+  const editorOptions = React.useMemo(() => {
+    const seen = new Map<string, BriefEditor>()
+    for (const b of allBriefs) for (const e of b.editors) seen.set(e.id, e)
+    return Array.from(seen.values()).sort((a, b) =>
+      (a.name || a.email || '').localeCompare(b.name || b.email || ''),
+    )
+  }, [allBriefs])
+  const asEditorId = isPlatformAdmin ? editorFilter : null
+  const editorName = (id: string) => {
+    const e = editorOptions.find((o) => o.id === id)
+    return e?.name || e?.email || 'this editor'
+  }
+
   // Folder filter applies to a brief's own path — an un-started brief has no
   // assets to match through, and it is the row most worth keeping visible.
   const inFolder = (path: string | null) =>
     folderFilter === null ||
     (path !== null && (path === folderFilter || path.startsWith(folderFilter + '/')))
 
-  const folderBriefs = allBriefs.filter((b) => inFolder(b.taxonomy_path))
+  const folderBriefs = allBriefs.filter(
+    (b) =>
+      inFolder(b.taxonomy_path) &&
+      (asEditorId === null || b.editors.some((e) => e.id === asEditorId)),
+  )
 
   // Chips and rows read the same status the pipeline columns do — an editor's own,
   // an admin's the brief's. Reading the brief's here would put an editor's brief in
   // one chip, the pipeline column for another, and their sub-row on a third.
-  const stageFor = (b: (typeof folderBriefs)[number]) => stageOf(b, user?.id, isPlatformAdmin)
+  const stageFor = (b: (typeof folderBriefs)[number]) =>
+    stageOf(b, user?.id, isPlatformAdmin, asEditorId)
 
   const countByStage = (id: string | null) =>
     folderBriefs.filter((b) => stageFor(b) === id).length
@@ -123,6 +145,21 @@ export default function TasksPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isPlatformAdmin && (
+            <select
+              aria-label="Editor"
+              value={editorFilter ?? ''}
+              onChange={(e) => setEditorFilter(e.target.value || null)}
+              className="rounded-md border border-border bg-bg-secondary px-2.5 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-border-focus cursor-pointer"
+            >
+              <option value="">All editors</option>
+              {editorOptions.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name || e.email || e.id}
+                </option>
+              ))}
+            </select>
+          )}
           <div className="flex items-center rounded-lg border border-border p-0.5">
             <button
               onClick={() => setView('list')}
@@ -231,7 +268,9 @@ export default function TasksPage() {
           description={
             folderFilter
               ? `No briefs under ${folderFilter}.`
-              : isPlatformAdmin
+              : asEditorId
+                ? `Nothing assigned to ${editorName(asEditorId)}.`
+                : isPlatformAdmin
                 ? 'Create a request to start tracking work.'
                 : 'Nothing is assigned to you yet.'
           }
@@ -243,6 +282,7 @@ export default function TasksPage() {
           folderFilter={folderFilter}
           canManage={isPlatformAdmin}
           viewerId={user?.id}
+          asEditorId={asEditorId}
         />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border">

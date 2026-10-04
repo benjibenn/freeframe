@@ -189,14 +189,6 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
   // the detail pane populated without an effect that would flash the old brief
   // for a frame before resetting it.
   const selected = visible.find((r) => r.id === selectedId) ?? visible[0] ?? null
-  // When a submitter filter is active, the detail pane shows only THEIR
-  // submissions — that's what "view submissions by user" means once a brief
-  // is open, not every submitter's work on that brief.
-  const selectedSubmissions = selected
-    ? filters.userId
-      ? selected.submissions.filter((s) => s.user_id === filters.userId)
-      : selected.submissions
-    : []
   const set = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }))
   // Judged on whether a control is SET, not on whether the count changed: a
   // date bound that happens to admit every brief is still an active filter, and
@@ -328,141 +320,167 @@ export function BriefOverviewTable({ rows }: { rows: BriefOverviewRow[] }) {
         {!selected ? (
           <p className="text-sm text-text-tertiary">Select a brief.</p>
         ) : (
-          <>
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="text-base font-semibold text-text-primary">{selected.title}</h2>
-                {selected.home_path && (
-                  <p className="mt-0.5 text-xs text-text-tertiary">{selected.home_path}</p>
-                )}
-              </div>
-              <CopyBriefLink key={selected.id} token={selected.token} />
-            </div>
+          <BriefDetail brief={selected} userId={filters.userId} from="/admin/briefs" />
+        )}
+      </div>
+    </div>
+  )
+}
 
-            {selected.brief_json ? (
-              <div className="mt-4 border-t border-border pt-4">
-                <BriefView data={selected.brief_json} />
-              </div>
-            ) : (
-              <p className="mt-4 border-t border-border pt-4 text-sm text-text-tertiary">
-                No structured brief attached.
-              </p>
+/**
+ * One brief in full: structured brief, references, and each submitter's uploads.
+ * Shared by this overview's right-hand pane and the playbook's brief modal.
+ * With `userId`, only that submitter's submissions are listed.
+ */
+export function BriefDetail({
+  brief,
+  userId = '',
+  from,
+}: {
+  brief: BriefOverviewRow
+  userId?: string
+  /** Where an opened upload's back arrow returns to. */
+  from: string
+}) {
+  // When a submitter filter is active, the detail shows only THEIR
+  // submissions — that's what "view submissions by user" means once a brief
+  // is open, not every submitter's work on that brief.
+  const submissions = userId
+    ? brief.submissions.filter((s) => s.user_id === userId)
+    : brief.submissions
+  return (
+    <>
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h2 className="text-base font-semibold text-text-primary">{brief.title}</h2>
+        {brief.home_path && (
+          <p className="mt-0.5 text-xs text-text-tertiary">{brief.home_path}</p>
+        )}
+      </div>
+      <CopyBriefLink key={brief.id} token={brief.token} />
+    </div>
+
+    {brief.brief_json ? (
+      <div className="mt-4 border-t border-border pt-4">
+        <BriefView data={brief.brief_json} />
+      </div>
+    ) : (
+      <p className="mt-4 border-t border-border pt-4 text-sm text-text-tertiary">
+        No structured brief attached.
+      </p>
+    )}
+
+    {(brief.reference_image_count > 0 || brief.reference_video_count > 0) && (
+      <div className="mt-5 border-t border-border pt-4">
+        <h3 className="text-sm font-medium text-text-secondary">References</h3>
+        {brief.reference_image_count > 0 && (
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {referenceUrls(brief.token, 'image', brief.reference_image_count).map(
+              (url, i) => (
+                <li key={url}>
+                  <a href={url} target="_blank" rel="noreferrer">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={url}
+                      alt={`Reference ${i + 1}`}
+                      className="h-28 w-28 rounded border border-border object-cover transition-opacity hover:opacity-80"
+                    />
+                  </a>
+                </li>
+              ),
             )}
-
-            {(selected.reference_image_count > 0 || selected.reference_video_count > 0) && (
-              <div className="mt-5 border-t border-border pt-4">
-                <h3 className="text-sm font-medium text-text-secondary">References</h3>
-                {selected.reference_image_count > 0 && (
-                  <ul className="mt-2 flex flex-wrap gap-2">
-                    {referenceUrls(selected.token, 'image', selected.reference_image_count).map(
-                      (url, i) => (
-                        <li key={url}>
-                          <a href={url} target="_blank" rel="noreferrer">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={url}
-                              alt={`Reference ${i + 1}`}
-                              className="h-28 w-28 rounded border border-border object-cover transition-opacity hover:opacity-80"
-                            />
-                          </a>
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                )}
-                {selected.reference_video_count > 0 && (
-                  <ul className="mt-2 flex flex-wrap gap-2">
-                    {referenceUrls(selected.token, 'video', selected.reference_video_count).map(
-                      (url) => (
-                        <li key={url}>
-                          <video
-                            src={url}
-                            controls
-                            preload="metadata"
-                            className="h-40 w-64 rounded border border-border bg-black object-contain"
-                          />
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                )}
-              </div>
+          </ul>
+        )}
+        {brief.reference_video_count > 0 && (
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {referenceUrls(brief.token, 'video', brief.reference_video_count).map(
+              (url) => (
+                <li key={url}>
+                  <video
+                    src={url}
+                    controls
+                    preload="metadata"
+                    className="h-40 w-64 rounded border border-border bg-black object-contain"
+                  />
+                </li>
+              ),
             )}
+          </ul>
+        )}
+      </div>
+    )}
 
-            <div className="mt-5 border-t border-border pt-4">
-              <h3 className="text-sm font-medium text-text-secondary">
-                Submissions ({selectedSubmissions.length}
-                {filters.userId ? ` of ${selected.submission_count}` : ''})
-              </h3>
-              {selectedSubmissions.length === 0 ? (
-                <p className="mt-2 text-sm text-text-tertiary">
-                  {filters.userId ? 'No submissions from this user on this brief.' : 'No submissions yet.'}
+    <div className="mt-5 border-t border-border pt-4">
+      <h3 className="text-sm font-medium text-text-secondary">
+        Submissions ({submissions.length}
+        {userId ? ` of ${brief.submission_count}` : ''})
+      </h3>
+      {submissions.length === 0 ? (
+        <p className="mt-2 text-sm text-text-tertiary">
+          {userId ? 'No submissions from this user on this brief.' : 'No submissions yet.'}
+        </p>
+      ) : (
+        <ul className="mt-2 flex flex-col gap-3">
+          {submissions.map((s) => (
+            <li key={s.id} className="rounded-md border border-border p-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-text-primary">
+                    {s.display_name || s.user_name}
+                  </p>
+                  <p className="truncate text-xs text-text-tertiary">{s.user_email}</p>
+                </div>
+                <p className="text-xs text-text-tertiary">
+                  {new Date(s.created_at).toLocaleDateString()}
+                  {s.paid_at ? ' · paid' : ''}
                 </p>
-              ) : (
-                <ul className="mt-2 flex flex-col gap-3">
-                  {selectedSubmissions.map((s) => (
-                    <li key={s.id} className="rounded-md border border-border p-3">
-                      <div className="flex flex-wrap items-baseline justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm text-text-primary">
-                            {s.display_name || s.user_name}
-                          </p>
-                          <p className="truncate text-xs text-text-tertiary">{s.user_email}</p>
-                        </div>
-                        <p className="text-xs text-text-tertiary">
-                          {new Date(s.created_at).toLocaleDateString()}
-                          {s.paid_at ? ' · paid' : ''}
-                        </p>
-                      </div>
+              </div>
 
-                      {s.files.length === 0 ? (
-                        <p className="mt-2 text-xs text-text-tertiary">Nothing uploaded yet.</p>
-                      ) : (
-                        <ul className="mt-2 flex flex-wrap gap-2">
-                          {s.files.map((f) => (
-                            <li key={f.asset_id} className="w-24">
-                              {/* The upload's own review screen — comments, annotations,
-                                  versions. ?from returns the back arrow here rather than
-                                  stranding the admin in a submitter's project folder. */}
-                              {/* New tab on purpose: the overview is a sweeping
-                                  view, and an admin opening six uploads in a row
-                                  should not lose their filters and scroll each
-                                  time. ?from still gives the new tab a sane back
-                                  target if they navigate on from there. */}
-                              <Link
-                                href={`/projects/${s.project_id}/assets/${f.asset_id}?from=/admin/briefs`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                                title={`Open ${f.name} in a new tab`}
-                              >
-                                {f.thumbnail_url ? (
-                                  <img
-                                    src={f.thumbnail_url}
-                                    alt={f.name}
-                                    className="h-16 w-24 rounded border border-border object-cover transition-opacity hover:opacity-80"
-                                  />
-                                ) : (
-                                  <div className="flex h-16 w-24 items-center justify-center rounded border border-border bg-bg-secondary text-2xs text-text-tertiary transition-colors hover:bg-bg-hover">
-                                    no preview
-                                  </div>
-                                )}
-                                <span className="mt-1 block truncate text-2xs text-text-tertiary">
-                                  {f.name}
-                                </span>
-                              </Link>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+              {s.files.length === 0 ? (
+                <p className="mt-2 text-xs text-text-tertiary">Nothing uploaded yet.</p>
+              ) : (
+                <ul className="mt-2 flex flex-wrap gap-2">
+                  {s.files.map((f) => (
+                    <li key={f.asset_id} className="w-24">
+                      {/* The upload's own review screen — comments, annotations,
+                          versions. ?from returns the back arrow here rather than
+                          stranding the admin in a submitter's project folder. */}
+                      {/* New tab on purpose: the overview is a sweeping
+                          view, and an admin opening six uploads in a row
+                          should not lose their filters and scroll each
+                          time. ?from still gives the new tab a sane back
+                          target if they navigate on from there. */}
+                      <Link
+                        href={`/projects/${s.project_id}/assets/${f.asset_id}?from=${encodeURIComponent(from)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                        title={`Open ${f.name} in a new tab`}
+                      >
+                        {f.thumbnail_url ? (
+                          <img
+                            src={f.thumbnail_url}
+                            alt={f.name}
+                            className="h-16 w-24 rounded border border-border object-cover transition-opacity hover:opacity-80"
+                          />
+                        ) : (
+                          <div className="flex h-16 w-24 items-center justify-center rounded border border-border bg-bg-secondary text-2xs text-text-tertiary transition-colors hover:bg-bg-hover">
+                            no preview
+                          </div>
+                        )}
+                        <span className="mt-1 block truncate text-2xs text-text-tertiary">
+                          {f.name}
+                        </span>
+                      </Link>
                     </li>
                   ))}
                 </ul>
               )}
-            </div>
-          </>
-        )}
-      </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
+    </>
   )
 }

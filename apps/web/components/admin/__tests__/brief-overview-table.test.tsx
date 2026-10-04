@@ -214,7 +214,7 @@ describe('BriefOverviewTable — opening an upload', () => {
     // route needs both, and the submitter's project is not the brief's home.
     expect(link).toHaveAttribute(
       'href',
-      '/projects/p1/assets/f1?from=/admin/briefs',
+      '/projects/p1/assets/f1?from=%2Fadmin%2Fbriefs',
     )
   })
 

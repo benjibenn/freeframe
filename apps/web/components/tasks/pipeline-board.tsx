@@ -103,6 +103,7 @@ export function PipelineBoard({
   folderFilter,
   canManage = true,
   viewerId,
+  asEditorId = null,
 }: {
   briefs: BriefTaskItem[]
   stages: TaskStage[]
@@ -111,6 +112,8 @@ export function PipelineBoard({
   canManage?: boolean
   /** Which editor row belongs to the reader. */
   viewerId?: string
+  /** An admin viewing one editor: columns and drags use that editor's status. */
+  asEditorId?: string | null
 }) {
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [overColumn, setOverColumn] = React.useState<string | null>(null)
@@ -125,8 +128,8 @@ export function PipelineBoard({
   // Which status a card sits in, and which one a drag writes — shared with the
   // list view's stage chips, which must group the same briefs the same way or the
   // two halves of one screen disagree about where the work is.
-  const ownRow = (b: BriefTaskItem) => ownEditorRow(b, viewerId, canManage)
-  const stage = (b: BriefTaskItem) => stageOf(b, viewerId, canManage)
+  const ownRow = (b: BriefTaskItem) => ownEditorRow(b, viewerId, canManage, asEditorId)
+  const stage = (b: BriefTaskItem) => stageOf(b, viewerId, canManage, asEditorId)
 
   const inColumn = (columnId: string) =>
     briefs.filter((b) =>

@@ -6,9 +6,14 @@
  *
  * Coverage counts briefs with at least one delivered file, not submissions:
  * an empty submission is not coverage. Pure props — the page owns fetching.
+ * Clicking a brief opens the same detail as /admin/briefs (brief, references,
+ * submissions) in a modal, so the grid and its filters stay put.
  */
 
 import { useEffect, useMemo, useState } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
+import { X } from 'lucide-react'
+import { BriefDetail, type BriefOverviewRow } from '@/components/admin/brief-overview-table'
 import {
   copyText,
   group,
@@ -18,7 +23,6 @@ import {
   toBriefs,
   type GroupBy,
   type PlaybookBrief,
-  type PlaybookSource,
 } from '@/lib/playbook'
 
 type Filters = { persona: string; angle: string; files: '' | 'yes' | 'no' }
@@ -28,13 +32,15 @@ const select =
 const button =
   'h-8 rounded-md border border-border px-2.5 text-sm text-text-primary hover:bg-bg-hover disabled:opacity-50'
 
-export function PlaybookView({ rows, origin }: { rows: PlaybookSource[]; origin: string }) {
+export function PlaybookView({ rows, origin }: { rows: BriefOverviewRow[]; origin: string }) {
   const [scope, setScopeState] = useState('')
   const children = useMemo(() => subfolders(rows, scope), [rows, scope])
   const [filters, setFilters] = useState<Filters>({ persona: '', angle: '', files: '' })
   const [groupBy, setGroupBy] = useState<GroupBy | ''>('')
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [note, setNote] = useState('')
+  const [openId, setOpenId] = useState<string | null>(null)
+  const opened = openId ? rows.find((r) => r.id === openId) ?? null : null
 
   const all = useMemo(() => (scope ? toBriefs(rows, scope, origin) : []), [rows, scope, origin])
   const grid = useMemo(() => matrix(all), [all])
@@ -242,9 +248,10 @@ export function PlaybookView({ rows, origin }: { rows: PlaybookSource[]; origin:
                           onChange={(e) => toggle([b.id], e.target.checked)} />
                       </td>
                       <td className="px-2 py-1">
-                        <a href={b.url} target="_blank" rel="noopener noreferrer" className="text-text-primary hover:underline">
+                        <button type="button" onClick={() => setOpenId(b.id)}
+                          className="text-left text-text-primary hover:underline">
                           {b.name}
-                        </a>
+                        </button>
                         {b.format && <span className="block text-xs text-text-tertiary">{b.format}</span>}
                       </td>
                       <td className="px-2 py-1 text-text-secondary">{b.persona}</td>
@@ -262,6 +269,23 @@ export function PlaybookView({ rows, origin }: { rows: PlaybookSource[]; origin:
           </section>
         </>
       )}
+
+      <Dialog.Root open={opened !== null} onOpenChange={(o) => !o && setOpenId(null)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+          <Dialog.Content aria-describedby={undefined}
+            className="fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-[min(56rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-bg-primary p-6 pr-12 shadow-xl">
+            <Dialog.Title className="sr-only">{opened?.title}</Dialog.Title>
+            <Dialog.Close aria-label="Close" className="absolute right-4 top-4 rounded p-1 text-text-tertiary hover:bg-bg-hover hover:text-text-primary">
+              <X className="h-4 w-4" />
+            </Dialog.Close>
+            {opened && (
+              <BriefDetail brief={opened}
+                from={scope ? `/admin/playbook?folder=${encodeURIComponent(scope)}` : '/admin/playbook'} />
+            )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   )
 }

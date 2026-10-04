@@ -14,14 +14,14 @@ import { RefreshCw } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 import { PlaybookView } from '@/components/admin/playbook-view'
-import type { PlaybookSource } from '@/lib/playbook'
+import type { BriefOverviewRow } from '@/components/admin/brief-overview-table'
 
 export default function AdminPlaybookPage() {
   const { isSuperAdmin, isLoading: authLoading } = useAuthStore()
 
-  const { data, error, isLoading, isValidating, mutate } = useSWR<PlaybookSource[]>(
+  const { data, error, isLoading, isValidating, mutate } = useSWR<BriefOverviewRow[]>(
     isSuperAdmin ? '/brief-overview' : null,
-    (key: string) => api.get<PlaybookSource[]>(key),
+    (key: string) => api.get<BriefOverviewRow[]>(key),
   )
 
   if (authLoading) {

@@ -15,12 +15,17 @@ import type { BriefEditor, BriefTaskItem } from '@/types'
  *
  *  Nothing for an admin: their board is the roll-up over every editor, so the
  *  brief's own status is the one they work. Nothing either for a non-admin who
- *  owns the brief without making it — they own it, so it is theirs to move. */
+ *  owns the brief without making it — they own it, so it is theirs to move.
+ *
+ *  `asEditorId` is an admin looking at one editor's desk: the brief is then read
+ *  as that editor reads it, so the admin sees where they actually are. */
 export function ownEditorRow(
   brief: BriefTaskItem,
   viewerId: string | undefined,
   isAdmin: boolean,
+  asEditorId?: string | null,
 ): BriefEditor | undefined {
+  if (asEditorId) return brief.editors.find((e) => e.id === asEditorId)
   if (isAdmin) return undefined
   return brief.editors.find((e) => e.id === viewerId)
 }
@@ -31,7 +36,8 @@ export function stageOf(
   brief: BriefTaskItem,
   viewerId: string | undefined,
   isAdmin: boolean,
+  asEditorId?: string | null,
 ): string | null {
-  const own = ownEditorRow(brief, viewerId, isAdmin)
+  const own = ownEditorRow(brief, viewerId, isAdmin, asEditorId)
   return (own ? own.task_stage_id : brief.task_stage_id) ?? null
 }

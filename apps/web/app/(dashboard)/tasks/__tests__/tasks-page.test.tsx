@@ -104,3 +104,46 @@ describe('TasksPage — which status the stage chips count', () => {
     expect(screen.queryByText('Test Brief')).toBeNull()
   })
 })
+
+/** An admin looking at one editor's desk sees it as that editor does: only the
+ *  briefs they are making, grouped by where *they* are on each — not by the
+ *  brief's roll-up status, which would hide that this editor is behind. */
+describe('TasksPage — viewing one editor', () => {
+  const OTHER: BriefTaskItem = {
+    ...BRIEF,
+    id: 'brief-2',
+    title: 'Other Brief',
+    task_stage_id: 's2',
+    editors: [{ id: 'ed-2', name: 'Ed Two', email: 'ed2@example.com', task_stage_id: 's1' }],
+  }
+
+  beforeEach(() => {
+    vi.mocked(api.get).mockImplementation(((url: string) => {
+      if (url === '/task-stages') return Promise.resolve(STAGES)
+      if (url === '/users/assignable') return Promise.resolve([])
+      return Promise.resolve({ briefs: [BRIEF, OTHER], unbriefed: [] })
+    }) as never)
+  })
+
+  it("shows only that editor's briefs, counted by their own status", async () => {
+    authState.user = { id: 'admin-1', is_superadmin: true, is_subadmin: false }
+    const user = userEvent.setup()
+    renderTasks()
+    expect(await screen.findByText('Other Brief')).toBeInTheDocument()
+
+    await user.selectOptions(screen.getByLabelText('Editor'), 'viewer-1')
+
+    expect(screen.getByText('Test Brief')).toBeInTheDocument()
+    expect(screen.queryByText('Other Brief')).toBeNull()
+    // BRIEF is s1 overall but s2 for viewer-1 — the chip must follow the editor.
+    expect(chipCount('Review')).toBe('1')
+    expect(chipCount('In Progress')).toBe('0')
+  })
+
+  it('is not offered to an editor, whose board is already only their own', async () => {
+    authState.user = { id: 'viewer-1', is_superadmin: false, is_subadmin: false }
+    renderTasks()
+    expect(await screen.findByText('Test Brief')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Editor')).toBeNull()
+  })
+})
