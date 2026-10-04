@@ -617,6 +617,9 @@ def track_asset_activity(
 def get_stream_url(
     asset_id: uuid.UUID,
     version_id: Optional[uuid.UUID] = Query(default=None),
+    media_file_id: Optional[uuid.UUID] = Query(
+        default=None, description="A carousel slide. Defaults to the version's first file."
+    ),
     download: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -642,7 +645,10 @@ def get_stream_url(
     if not version:
         raise HTTPException(status_code=404, detail="No version found")
 
-    media_file = db.query(MediaFile).filter(MediaFile.version_id == version.id).first()
+    media_q = db.query(MediaFile).filter(MediaFile.version_id == version.id)
+    if media_file_id is not None:
+        media_q = media_q.filter(MediaFile.id == media_file_id)
+    media_file = media_q.first()
     if not media_file:
         raise HTTPException(status_code=404, detail="Media file not found")
 
