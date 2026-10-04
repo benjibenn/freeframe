@@ -19,7 +19,7 @@ from ..schemas.notification import AssignmentUpdate
 from ..services.permissions import require_project_role, require_asset_access, can_access_asset, is_public_project, get_project_member, can_view_project, is_platform_admin, require_platform_admin
 from ..services import source_link
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
-from .hls_proxy import create_hls_token
+from .hls_proxy import hls_stream_url
 from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, mime_to_asset_type
 from ..services.s3_service import create_multipart_upload
 from ..services.tags import normalize_tags
@@ -683,8 +683,7 @@ def get_stream_url(
             # Route through the HLS proxy so the master playlist, variant
             # playlists, and .ts segments all get served via short-lived
             # presigned URLs — the S3 bucket can stay fully private. (#51)
-            token = create_hls_token(media_file.s3_key_processed)
-            url = f"/stream/hls/master.m3u8?token={token}"
+            url = hls_stream_url(media_file.s3_key_processed)
     else:
         s3_key = media_file.s3_key_processed or media_file.s3_key_raw
         if download:
