@@ -41,6 +41,17 @@ function renderTasks() {
   )
 }
 
+/** Same cache across mounts, so the second render sees a warm SWR cache
+ *  instead of a fresh one — the only way to exercise "remount with cached
+ *  pages" in a test. */
+function renderTasksWithCache(cache: Map<string, unknown>) {
+  return render(
+    <SWRConfig value={{ provider: () => cache, dedupingInterval: 0 }}>
+      <TasksPage />
+    </SWRConfig>,
+  )
+}
+
 /** A stage chip is a button whose text is the label followed by its count. */
 function chipCount(label: string): string {
   const chip = screen
@@ -108,5 +119,30 @@ describe('TasksPage — paged board', () => {
     act(() => io.reveal())
     expect(await screen.findByText('Last Brief')).toBeInTheDocument()
     expect(boardCalls()).toContain('/task-board?limit=25&offset=25')
+  })
+
+  it('remounting with a warm cache refetches the first page (stale after /review decisions otherwise)', async () => {
+    const cache = new Map<string, unknown>()
+    const { unmount } = renderTasksWithCache(cache)
+    expect(await screen.findByText('First Brief')).toBeInTheDocument()
+    unmount()
+
+    vi.mocked(api.get).mockClear()
+    renderTasksWithCache(cache)
+    // The cached page renders immediately...
+    expect(await screen.findByText('First Brief')).toBeInTheDocument()
+    // ...but a fresh fetch must still have been made, not served from cache only.
+    await waitFor(() => expect(boardCalls().length).toBeGreaterThan(0))
+  })
+
+  it('does not show "Loading more…" next to the initial skeleton on first load', async () => {
+    // A page that never resolves keeps isLoading/isValidating true without
+    // ever producing data, so the skeleton branch stays on screen — exactly
+    // the moment "Loading more…" must NOT also render.
+    vi.mocked(api.get).mockImplementation(
+      ((url: string) => (url === '/task-stages' ? Promise.resolve(STAGES) : new Promise(() => {}))) as never,
+    )
+    renderTasks()
+    expect(screen.queryByText('Loading more…')).toBeNull()
   })
 })

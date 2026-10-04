@@ -103,7 +103,12 @@ export default function TasksPage() {
     setSize,
     mutate: mutateBoard,
   } = useSWRInfinite<TaskBoardPage>(getBoardKey, (key: string) => api.get<TaskBoardPage>(key), {
+    // false: a scroll-triggered setSize must not also refetch every earlier
+    // page (SWR's default). true: a remount (e.g. navigating back from
+    // /review after approving files) must still see fresh stages/counts
+    // instead of serving a warm-but-stale cache forever.
     revalidateFirstPage: false,
+    revalidateOnMount: true,
   })
 
   // Back to one page whenever the filters change.
@@ -118,8 +123,10 @@ export default function TasksPage() {
   // isValidating alone also fires on a plain refresh (e.g. refreshBoard() after
   // an edit), which would flash this banner even though no new page is coming.
   // size > pages.length is specifically "a page beyond those already loaded is
-  // being fetched".
-  const loadingMore = isValidating && size > (pages?.length ?? 0)
+  // being fetched" — but pages is undefined on the very first load, where
+  // size (1) > 0 would otherwise also be true and show this next to the
+  // initial skeleton.
+  const loadingMore = isValidating && pages !== undefined && size > pages.length
   const sentinelRef = useInfiniteScroll({
     onLoadMore: () => setSize((s) => s + 1),
     enabled: !reachedEnd && !loadingMore && briefs.length > 0,
