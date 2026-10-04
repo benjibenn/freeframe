@@ -223,7 +223,10 @@ def get_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     require_asset_access(db, asset, current_user)
-    return _build_asset_response(asset, db)
+    resp = _build_asset_response(asset, db)
+    uploader = db.query(User.name).filter(User.id == asset.created_by).first()
+    resp.uploader_name = uploader[0] if uploader else None
+    return resp
 
 
 @router.get("/assets/{asset_id}/neighbors", response_model=AssetNeighbors)

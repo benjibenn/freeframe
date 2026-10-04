@@ -50,6 +50,9 @@ class AssetResponse(BaseModel):
     updated_at: datetime
     latest_version: Optional[AssetVersionResponse] = None
     thumbnail_url: Optional[str] = None
+    # The uploader's name for the file page header. Filled by GET /assets/{id}
+    # only, so that page needs no second request for it.
+    uploader_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class AssetUpdate(BaseModel):
