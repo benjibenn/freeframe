@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Review queue: files in the Review stage, decided one at a time with the
+ * Review queue: editors in the Review stage on a brief, decided one at a time with the
  * keyboard. Platform admins only; GET /review-queue enforces the same.
  */
 

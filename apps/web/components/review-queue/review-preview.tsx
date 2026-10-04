@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import type { ReviewQueueItem } from '@/types'
+import type { ReviewFile } from '@/types'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -37,7 +37,7 @@ function HlsVideo({ src, poster }: { src: string; poster: string | null }) {
 }
 
 /** The big pane: image, video or audio, or the thumbnail while it processes. */
-export function ReviewPreview({ item }: { item: ReviewQueueItem }) {
+export function ReviewPreview({ item }: { item: ReviewFile }) {
   if (!item.preview_url) {
     return (
       <div className="flex flex-col items-center gap-3 text-sm text-text-tertiary">
