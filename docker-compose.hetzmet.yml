@@ -26,6 +26,8 @@ services:
       - --providers.docker.exposedbydefault=false
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
+      # Slow multi-image uploads (maker batch) exceeded the 60s default and got 502.
+      - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=600s
       # Send all plain HTTP to HTTPS. Traefik serves the ACME HTTP-01
       # challenge from a dedicated higher-priority router, so cert
       # issuance and renewal still work through this redirect.
