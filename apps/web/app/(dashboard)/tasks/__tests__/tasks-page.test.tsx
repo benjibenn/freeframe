@@ -1,12 +1,12 @@
 /**
- * The list view is the default view, and its stage chips both count and filter.
- * They must answer the same question the pipeline columns answer — an editor's own
- * status, an admin's the brief's — or one screen contradicts itself: the chip says
- * a brief is in Review, the pipeline puts it in In Progress, and the editor cannot
- * tell which one they are being measured on.
+ * The board is paged on the server, so the page no longer counts or filters.
+ * These pin the page's half of the contract: chip counts come from the server's
+ * stage_counts (which apply the editor-own-status rule; see test_board_paging.py),
+ * a chip click becomes a stage_id query, and reaching the end asks for the next
+ * page.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, act, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SWRConfig } from 'swr'
 
@@ -17,30 +17,20 @@ const authState = { user: null as { id: string; is_superadmin: boolean; is_subad
 vi.mock('@/stores/auth-store', () => ({ useAuthStore: () => authState }))
 
 import TasksPage from '../page'
-import type { BriefTaskItem, TaskStage } from '@/types'
+import { stubIntersectionObserver } from '@/test/intersection-observer'
+import type { BriefTaskItem, TaskBoardPage, TaskStage } from '@/types'
 
 const STAGES: TaskStage[] = [
   { id: 's1', name: 'In Progress', position: 1, color: null, is_default: false },
   { id: 's2', name: 'Review', position: 2, color: null, is_default: false },
 ]
 
-/** The brief's own status and the viewer's own status deliberately differ — with
- *  both at the same stage the test would pass whichever one the page reads. */
-const BRIEF: BriefTaskItem = {
-  id: 'brief-1',
-  title: 'Test Brief',
-  taxonomy_path: null,
-  task_stage_id: 's1',
-  assignee_id: null,
-  assignee_name: null,
-  editors: [{ id: 'viewer-1', name: 'Viewer', email: 'viewer@example.com', task_stage_id: 's2' }],
-  has_brief: false,
-  has_brief_json: false,
-  paid_count: 0,
-  submission_count: 0,
-  submit_url: null,
-  created_at: '2026-09-01T00:00:00Z',
-  assets: [],
+function brief(id: string, title: string): BriefTaskItem {
+  return {
+    id, title, taxonomy_path: null, task_stage_id: 's1', assignee_id: null, assignee_name: null,
+    editors: [], has_brief: false, has_brief_json: false, paid_count: 0, submission_count: 0,
+    submit_url: null, created_at: '2026-09-01T00:00:00Z', assets: [],
+  }
 }
 
 function renderTasks() {
@@ -51,91 +41,139 @@ function renderTasks() {
   )
 }
 
+/** Same cache across mounts, so the second render sees a warm SWR cache
+ *  instead of a fresh one — the only way to exercise "remount with cached
+ *  pages" in a test. */
+function renderTasksWithCache(cache: Map<string, any>) {
+  return render(
+    <SWRConfig value={{ provider: () => cache, dedupingInterval: 0 }}>
+      <TasksPage />
+    </SWRConfig>,
+  )
+}
+
 /** A stage chip is a button whose text is the label followed by its count. */
 function chipCount(label: string): string {
   const chip = screen
     .getAllByRole('button')
-    .find((b) => b.textContent?.startsWith(label) && b.textContent !== label)
+    .find((b) => b.textContent?.startsWith(label) && /\d+$/.test(b.textContent.slice(label.length)))
   if (!chip) throw new Error(`no stage chip labelled ${label}`)
   return chip.textContent!.slice(label.length)
 }
 
+const boardCalls = () =>
+  vi.mocked(api.get).mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith('/task-board'))
+
+let boardPages: Record<number, TaskBoardPage>
+let io: ReturnType<typeof stubIntersectionObserver>
+
 beforeEach(() => {
   vi.clearAllMocks()
+  io = stubIntersectionObserver()
+  authState.user = { id: 'admin-1', is_superadmin: true, is_subadmin: false }
+  boardPages = { 0: { items: [brief('b1', 'First Brief')], total: 1, stage_counts: { s1: 1 } } }
   vi.mocked(api.get).mockImplementation(((url: string) => {
     if (url === '/task-stages') return Promise.resolve(STAGES)
-    // Only the admin run reaches this one — the owner dropdown's source.
     if (url === '/users/assignable') return Promise.resolve([])
-    return Promise.resolve({ briefs: [BRIEF], unbriefed: [] })
+    const offset = Number(new URL(url, 'http://x').searchParams.get('offset') ?? 0)
+    return Promise.resolve(boardPages[offset] ?? { items: [], total: 0, stage_counts: {} })
   }) as never)
 })
 
-describe('TasksPage — which status the stage chips count', () => {
-  it("counts a non-admin's brief under their own status, not the brief's", async () => {
-    authState.user = { id: 'viewer-1', is_superadmin: false, is_subadmin: false }
+describe('TasksPage — paged board', () => {
+  it('asks for the first 25 briefs, not the whole board', async () => {
     renderTasks()
-
-    expect(await screen.findByText('Test Brief')).toBeInTheDocument()
-    expect(chipCount('Review')).toBe('1')
-    expect(chipCount('In Progress')).toBe('0')
+    expect(await screen.findByText('First Brief')).toBeInTheDocument()
+    expect(boardCalls()[0]).toBe('/task-board?limit=25&offset=0')
   })
 
-  it("counts an admin's brief under the brief's own status", async () => {
-    authState.user = { id: 'admin-1', is_superadmin: true, is_subadmin: false }
+  it("shows the server's per-stage counts on the chips", async () => {
+    boardPages[0] = { items: [brief('b1', 'First Brief')], total: 3, stage_counts: { s1: 1, s2: 2 } }
     renderTasks()
-
-    expect(await screen.findByText('Test Brief')).toBeInTheDocument()
+    await screen.findByText('First Brief')
+    expect(chipCount('All')).toBe('3')
     expect(chipCount('In Progress')).toBe('1')
-    expect(chipCount('Review')).toBe('0')
+    expect(chipCount('Review')).toBe('2')
+    expect(chipCount('Unassigned')).toBe('0')
   })
 
-  it('filters a non-admin by their own status too, so the chip and the rows agree', async () => {
-    authState.user = { id: 'viewer-1', is_superadmin: false, is_subadmin: false }
+  it('sends the chosen stage to the server instead of filtering what is loaded', async () => {
     const user = userEvent.setup()
     renderTasks()
-    expect(await screen.findByText('Test Brief')).toBeInTheDocument()
+    await screen.findByText('First Brief')
+    await user.click(screen.getAllByRole('button').find((b) => b.textContent?.startsWith('Review'))!)
+    await waitFor(() => expect(boardCalls()).toContain('/task-board?stage_id=s2&limit=25&offset=0'))
+  })
 
-    // A chip showing 1 that then empties the table on click is the contradiction
-    // this guards: the count and the predicate have to read the same status.
-    await user.click(screen.getAllByRole('button').find((b) => b.textContent === 'Review1')!)
-    expect(screen.getByText('Test Brief')).toBeInTheDocument()
+  it('loads the next page when the end of the list scrolls into view', async () => {
+    boardPages = {
+      0: {
+        items: Array.from({ length: 25 }, (_, i) => brief(`b${i}`, `Brief ${i}`)),
+        total: 26,
+        stage_counts: { s1: 26 },
+      },
+      25: { items: [brief('b25', 'Last Brief')], total: 26, stage_counts: { s1: 26 } },
+    }
+    renderTasks()
+    await screen.findByText('Brief 0')
+    act(() => io.reveal())
+    expect(await screen.findByText('Last Brief')).toBeInTheDocument()
+    expect(boardCalls()).toContain('/task-board?limit=25&offset=25')
+  })
 
-    await user.click(screen.getAllByRole('button').find((b) => b.textContent === 'In Progress0')!)
-    expect(screen.queryByText('Test Brief')).toBeNull()
+  it('remounting with a warm cache refetches the first page (stale after /review decisions otherwise)', async () => {
+    const cache = new Map<string, any>()
+    const { unmount } = renderTasksWithCache(cache)
+    expect(await screen.findByText('First Brief')).toBeInTheDocument()
+    unmount()
+
+    vi.mocked(api.get).mockClear()
+    renderTasksWithCache(cache)
+    // The cached page renders immediately...
+    expect(await screen.findByText('First Brief')).toBeInTheDocument()
+    // ...but a fresh fetch must still have been made, not served from cache only.
+    await waitFor(() => expect(boardCalls().length).toBeGreaterThan(0))
+  })
+
+  it('does not show "Loading more…" next to the initial skeleton on first load', async () => {
+    // A page that never resolves keeps isLoading/isValidating true without
+    // ever producing data, so the skeleton branch stays on screen — exactly
+    // the moment "Loading more…" must NOT also render.
+    vi.mocked(api.get).mockImplementation(
+      ((url: string) => (url === '/task-stages' ? Promise.resolve(STAGES) : new Promise(() => {}))) as never,
+    )
+    renderTasks()
+    expect(screen.queryByText('Loading more…')).toBeNull()
   })
 })
 
-/** An admin looking at one editor's desk sees it as that editor does: only the
- *  briefs they are making, grouped by where *they* are on each — not by the
- *  brief's roll-up status, which would hide that this editor is behind. */
+/** An admin looking at one editor's desk sees only the briefs that editor is
+ *  making. The board is paged, so the pick must go to the server: filtering the
+ *  loaded rows would miss that editor's briefs on pages not fetched yet. */
 describe('TasksPage — viewing one editor', () => {
-  const OTHER: BriefTaskItem = {
-    ...BRIEF,
-    id: 'brief-2',
-    title: 'Other Brief',
-    task_stage_id: 's2',
-    editors: [{ id: 'ed-2', name: 'Ed Two', email: 'ed2@example.com', task_stage_id: 's1' }],
-  }
-
   beforeEach(() => {
     vi.mocked(api.get).mockImplementation(((url: string) => {
       if (url === '/task-stages') return Promise.resolve(STAGES)
-      if (url === '/users/assignable') return Promise.resolve([])
-      return Promise.resolve({ briefs: [BRIEF, OTHER], unbriefed: [] })
+      if (url === '/users/assignable')
+        return Promise.resolve([{ id: 'ed-1', name: 'Ed One', email: 'ed1@example.com' }])
+      const qp = new URL(url, 'http://x').searchParams
+      if (qp.get('editor_id') === 'ed-1')
+        return Promise.resolve({ items: [brief('b2', 'Ed Brief')], total: 1, stage_counts: { s2: 1 } })
+      return Promise.resolve(boardPages[Number(qp.get('offset') ?? 0)])
     }) as never)
   })
 
-  it("shows only that editor's briefs, counted by their own status", async () => {
-    authState.user = { id: 'admin-1', is_superadmin: true, is_subadmin: false }
+  it('sends the picked editor to the server from the first page, and shows its counts', async () => {
     const user = userEvent.setup()
     renderTasks()
-    expect(await screen.findByText('Other Brief')).toBeInTheDocument()
+    await screen.findByText('First Brief')
 
-    await user.selectOptions(screen.getByLabelText('Editor'), 'viewer-1')
+    await user.selectOptions(await screen.findByLabelText('Editor'), 'ed-1')
 
-    expect(screen.getByText('Test Brief')).toBeInTheDocument()
-    expect(screen.queryByText('Other Brief')).toBeNull()
-    // BRIEF is s1 overall but s2 for viewer-1 — the chip must follow the editor.
+    expect(await screen.findByText('Ed Brief')).toBeInTheDocument()
+    expect(boardCalls()).toContain('/task-board?editor_id=ed-1&limit=25&offset=0')
+    expect(screen.queryByText('First Brief')).toBeNull()
+    // The server counts by that editor's own stage (reader_stage); the chips show it as-is.
     expect(chipCount('Review')).toBe('1')
     expect(chipCount('In Progress')).toBe('0')
   })
@@ -143,7 +181,8 @@ describe('TasksPage — viewing one editor', () => {
   it('is not offered to an editor, whose board is already only their own', async () => {
     authState.user = { id: 'viewer-1', is_superadmin: false, is_subadmin: false }
     renderTasks()
-    expect(await screen.findByText('Test Brief')).toBeInTheDocument()
+    expect(await screen.findByText('First Brief')).toBeInTheDocument()
     expect(screen.queryByLabelText('Editor')).toBeNull()
+    expect(boardCalls().some((u) => u.includes('editor_id'))).toBe(false)
   })
 })

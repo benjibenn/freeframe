@@ -2,15 +2,13 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { mutate } from 'swr'
 import { Banknote, ChevronDown, ChevronRight, FileText, Film, Image as ImageIcon, UserRound } from 'lucide-react'
 import { api } from '@/lib/api'
 import { stageOf } from '@/lib/brief-stage'
 import { cn, formatRelativeTime } from '@/lib/utils'
 import { displayName } from '@/lib/display-name'
+import { useTaskBoardRefresh } from '@/lib/task-board-refresh'
 import type { BriefEditor, BriefTaskItem, TaskItem, TaskStage, User } from '@/types'
-
-const BOARD_KEY = '/task-board'
 
 /** Path with the active filter's prefix removed — the breadcrumb already shows
  *  that part, so repeating it in every row is noise. */
@@ -88,6 +86,7 @@ export function BriefRow({
   viewerId?: string
   onDrillTo: (path: string) => void
 }) {
+  const refreshBoard = useTaskBoardRefresh()
   const [expanded, setExpanded] = React.useState(false)
   const [savingOwner, setSavingOwner] = React.useState(false)
   const [assigning, setAssigning] = React.useState(false)
@@ -118,14 +117,14 @@ export function BriefRow({
 
   const setStage = async (stageId: string | null) => {
     await api.patch(`/submission-links/${brief.id}/task-stage`, { task_stage_id: stageId })
-    mutate(BOARD_KEY)
+    refreshBoard()
   }
 
   const setOwner = async (userId: string | null) => {
     setSavingOwner(true)
     try {
       await api.patch(`/submission-links/${brief.id}/assignee`, { assignee_id: userId })
-      mutate(BOARD_KEY)
+      refreshBoard()
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to set owner')
     } finally {
@@ -142,7 +141,7 @@ export function BriefRow({
     setAssigning(true)
     try {
       await api.post(`/submission-links/${brief.id}/editors`, { user_id: userId })
-      mutate(BOARD_KEY)
+      refreshBoard()
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to assign that editor')
     } finally {
@@ -331,9 +330,10 @@ export function AssetSubRow({
    *  a file sub-row has no other use for one. */
   canStage: boolean
 }) {
+  const refreshBoard = useTaskBoardRefresh()
   const setStage = async (stageId: string | null) => {
     await api.patch(`/assets/${asset.asset_id}/task-stage`, { task_stage_id: stageId })
-    mutate(BOARD_KEY)
+    refreshBoard()
   }
 
   return (
@@ -346,7 +346,13 @@ export function AssetSubRow({
           <div className="flex h-7 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-bg-tertiary">
             {asset.thumbnail_url ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={asset.thumbnail_url} alt="" className="h-full w-full object-cover" />
+              <img
+                src={asset.thumbnail_url}
+                alt=""
+                className="h-full w-full object-cover"
+                loading="lazy"
+                decoding="async"
+              />
             ) : (
               <AssetIcon type={asset.asset_type} />
             )}
@@ -395,11 +401,12 @@ export function EditorSubRow({
   /** Admins move anyone; everyone else only their own row. */
   canMove: boolean
 }) {
+  const refreshBoard = useTaskBoardRefresh()
   const setStage = async (stageId: string | null) => {
     await api.patch(`/submission-links/${briefId}/editors/${editor.id}/task-stage`, {
       task_stage_id: stageId,
     })
-    mutate(BOARD_KEY)
+    refreshBoard()
   }
   const stageName = stages.find((s) => s.id === editor.task_stage_id)?.name
 

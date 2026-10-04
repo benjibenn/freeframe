@@ -109,12 +109,16 @@ def _board_link():
     l = MagicMock()
     l.id = uuid.uuid4()
     l.title = "Req"
+    l.token = "tok"
     l.task_stage_id = None
     l.assignee_id = None
     l.brief_pdf_s3_key = None
     l.brief_json = None
     l.created_at = datetime.now(timezone.utc)
     l.deleted_at = None
+    l.home_folder_id = None
+    l.home_project_id = None
+    l.taxonomy_path = None
     return l
 
 
@@ -126,6 +130,21 @@ def _editor_rows(link_id):
     return [(link_id, date(2026, 8, 1), None, u1), (link_id, None, None, u2)]
 
 
+def _board_calls(*, scope=(), links, assets=(), owners=None, editors=()):
+    """db.all() results in the order get_task_board asks for them:
+    [non-admin scope x2] light rows, page rows, assets, [owners], editors."""
+    calls = [list(s) for s in scope]
+    calls.append(list(links))          # light rows: every brief in scope
+    if not links:
+        return calls
+    calls.append(list(links))          # the page's full rows
+    calls.append(list(assets))
+    if owners is not None:
+        calls.append(list(owners))
+    calls.append(list(editors))
+    return calls
+
+
 @patch("apps.api.routers.tasks.link_home_paths", return_value={})
 @patch("apps.api.routers.tasks._build_task_items", return_value=[])
 @patch("apps.api.routers.tasks.is_platform_admin", return_value=True)
@@ -133,14 +152,10 @@ def test_task_board_rolls_up_paid_counts_for_admin(_adm, _items, _paths, client,
     link = _board_link()
     mock_db.order_by.return_value = mock_db
     mock_db.join.return_value = mock_db
-    mock_db.all.side_effect = [
-        [],                      # assets
-        [link],                  # links
-        _editor_rows(link.id),   # (link_id, paid_at, user) editor rows
-    ]
+    mock_db.all.side_effect = _board_calls(links=[link], editors=_editor_rows(link.id))
     resp = client.get("/task-board", headers=auth_headers)
     assert resp.status_code == 200, resp.text
-    brief = resp.json()["briefs"][0]
+    brief = resp.json()["items"][0]
     assert brief["paid_count"] == 1
     assert brief["submission_count"] == 2
 
@@ -152,16 +167,12 @@ def test_task_board_hides_paid_counts_from_non_admin(_adm, _items, _paths, clien
     link = _board_link()
     mock_db.order_by.return_value = mock_db
     mock_db.join.return_value = mock_db
-    mock_db.all.side_effect = [
-        [(link.id,)],            # owned link ids — assignee_id scope
-        [],                      # owned link ids — submissions scope (union)
-        [],                      # assets
-        [link],                  # links
-        _editor_rows(link.id),   # editor rows — one of two paid
-    ]
+    mock_db.all.side_effect = _board_calls(
+        scope=([(link.id,)], []), links=[link], editors=_editor_rows(link.id),
+    )
     resp = client.get("/task-board", headers=auth_headers)
     assert resp.status_code == 200, resp.text
-    brief = resp.json()["briefs"][0]
+    brief = resp.json()["items"][0]
     # Payment state is the owner's bookkeeping; an editor's board must not carry it.
     assert brief["paid_count"] == 0
     assert brief["submission_count"] == 0
@@ -190,16 +201,12 @@ def test_task_board_reaches_an_editor_who_does_not_own_the_brief(
     link = _board_link()
     mock_db.order_by.return_value = mock_db
     mock_db.join.return_value = mock_db
-    mock_db.all.side_effect = [
-        [],                                    # assignee_id scope — they do not own this brief
-        [(link.id, uuid.uuid4())],             # submissions scope — assigned to make it
-        [],                                    # assets
-        [link],                                # links
-        _editor_rows(link.id),                 # editor rows
-    ]
+    mock_db.all.side_effect = _board_calls(
+        scope=([], [(link.id, uuid.uuid4(), None)]), links=[link], editors=_editor_rows(link.id),
+    )
     resp = client.get("/task-board", headers=auth_headers)
     assert resp.status_code == 200, resp.text
-    assert [b["id"] for b in resp.json()["briefs"]] == [str(link.id)]
+    assert [b["id"] for b in resp.json()["items"]] == [str(link.id)]
 
 
 @patch("apps.api.routers.tasks.link_home_paths", return_value={})
@@ -220,16 +227,13 @@ def test_task_board_unions_both_scopes_into_distinct_briefs(
     edited_link = _board_link()
     mock_db.order_by.return_value = mock_db
     mock_db.join.return_value = mock_db
-    mock_db.all.side_effect = [
-        [(owned_link.id,)],                    # assignee_id scope
-        [(edited_link.id, uuid.uuid4())],      # submissions scope
-        [],                                     # assets
-        [owned_link, edited_link],              # links
-        [],                                     # editor rows
-    ]
+    mock_db.all.side_effect = _board_calls(
+        scope=([(owned_link.id,)], [(edited_link.id, uuid.uuid4(), None)]),
+        links=[owned_link, edited_link],
+    )
     resp = client.get("/task-board", headers=auth_headers)
     assert resp.status_code == 200, resp.text
-    ids = {b["id"] for b in resp.json()["briefs"]}
+    ids = {b["id"] for b in resp.json()["items"]}
     assert ids == {str(owned_link.id), str(edited_link.id)}
 
 
@@ -261,17 +265,13 @@ def test_task_board_hides_a_co_editors_assets_on_a_shared_brief(
     )
     mock_db.order_by.return_value = mock_db
     mock_db.join.return_value = mock_db
-    mock_db.all.side_effect = [
-        [],                            # assignee_id scope — not the owner
-        [(link.id, my_project_id)],    # submissions scope — editor on my own project
-        [],                            # assets (args discarded; _build_task_items is mocked below)
-        [link],                        # links
-        _editor_rows(link.id),         # editor rows
-    ]
+    mock_db.all.side_effect = _board_calls(
+        scope=([], [(link.id, my_project_id, None)]), links=[link], editors=_editor_rows(link.id),
+    )
     with patch("apps.api.routers.tasks._build_task_items", return_value=[mine, theirs]):
         resp = client.get("/task-board", headers=auth_headers)
     assert resp.status_code == 200, resp.text
-    assets = resp.json()["briefs"][0]["assets"]
+    assets = resp.json()["items"][0]["assets"]
     assert [a["name"] for a in assets] == ["mine.mp4"]
 
 
@@ -290,16 +290,13 @@ def test_task_board_shows_an_editor_only_their_own_row(
     link = _board_link()
     mock_db.order_by.return_value = mock_db
     mock_db.join.return_value = mock_db
-    mock_db.all.side_effect = [
-        [(link.id,)],                                   # assignee_id scope
-        [],                                             # submissions scope
-        [],                                             # assets
-        [link],                                         # links
-        _editor_rows_including(link.id, test_user.id),  # two editors, one is me
-    ]
+    mock_db.all.side_effect = _board_calls(
+        scope=([(link.id,)], []), links=[link],
+        editors=_editor_rows_including(link.id, test_user.id),
+    )
     resp = client.get("/task-board", headers=auth_headers)
     assert resp.status_code == 200, resp.text
-    editors = resp.json()["briefs"][0]["editors"]
+    editors = resp.json()["items"][0]["editors"]
     assert [e["id"] for e in editors] == [str(test_user.id)]
 
 
@@ -322,17 +319,13 @@ def test_task_board_hides_the_owners_name_from_an_editor_who_is_not_the_owner(
     link.assignee_id = owner.id
     mock_db.order_by.return_value = mock_db
     mock_db.join.return_value = mock_db
-    mock_db.all.side_effect = [
-        [],                                             # assignee_id scope — not the owner
-        [(link.id, uuid.uuid4())],                      # submissions scope — assigned to make it
-        [],                                             # assets
-        [link],                                         # links
-        [owner],                                        # owner lookup (the link has an assignee)
-        _editor_rows_including(link.id, test_user.id),  # two editors, one is me
-    ]
+    mock_db.all.side_effect = _board_calls(
+        scope=([], [(link.id, uuid.uuid4(), None)]), links=[link], owners=[owner],
+        editors=_editor_rows_including(link.id, test_user.id),
+    )
     resp = client.get("/task-board", headers=auth_headers)
     assert resp.status_code == 200, resp.text
-    brief = resp.json()["briefs"][0]
+    brief = resp.json()["items"][0]
     assert link.assignee_id is not None, "the brief must genuinely have an owner"
     assert brief["assignee_name"] is None
     # The id is blanked with the name: on its own it still re-identifies the
@@ -357,16 +350,12 @@ def test_task_board_still_shows_an_owner_that_the_brief_is_theirs(
     link.assignee_id = test_user.id
     mock_db.order_by.return_value = mock_db
     mock_db.join.return_value = mock_db
-    mock_db.all.side_effect = [
-        [(link.id,)],                                   # assignee_id scope — it is theirs
-        [],                                             # submissions scope
-        [],                                             # assets
-        [link],                                         # links
-        [test_user],                                    # owner lookup
-        _editor_rows_including(link.id, test_user.id),  # two editors, one is me
-    ]
+    mock_db.all.side_effect = _board_calls(
+        scope=([(link.id,)], []), links=[link], owners=[test_user],
+        editors=_editor_rows_including(link.id, test_user.id),
+    )
     resp = client.get("/task-board", headers=auth_headers)
     assert resp.status_code == 200, resp.text
-    brief = resp.json()["briefs"][0]
+    brief = resp.json()["items"][0]
     assert brief["assignee_id"] == str(test_user.id)
     assert brief["assignee_name"] == test_user.name

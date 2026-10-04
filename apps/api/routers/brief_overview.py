@@ -4,27 +4,38 @@ Lives in its own module rather than in routers/submissions.py on purpose: that
 file is the single largest point of divergence between the two tenant branches,
 so a shared feature that edits it merges badly. Nothing here mutates state.
 
-The payload deliberately carries `brief_json` and the per-submitter file list in
-ONE response. That is the whole feature: an admin reads the brief, sees who
-uploaded and previews what they uploaded without opening an edit form or walking
-into a per-submitter project.
+The list carries who uploaded and a thumbnail of each upload, one page at a
+time. The structured brief loads when a row is opened (GET
+/submission-links/{id}), so a page of 25 does not carry 25 brief bodies.
 """
 import uuid
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..middleware.auth import get_current_user
-from ..models.asset import Asset, AssetVersion, MediaFile, ProcessingStatus
+from ..models.asset import Asset, AssetType, AssetVersion, MediaFile, ProcessingStatus
 from ..models.submission import Submission, SubmissionLink
 from ..models.user import User
 from ..schemas.brief_overview import (
     BriefOverviewFile,
+    BriefOverviewPage,
     BriefOverviewRow,
     BriefOverviewSubmission,
+)
+from ..services.board_paging import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    aware,
+    brief_matches,
+    intersect,
+    light_brief_rows,
+    page_briefs,
+    parse_stage_filter,
 )
 from ..services.folder_paths import link_home_paths
 from ..services.s3_service import generate_presigned_get_url
@@ -91,28 +102,56 @@ def thumbnails_for_assets(db: Session, asset_ids: list[uuid.UUID]) -> dict:
     return out
 
 
-@router.get("", response_model=list[BriefOverviewRow])
+@router.get("", response_model=BriefOverviewPage)
 def get_brief_overview(
+    q: Optional[str] = Query(None, description="Case-insensitive match on the title or the folder path."),
+    editor_id: Optional[uuid.UUID] = Query(None, description="Only briefs this user has a submission on."),
+    stage_id: Optional[str] = Query(None, description="The brief's stage UUID, or 'unassigned'."),
+    created_from: Optional[datetime] = Query(None, description="Inclusive lower bound on created_at."),
+    created_to: Optional[datetime] = Query(None, description="Exclusive upper bound on created_at."),
+    has_files: bool = Query(False, description="Only briefs with at least one uploaded file."),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     _require_superadmin(current_user)
+    stage_filter = parse_stage_filter(stage_id)
 
-    links = (
-        db.query(SubmissionLink)
-        .filter(SubmissionLink.deleted_at.is_(None))
-        .order_by(SubmissionLink.created_at.desc())
-        .all()
+    # Read before light_brief_rows() so the query order the mocked-session tests
+    # assert on stays: [editor filter], [has_files filter], light rows, page rows.
+    with_files = (
+        {lid for (lid,) in db.query(Submission.submission_link_id)
+            .join(Asset, Asset.project_id == Submission.project_id)
+            .filter(Asset.deleted_at.is_(None))
+            .distinct()
+            .all()}
+        if has_files else None
     )
-    if not links:
-        return []
 
-    link_ids = [l.id for l in links]
-    subs = db.query(Submission).filter(Submission.submission_link_id.in_(link_ids)).all()
+    light, editor_filter_ids = light_brief_rows(db, owned_link_ids=None, editor_id=editor_id)
 
+    home = link_home_paths(db, light)
+    only = intersect(editor_filter_ids, with_files)
+    lo, hi = aware(created_from), aware(created_to)
+    light = [
+        r for r in light
+        if brief_matches(r, home.get(r.id), q=q, only_ids=only, created_from=lo, created_to=hi)
+    ]
+    # An admin's view: the brief's own stage, so no per-editor stages.
+    page_ids, total, _ = page_briefs(
+        light, my_stage_by_link={}, stage_filter=stage_filter, offset=offset, limit=limit,
+    )
+    if not page_ids:
+        return BriefOverviewPage(items=[], total=total)
+
+    by_id = {l.id: l for l in db.query(SubmissionLink).filter(SubmissionLink.id.in_(page_ids)).all()}
+    links = [by_id[i] for i in page_ids if i in by_id]
+
+    subs = db.query(Submission).filter(Submission.submission_link_id.in_([l.id for l in links])).all()
     project_ids = [s.project_id for s in subs]
     asset_rows = (
-        db.query(Asset.id, Asset.project_id, Asset.name)
+        db.query(Asset.id, Asset.project_id, Asset.name, Asset.asset_type)
         .filter(Asset.project_id.in_(project_ids), Asset.deleted_at.is_(None))
         .order_by(Asset.created_at.asc())
         .all()
@@ -127,11 +166,13 @@ def get_brief_overview(
         else {}
     )
 
-    thumbs = thumbnails_for_assets(db, [r[0] for r in asset_rows])
-    home = link_home_paths(db, links)
+    # Audio keeps waveform JSON where an image thumbnail would be (see assets.py).
+    thumbs = thumbnails_for_assets(
+        db, [aid for aid, _, _, atype in asset_rows if atype != AssetType.audio]
+    )
 
     files_by_project: dict = {}
-    for aid, pid, name in asset_rows:
+    for aid, pid, name, _ in asset_rows:
         files_by_project.setdefault(pid, []).append(
             BriefOverviewFile(asset_id=aid, name=name or "", thumbnail_url=thumbs.get(aid))
         )
@@ -174,7 +215,7 @@ def get_brief_overview(
                 angle_label=l.angle_label,
                 problem=l.problem,
                 has_brief=bool(l.brief_pdf_s3_key),
-                brief_json=l.brief_json,
+                has_brief_json=bool(l.brief_json),
                 reference_image_count=len(l.brief_reference_image_s3_keys or []),
                 reference_video_count=len(l.brief_reference_video_s3_keys or []),
                 submission_count=len(rows),
@@ -182,4 +223,4 @@ def get_brief_overview(
                 submissions=rows,
             )
         )
-    return out
+    return BriefOverviewPage(items=out, total=total)

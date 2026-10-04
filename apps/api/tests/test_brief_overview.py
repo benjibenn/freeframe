@@ -10,9 +10,11 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from apps.api.models.asset import AssetType
 from apps.api.models.user import UserStatus
 
 
@@ -76,15 +78,7 @@ def _link(*, title="Static — iPhone 17 Pro Max", brief_json=None):
     return l
 
 
-def test_superadmin_sees_brief_json_submitter_and_upload_thumbnail(mock_db, monkeypatch):
-    """The whole point of the page: the structured brief, who uploaded, and a
-    preview of what they uploaded — all without opening an edit or project page."""
-    from apps.api.routers import brief_overview as mod
-
-    brief = {"title": "The test report", "product": "iPhone 17 Pro Max"}
-    link = _link(brief_json=brief)
-
-    editor = _make_user(name="Ada Editor")
+def _sub(link, editor):
     sub = MagicMock()
     sub.id = uuid.uuid4()
     sub.submission_link_id = link.id
@@ -93,45 +87,132 @@ def test_superadmin_sees_brief_json_submitter_and_upload_thumbnail(mock_db, monk
     sub.display_name = None
     sub.paid_at = None
     sub.created_at = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    return sub
 
+
+def _queries(mock_db, *, light, page, subs=None, assets=None, users=None, before=()):
+    """query() results in the order the endpoint asks: [editor/has_files filters]
+    light rows, page rows, submissions, [assets, users]."""
+    q_light = MagicMock()
+    q_light.filter.return_value.order_by.return_value.all.return_value = light
+    q_page = MagicMock()
+    q_page.filter.return_value.all.return_value = page
+    seq = list(before) + [q_light, q_page]
+    if page:
+        q_subs = MagicMock()
+        q_subs.filter.return_value.all.return_value = subs or []
+        seq.append(q_subs)
+    if subs:
+        q_assets = MagicMock()
+        q_assets.filter.return_value.order_by.return_value.all.return_value = assets or []
+        q_users = MagicMock()
+        q_users.filter.return_value.all.return_value = users or []
+        seq += [q_assets, q_users]
+    mock_db.query.side_effect = seq
+
+
+def test_superadmin_sees_submitter_and_thumbnail_but_not_the_brief_json(mock_db, monkeypatch):
+    """The list carries who uploaded and a preview of it. The structured brief
+    loads when a row is opened (GET /submission-links/{id}), so 25 rows do not
+    carry 25 brief bodies."""
+    from apps.api.routers import brief_overview as mod
+
+    link = _link(brief_json={"title": "The test report"})
+    editor = _make_user(name="Ada Editor")
+    sub = _sub(link, editor)
     asset_id = uuid.uuid4()
-    asset_row = (asset_id, sub.project_id, "battery-report-v3.png")
-
-    q_links = MagicMock()
-    q_links.filter.return_value.order_by.return_value.all.return_value = [link]
-    q_subs = MagicMock()
-    q_subs.filter.return_value.all.return_value = [sub]
-    q_assets = MagicMock()
-    q_assets.filter.return_value.order_by.return_value.all.return_value = [asset_row]
-    q_users = MagicMock()
-    q_users.filter.return_value.all.return_value = [editor]
-    mock_db.query.side_effect = [q_links, q_subs, q_assets, q_users]
-
-    monkeypatch.setattr(mod, "link_home_paths", lambda db, links: {link.id: link.taxonomy_path})
-    monkeypatch.setattr(
-        mod, "thumbnails_for_assets", lambda db, ids: {asset_id: "https://s3/thumb.jpg"}
+    _queries(
+        mock_db, light=[link], page=[link], subs=[sub],
+        assets=[(asset_id, sub.project_id, "battery-report-v3.png", AssetType.image)],
+        users=[editor],
     )
+    monkeypatch.setattr(mod, "link_home_paths", lambda db, links: {link.id: link.taxonomy_path})
+    monkeypatch.setattr(mod, "thumbnails_for_assets", lambda db, ids: {asset_id: "https://s3/thumb.jpg"})
 
-    client = _client(mock_db, _make_user(is_superadmin=True, name="Boss"))
-    r = client.get("/brief-overview")
+    r = _client(mock_db, _make_user(is_superadmin=True, name="Boss")).get("/brief-overview")
+
     assert r.status_code == 200, r.text
-
-    rows = r.json()
-    assert len(rows) == 1
-    row = rows[0]
+    body = r.json()
+    assert body["total"] == 1
+    row = body["items"][0]
     assert row["title"] == "Static — iPhone 17 Pro Max"
     assert row["home_path"] == "ecom/Phones/Store 1/Iphone 17 Pro Max"
-    assert row["persona_label"] == "Nervous First-Time Buyer"
-    assert row["angle_label"] == "Performance"
-    assert row["problem"] == "Battery health unknown"
-    # The structured brief travels in the list payload — that is what removes the
-    # trip to the edit page.
-    assert row["brief_json"] == brief
-    assert row["submission_count"] == 1
-    assert row["asset_count"] == 1
-
+    assert "brief_json" not in row
+    assert row["has_brief_json"] is True
     s = row["submissions"][0]
     assert s["user_name"] == "Ada Editor"
-    assert s["user_email"] == "ada.editor@example.com"
-    assert s["files"][0]["name"] == "battery-report-v3.png"
     assert s["files"][0]["thumbnail_url"] == "https://s3/thumb.jpg"
+
+
+def test_first_page_is_25_of_many(mock_db, monkeypatch):
+    from apps.api.routers import brief_overview as mod
+
+    links = [_link(title=f"Brief {i}") for i in range(30)]
+    _queries(mock_db, light=links, page=links[:25], subs=[])
+    monkeypatch.setattr(mod, "link_home_paths", lambda db, ls: {})
+
+    r = _client(mock_db, _make_user(is_superadmin=True)).get("/brief-overview")
+
+    assert r.status_code == 200, r.text
+    assert len(r.json()["items"]) == 25
+    assert r.json()["total"] == 30
+
+
+def test_limit_is_capped_at_100(mock_db):
+    r = _client(mock_db, _make_user(is_superadmin=True)).get("/brief-overview?limit=101")
+    assert r.status_code == 422
+
+
+def test_audio_uploads_are_not_presigned_as_thumbnails(mock_db, monkeypatch):
+    """Audio keeps waveform JSON where an image thumbnail would be."""
+    from apps.api.routers import brief_overview as mod
+
+    link = _link()
+    editor = _make_user(name="Ada")
+    sub = _sub(link, editor)
+    audio_id, image_id = uuid.uuid4(), uuid.uuid4()
+    _queries(
+        mock_db, light=[link], page=[link], subs=[sub],
+        assets=[
+            (audio_id, sub.project_id, "vo.mp3", AssetType.audio),
+            (image_id, sub.project_id, "ad.png", AssetType.image),
+        ],
+        users=[editor],
+    )
+    asked: list = []
+    monkeypatch.setattr(mod, "link_home_paths", lambda db, ls: {})
+    monkeypatch.setattr(mod, "thumbnails_for_assets", lambda db, ids: asked.extend(ids) or {})
+
+    r = _client(mock_db, _make_user(is_superadmin=True)).get("/brief-overview")
+
+    assert r.status_code == 200, r.text
+    assert asked == [image_id]
+
+
+def test_editor_filter_keeps_briefs_they_submitted_to(mock_db, monkeypatch):
+    from apps.api.routers import brief_overview as mod
+
+    on, off = _link(title="On"), _link(title="Off")
+    q_editor = MagicMock()
+    q_editor.filter.return_value.all.return_value = [(on.id,)]
+    _queries(mock_db, light=[on, off], page=[on], subs=[], before=[q_editor])
+    monkeypatch.setattr(mod, "link_home_paths", lambda db, ls: {})
+
+    r = _client(mock_db, _make_user(is_superadmin=True)).get(f"/brief-overview?editor_id={uuid.uuid4()}")
+
+    assert [row["id"] for row in r.json()["items"]] == [str(on.id)]
+    assert r.json()["total"] == 1
+
+
+def test_has_files_keeps_briefs_with_an_upload(mock_db, monkeypatch):
+    from apps.api.routers import brief_overview as mod
+
+    with_files, empty = _link(title="With"), _link(title="Empty")
+    q_files = MagicMock()
+    q_files.join.return_value.filter.return_value.distinct.return_value.all.return_value = [(with_files.id,)]
+    _queries(mock_db, light=[with_files, empty], page=[with_files], subs=[], before=[q_files])
+    monkeypatch.setattr(mod, "link_home_paths", lambda db, ls: {})
+
+    r = _client(mock_db, _make_user(is_superadmin=True)).get("/brief-overview?has_files=true")
+
+    assert [row["id"] for row in r.json()["items"]] == [str(with_files.id)]

@@ -1,7 +1,7 @@
 """Response shapes for the superadmin brief overview."""
 import uuid
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -42,14 +42,20 @@ class BriefOverviewRow(BaseModel):
     angle_label: Optional[str] = None
     problem: Optional[str] = None
     has_brief: bool = False
-    # Carried in the LIST payload on purpose — this is what removes the trip to
-    # the edit page.
-    brief_json: Optional[dict[str, Any]] = None
+    # The structured brief itself is NOT in the list: it loads when a row is
+    # opened (GET /submission-links/{id}). This says whether there is one.
+    has_brief_json: bool = False
     reference_image_count: int = 0
     reference_video_count: int = 0
     submission_count: int = 0
     asset_count: int = 0
     submissions: list[BriefOverviewSubmission] = []
+
+
+class BriefOverviewPage(BaseModel):
+    items: list[BriefOverviewRow]
+    # Briefs matching the filters, across every page.
+    total: int
 
 
 class BriefLabelsUpdate(BaseModel):

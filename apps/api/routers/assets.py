@@ -14,16 +14,17 @@ from ..models.frame_tag import FrameTag
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.share import AssetShare
 from ..models.activity import Mention, Notification, NotificationType, ActivityAction
-from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse, TagsUpdate, TagCount
+from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse, TagsUpdate, TagCount, AssetNeighbors
 from ..schemas.notification import AssignmentUpdate
 from ..services.permissions import require_project_role, require_asset_access, can_access_asset, is_public_project, get_project_member, can_view_project, is_platform_admin, require_platform_admin
 from ..services import source_link
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
-from .hls_proxy import create_hls_token
+from .hls_proxy import hls_stream_url
 from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, mime_to_asset_type
 from ..services.s3_service import create_multipart_upload
 from ..services.tags import normalize_tags
 from ..services.activity_service import log_asset_activity
+from ..services.asset_neighbors import neighbors_of
 from ..config import settings
 from ..tasks.celery_app import send_task_safe
 
@@ -117,6 +118,32 @@ def _build_asset_responses_bulk(assets: list[Asset], db: Session) -> list[AssetR
     return result
 
 
+def _usable_or_empty(db: Session):
+    """Keep an asset if it has a usable version, OR has no versions yet (just created).
+
+    Shared by the grid (list_assets) and the file page's prev/next
+    (get_asset_neighbors), so the two always agree on which assets exist.
+    """
+    usable_version = (
+        db.query(AssetVersion.id)
+        .filter(
+            AssetVersion.asset_id == Asset.id,
+            AssetVersion.deleted_at.is_(None),
+            AssetVersion.processing_status.notin_([ProcessingStatus.failed, ProcessingStatus.uploading]),
+        )
+        .exists()
+    )
+    any_version = (
+        db.query(AssetVersion.id)
+        .filter(
+            AssetVersion.asset_id == Asset.id,
+            AssetVersion.deleted_at.is_(None),
+        )
+        .exists()
+    )
+    return or_(usable_version, ~any_version)
+
+
 @router.get("/projects/{project_id}/assets", response_model=list[AssetResponse])
 def list_assets(
     project_id: uuid.UUID,
@@ -170,30 +197,14 @@ def list_assets(
 
     if not include_failed:
         # Exclude assets whose only version failed or is still uploading. Done in
-        # SQL (not Python) so that `offset/limit` below returns full pages — keep an
-        # asset if it has a usable version, OR has no versions yet (just created).
-        usable_version = (
-            db.query(AssetVersion.id)
-            .filter(
-                AssetVersion.asset_id == Asset.id,
-                AssetVersion.deleted_at.is_(None),
-                AssetVersion.processing_status.notin_([ProcessingStatus.failed, ProcessingStatus.uploading]),
-            )
-            .exists()
-        )
-        any_version = (
-            db.query(AssetVersion.id)
-            .filter(
-                AssetVersion.asset_id == Asset.id,
-                AssetVersion.deleted_at.is_(None),
-            )
-            .exists()
-        )
-        query = query.filter(or_(usable_version, ~any_version))
+        # SQL (not Python) so that `offset/limit` below returns full pages.
+        query = query.filter(_usable_or_empty(db))
 
     # Newest-first so paginated loads stay in a stable order matching the grid's
     # default sort. The frontend detects "end of list" when a page is short.
-    query = query.order_by(Asset.created_at.desc())
+    # Tie-break on id so two assets created in the same second keep a stable,
+    # reproducible order — matters for /assets/{id}/neighbors to agree with this.
+    query = query.order_by(Asset.created_at.desc(), Asset.id.desc())
 
     if limit is not None:
         query = query.offset(skip).limit(limit)
@@ -212,7 +223,43 @@ def get_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     require_asset_access(db, asset, current_user)
-    return _build_asset_response(asset, db)
+    resp = _build_asset_response(asset, db)
+    uploader = db.query(User.name).filter(User.id == asset.created_by).first()
+    resp.uploader_name = uploader[0] if uploader else None
+    return resp
+
+
+@router.get("/assets/{asset_id}/neighbors", response_model=AssetNeighbors)
+def get_asset_neighbors(
+    asset_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """The assets either side of this one in the project grid, for the file page's arrows.
+
+    Replaces the page fetching every asset in the project (with versions, files
+    and presigned thumbnails) to find two ids. Same filter and order as
+    list_assets with no folder or tag filter, which is what the page requested.
+    """
+    asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    require_asset_access(db, asset, current_user)
+    # Someone who reached this file through a share but cannot view the project
+    # was refused the project asset list before, so they get no arrows now.
+    if not can_view_project(db, asset.project_id, current_user):
+        return AssetNeighbors()
+    rows = (
+        db.query(Asset.id)
+        .filter(
+            Asset.project_id == asset.project_id,
+            Asset.deleted_at.is_(None),
+            _usable_or_empty(db),
+        )
+        .order_by(Asset.created_at.desc(), Asset.id.desc())
+        .all()
+    )
+    return AssetNeighbors(**neighbors_of([r[0] for r in rows], asset.id))
 
 
 @router.patch("/assets/{asset_id}", response_model=AssetResponse)
@@ -573,6 +620,9 @@ def track_asset_activity(
 def get_stream_url(
     asset_id: uuid.UUID,
     version_id: Optional[uuid.UUID] = Query(default=None),
+    media_file_id: Optional[uuid.UUID] = Query(
+        default=None, description="A carousel slide. Defaults to the version's first file."
+    ),
     download: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -598,7 +648,10 @@ def get_stream_url(
     if not version:
         raise HTTPException(status_code=404, detail="No version found")
 
-    media_file = db.query(MediaFile).filter(MediaFile.version_id == version.id).first()
+    media_q = db.query(MediaFile).filter(MediaFile.version_id == version.id)
+    if media_file_id is not None:
+        media_q = media_q.filter(MediaFile.id == media_file_id)
+    media_file = media_q.first()
     if not media_file:
         raise HTTPException(status_code=404, detail="Media file not found")
 
@@ -630,8 +683,7 @@ def get_stream_url(
             # Route through the HLS proxy so the master playlist, variant
             # playlists, and .ts segments all get served via short-lived
             # presigned URLs — the S3 bucket can stay fully private. (#51)
-            token = create_hls_token(media_file.s3_key_processed)
-            url = f"/stream/hls/master.m3u8?token={token}"
+            url = hls_stream_url(media_file.s3_key_processed)
     else:
         s3_key = media_file.s3_key_processed or media_file.s3_key_raw
         if download:

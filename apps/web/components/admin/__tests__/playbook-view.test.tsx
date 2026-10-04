@@ -14,7 +14,7 @@ const row = (id: string, model: string, hook: string, files = 1): BriefOverviewR
   title: `20260910 - x - Frugal Phone Buyer - Fear - ${hook} - Static`,
   persona_label: null, angle_label: 'A1', submission_count: 1, asset_count: files,
   instructions: null, is_enabled: true, expires_at: null, created_at: '2026-09-10T02:51:30Z',
-  home_project_id: null, home_folder_id: null, problem: null, has_brief: false, brief_json: null,
+  home_project_id: null, home_folder_id: null, problem: null, has_brief: false, has_brief_json: false,
   reference_image_count: 0, reference_video_count: 0,
   submissions: [{
     id: `s-${id}`, user_id: 'u1', user_name: 'Ada Editor', user_email: 'ada@example.com',

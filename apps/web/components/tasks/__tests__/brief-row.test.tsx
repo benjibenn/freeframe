@@ -8,12 +8,13 @@
  * provisions a project and cannot be undone.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn(), post: vi.fn(), patch: vi.fn() } }))
 import { api } from '@/lib/api'
 
+import { TaskBoardRefreshProvider } from '@/lib/task-board-refresh'
 import { BriefRow } from '../brief-row'
 import type { BriefEditor, BriefTaskItem, TaskStage, User } from '@/types'
 
@@ -265,5 +266,37 @@ describe('BriefRow — who can move the brief’s own status', () => {
   it('keeps the picker live for an admin', () => {
     renderRow({ canAssign: true, brief: { task_stage_id: 's2' } })
     expect(statusCell().getByRole('combobox')).toBeInTheDocument()
+  })
+})
+
+describe('BriefRow — reloading the board after a change', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('asks the tasks page to reload after the brief status moves', async () => {
+    // The board is a paged list now, which a global mutate('/task-board') no
+    // longer reaches. A change that does not reload it leaves a stale row.
+    vi.mocked(api.patch).mockResolvedValue({} as never)
+    const refresh = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <TaskBoardRefreshProvider value={refresh}>
+        <table>
+          <tbody>
+            <BriefRow
+              brief={makeBrief([])}
+              stages={STAGES}
+              owners={OWNERS}
+              folderFilter={null}
+              typeFilter="all"
+              canAssign
+              viewerId="u-admin"
+              onDrillTo={() => {}}
+            />
+          </tbody>
+        </table>
+      </TaskBoardRefreshProvider>,
+    )
+    await user.selectOptions(statusCell().getByRole('combobox'), 'Review')
+    await waitFor(() => expect(refresh).toHaveBeenCalled())
   })
 })

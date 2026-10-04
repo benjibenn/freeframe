@@ -108,10 +108,14 @@ export interface BriefTaskItem {
   assets: TaskItem[];
 }
 
-export interface TaskBoardResponse {
-  briefs: BriefTaskItem[];
-  /** Uploaded straight into a project, with no request behind them. */
-  unbriefed: TaskItem[];
+/** One page of the task board (GET /task-board). */
+export interface TaskBoardPage {
+  items: BriefTaskItem[];
+  /** Briefs matching the filters, across every page. */
+  total: number;
+  /** Briefs per stage id ('unassigned' for none), counted before the stage
+   *  filter and by the reader's own stage on briefs they edit. */
+  stage_counts: Record<string, number>;
 }
 
 // ─── Core Entities ────────────────────────────────────────────────────────────
@@ -224,6 +228,17 @@ export interface AssetVersion {
 export interface AssetResponse extends Asset {
   latest_version: AssetVersion | null;
   thumbnail_url: string | null;
+  /** Filled by GET /assets/{id} only — the file page header's "by <name>". */
+  uploader_name?: string | null;
+}
+
+/** The assets either side of one in its project grid (GET /assets/{id}/neighbors). */
+export interface AssetNeighbors {
+  prev_id: string | null;
+  next_id: string | null;
+  /** 1-based place in the grid; 0 when the file is not listed there. */
+  position: number;
+  total: number;
 }
 
 export interface MediaFile {
@@ -659,4 +674,33 @@ export interface OAuthClient {
   redirect_uris: string[];
   created_at: string | null;
   revoked_at: string | null;
+}
+
+// ─── Review queue ─────────────────────────────────────────────────────────────
+
+/** A file waiting in the Review stage (GET /review-queue). */
+export interface ReviewQueueItem {
+  asset_id: string;
+  /** The newest version: the one under review, and where a reject comment goes. */
+  version_id: string;
+  project_id: string;
+  asset_type: AssetType;
+  file_name: string;
+  brief_id: string | null;
+  brief_title: string | null;
+  brief_token: string | null;
+  editor_name: string | null;
+  thumbnail_url: string | null;
+  /** Null until the version is ready. Video is a relative /stream/hls/... URL. */
+  preview_url: string | null;
+  /** The upload's "Source: " link. Null when none was given. */
+  canva_url: string | null;
+  submitted_at: string;
+}
+
+export interface ReviewQueuePage {
+  items: ReviewQueueItem[];
+  total: number;
+  /** The stage ids a decision moves between, resolved by name on the server. */
+  stages: { review: string; done: string; revision: string };
 }

@@ -50,6 +50,9 @@ class AssetResponse(BaseModel):
     updated_at: datetime
     latest_version: Optional[AssetVersionResponse] = None
     thumbnail_url: Optional[str] = None
+    # The uploader's name for the file page header. Filled by GET /assets/{id}
+    # only, so that page needs no second request for it.
+    uploader_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class AssetUpdate(BaseModel):
@@ -72,6 +75,14 @@ class StreamUrlResponse(BaseModel):
     url: str
     asset_type: AssetType
     expires_in: int = 3600
+
+class AssetNeighbors(BaseModel):
+    """The assets either side of one in its project grid, for the file page's arrows."""
+    prev_id: Optional[uuid.UUID] = None
+    next_id: Optional[uuid.UUID] = None
+    # 1-based place in the grid; 0 when the asset is not listed there.
+    position: int = 0
+    total: int = 0
 
 class NotificationResponse(BaseModel):
     id: uuid.UUID

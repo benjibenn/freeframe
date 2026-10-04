@@ -3,11 +3,19 @@
  * structured brief, who uploaded, and a preview of what they uploaded — with no
  * navigation to an edit form or a per-submitter project.
  */
-import { describe, it, expect } from 'vitest'
+import { useEffect, useState } from 'react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { SWRConfig } from 'swr'
 
+vi.mock('@/lib/api', () => ({ api: { get: vi.fn() } }))
+vi.mock('@/components/projects/brief-view', () => ({
+  BriefView: ({ data }: { data: Record<string, unknown> }) => <p>brief: {String(data.title)}</p>,
+}))
+import { api } from '@/lib/api'
 import { BriefOverviewTable, type BriefOverviewRow } from '../brief-overview-table'
+import { NO_FILTERS, overviewQuery, type OverviewFilters } from '@/lib/brief-overview-query'
 
 const ROWS: BriefOverviewRow[] = [
   {
@@ -25,7 +33,7 @@ const ROWS: BriefOverviewRow[] = [
     angle_label: 'Performance',
     problem: 'Battery health unknown',
     has_brief: false,
-    brief_json: { title: 'The test report', product: 'iPhone 17 Pro Max' },
+    has_brief_json: true,
     reference_image_count: 2,
     reference_video_count: 0,
     submission_count: 1,
@@ -62,7 +70,7 @@ const ROWS: BriefOverviewRow[] = [
     angle_label: 'Contrarian',
     problem: null,
     has_brief: false,
-    brief_json: null,
+    has_brief_json: false,
     reference_image_count: 1,
     reference_video_count: 0,
     submission_count: 0,
@@ -71,9 +79,38 @@ const ROWS: BriefOverviewRow[] = [
   },
 ]
 
+function Harness({ rows, onQuery }: { rows: BriefOverviewRow[]; onQuery?: (qs: string) => void }) {
+  const [filters, setFilters] = useState<OverviewFilters>(NO_FILTERS)
+  useEffect(() => {
+    onQuery?.(overviewQuery(filters))
+  }, [filters, onQuery])
+  return (
+    <BriefOverviewTable
+      rows={rows}
+      total={rows.length}
+      filters={filters}
+      onFiltersChange={setFilters}
+      submitters={[{ id: 'u1', label: 'Ada Editor' }]}
+    />
+  )
+}
+
+function renderTable(rows: BriefOverviewRow[] = ROWS, onQuery?: (qs: string) => void) {
+  return render(
+    <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+      <Harness rows={rows} onQuery={onQuery} />
+    </SWRConfig>,
+  )
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(api.get).mockResolvedValue({ brief_json: { title: 'The test report' } } as never)
+})
+
 describe('BriefOverviewTable', () => {
   it('lists every brief with its persona, angle and counts', () => {
-    render(<BriefOverviewTable rows={ROWS} />)
+    renderTable()
     // One selectable row per brief. The title also appears in the detail header
     // for whichever row is selected, so assert on the list buttons specifically.
     expect(screen.getByRole('button', { name: /The test report/ })).toBeInTheDocument()
@@ -83,7 +120,7 @@ describe('BriefOverviewTable', () => {
 
   it('shows the uploader and a thumbnail of the upload when a brief is selected', async () => {
     const user = userEvent.setup()
-    render(<BriefOverviewTable rows={ROWS} />)
+    renderTable()
 
     await user.click(screen.getByRole('button', { name: /The test report/ }))
 
@@ -98,7 +135,7 @@ describe('BriefOverviewTable', () => {
 
   it('says so plainly when a brief has no submissions yet', async () => {
     const user = userEvent.setup()
-    render(<BriefOverviewTable rows={ROWS} />)
+    renderTable()
     await user.click(screen.getByRole('button', { name: /Pick your side/ }))
     expect(screen.getByText(/no submissions yet/i)).toBeInTheDocument()
   })
@@ -107,7 +144,7 @@ describe('BriefOverviewTable', () => {
 describe('BriefOverviewTable — reference media', () => {
   it('renders the owner-uploaded reference images the brief was built from', async () => {
     const user = userEvent.setup()
-    render(<BriefOverviewTable rows={ROWS} />)
+    renderTable()
     await user.click(screen.getByRole('button', { name: /The test report/ }))
 
     // Reference media is served by position off the public submit route, so the
@@ -123,7 +160,7 @@ describe('BriefOverviewTable — reference media', () => {
     const withVideo: BriefOverviewRow[] = [
       { ...ROWS[0], reference_image_count: 0, reference_video_count: 1 },
     ]
-    const { container } = render(<BriefOverviewTable rows={withVideo} />)
+    const { container } = renderTable(withVideo)
     await user.click(screen.getByRole('button', { name: /The test report/ }))
 
     const videos = container.querySelectorAll('video')
@@ -136,7 +173,7 @@ describe('BriefOverviewTable — reference media', () => {
     const bare: BriefOverviewRow[] = [
       { ...ROWS[0], reference_image_count: 0, reference_video_count: 0 },
     ]
-    render(<BriefOverviewTable rows={bare} />)
+    renderTable(bare)
     await user.click(screen.getByRole('button', { name: /The test report/ }))
     expect(screen.queryByText(/^references$/i)).toBeNull()
   })
@@ -150,63 +187,71 @@ describe('BriefOverviewTable — reference media', () => {
  * name on screen, and open that upload where it can be commented on — without
  * leaving this page to do any of it.
  */
-describe('BriefOverviewTable — filters', () => {
-  it('narrows to briefs that actually have files when "Has files" is ticked', async () => {
+describe('BriefOverviewTable — filters go to the server', () => {
+  // The list is paged, so filtering what is loaded would hide matches that sit
+  // on a later page. Each control becomes a query parameter instead.
+  it('asks for briefs with files when "Has files" is ticked', async () => {
     const user = userEvent.setup()
-    render(<BriefOverviewTable rows={ROWS} />)
-
+    const onQuery = vi.fn()
+    renderTable(ROWS, onQuery)
     await user.click(screen.getByLabelText(/has files/i))
-
-    expect(screen.getByRole('button', { name: /The test report/ })).toBeInTheDocument()
-    // Zero-file brief is gone from the list. Its title survives nowhere else,
-    // since the detail pane falls through to the first visible brief.
-    expect(screen.queryByRole('button', { name: /Pick your side/ })).toBeNull()
+    expect(onQuery).toHaveBeenLastCalledWith('has_files=true')
   })
 
-  it('matches the name search against the title and the folder path', async () => {
+  it('sends the name search as q', async () => {
     const user = userEvent.setup()
-    render(<BriefOverviewTable rows={ROWS} />)
-    const search = screen.getByLabelText(/search briefs by name/i)
-
-    await user.type(search, 'pick your side')
-    expect(screen.queryByRole('button', { name: /The test report/ })).toBeNull()
-    expect(screen.getByRole('button', { name: /Pick your side/ })).toBeInTheDocument()
-
-    // The path is shown on the row, so it is fair game for the same box.
-    await user.clear(search)
-    await user.type(search, 'Iphone 17')
-    expect(screen.getAllByRole('button', { name: /Iphone 17 Pro Max/ })).toHaveLength(2)
+    const onQuery = vi.fn()
+    renderTable(ROWS, onQuery)
+    await user.type(screen.getByLabelText(/search briefs by name/i), 'pick')
+    expect(onQuery).toHaveBeenLastCalledWith('q=pick')
   })
 
-  it('excludes briefs created outside the date range', async () => {
+  it('sends a date bound as the start of that day in the viewer’s timezone', async () => {
     const user = userEvent.setup()
-    render(<BriefOverviewTable rows={ROWS} />)
-
-    // Both briefs were created on 2026-09-10; a later "from" must empty the list
-    // rather than silently ignoring the bound.
+    const onQuery = vi.fn()
+    renderTable(ROWS, onQuery)
     await user.type(screen.getByLabelText(/created from/i), '2026-09-11')
-    expect(screen.getByText(/no briefs match these filters/i)).toBeInTheDocument()
+    const qs = new URLSearchParams(onQuery.mock.lastCall![0])
+    expect(qs.get('created_from')).toBe(new Date('2026-09-11T00:00:00').toISOString())
   })
 
-  it('keeps a brief the filters hide from staying selected in the detail pane', async () => {
+  it('moves the detail pane on when the selected brief drops out of the results', async () => {
     const user = userEvent.setup()
-    render(<BriefOverviewTable rows={ROWS} />)
-
+    const table = (rows: BriefOverviewRow[]) => (
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <BriefOverviewTable rows={rows} total={rows.length} filters={NO_FILTERS} onFiltersChange={() => {}} submitters={[]} />
+      </SWRConfig>
+    )
+    const { rerender } = render(table(ROWS))
     await user.click(screen.getByRole('button', { name: /Pick your side/ }))
     expect(screen.getByText(/no submissions yet/i)).toBeInTheDocument()
 
-    // "Has files" hides the selected brief — the pane must move on, not keep
-    // showing a brief that is no longer in the list.
-    await user.click(screen.getByLabelText(/has files/i))
+    rerender(table([ROWS[0]]))
     expect(screen.queryByText(/no submissions yet/i)).toBeNull()
     expect(screen.getByText('Ada Editor', { selector: 'p' })).toBeInTheDocument()
+  })
+})
+
+describe('BriefOverviewTable — the structured brief loads on open', () => {
+  it('fetches the brief for the selected row', async () => {
+    renderTable()
+    expect(await screen.findByText('brief: The test report')).toBeInTheDocument()
+    expect(api.get).toHaveBeenCalledWith('/submission-links/a1')
+  })
+
+  it('does not fetch for a brief that has no structured brief', async () => {
+    const user = userEvent.setup()
+    renderTable()
+    await user.click(screen.getByRole('button', { name: /Pick your side/ }))
+    expect(screen.getByText(/no structured brief attached/i)).toBeInTheDocument()
+    expect(api.get).not.toHaveBeenCalledWith('/submission-links/b2')
   })
 })
 
 describe('BriefOverviewTable — opening an upload', () => {
   it('links each uploaded file to its review screen with a route back here', async () => {
     const user = userEvent.setup()
-    render(<BriefOverviewTable rows={ROWS} />)
+    renderTable()
     await user.click(screen.getByRole('button', { name: /The test report/ }))
 
     const link = screen.getByRole('link', { name: /battery-report-v3\.png/ })
@@ -220,7 +265,7 @@ describe('BriefOverviewTable — opening an upload', () => {
 
   it('opens uploads in a new tab so the sweep keeps its filters and scroll', async () => {
     const user = userEvent.setup()
-    render(<BriefOverviewTable rows={ROWS} />)
+    renderTable()
     await user.click(screen.getByRole('button', { name: /The test report/ }))
 
     const link = screen.getByRole('link', { name: /battery-report-v3\.png/ })
@@ -234,7 +279,7 @@ describe('BriefOverviewTable — sharing a brief with editors', () => {
   // actually landed on the clipboard rather than on the call that put it there.
   it('copies the token-gated submit URL, not an admin-only route', async () => {
     const user = userEvent.setup()
-    render(<BriefOverviewTable rows={ROWS} />)
+    renderTable()
     await user.click(screen.getByRole('button', { name: /The test report/ }))
     await user.click(screen.getByRole('button', { name: /copy brief link/i }))
 
@@ -246,7 +291,7 @@ describe('BriefOverviewTable — sharing a brief with editors', () => {
 
   it('offers the link of whichever brief is selected, not the first one', async () => {
     const user = userEvent.setup()
-    render(<BriefOverviewTable rows={ROWS} />)
+    renderTable()
     await user.click(screen.getByRole('button', { name: /Pick your side/ }))
     await user.click(screen.getByRole('button', { name: /copy brief link/i }))
 

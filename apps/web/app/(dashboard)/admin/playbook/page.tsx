@@ -3,10 +3,10 @@
 /**
  * Superadmin playbook: coverage and brief grouping for one brand folder.
  *
- * Reads the same /brief-overview payload as the brief overview page, so file
- * counts are live — nothing to sync. Superadmin-only for the same reason: it
- * spans every owner's briefs. The API enforces it; this guard only spares a
- * non-admin the failed request.
+ * Reads every page of /brief-overview (the coverage matrix counts across all
+ * briefs), so file counts are live — nothing to sync. Superadmin-only for the
+ * same reason: it spans every owner's briefs. The API enforces it; this guard
+ * only spares a non-admin the failed request.
  */
 
 import useSWR from 'swr'
@@ -15,13 +15,14 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 import { PlaybookView } from '@/components/admin/playbook-view'
 import type { BriefOverviewRow } from '@/components/admin/brief-overview-table'
+import { fetchAllBriefOverview } from '@/lib/brief-overview-query'
 
 export default function AdminPlaybookPage() {
   const { isSuperAdmin, isLoading: authLoading } = useAuthStore()
 
   const { data, error, isLoading, isValidating, mutate } = useSWR<BriefOverviewRow[]>(
-    isSuperAdmin ? '/brief-overview' : null,
-    (key: string) => api.get<BriefOverviewRow[]>(key),
+    isSuperAdmin ? 'playbook:brief-overview' : null,
+    () => fetchAllBriefOverview<BriefOverviewRow>((url) => api.get(url)),
   )
 
   if (authLoading) {

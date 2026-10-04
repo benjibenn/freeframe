@@ -96,3 +96,19 @@ describe('Sidebar — Tasks link', () => {
     expect(screen.getByRole('link', { name: /tasks/i })).toHaveAttribute('href', '/tasks')
   })
 })
+
+describe('Sidebar — Review link', () => {
+  // The review queue spans every editor's submissions, like Activity: platform
+  // admins (super or sub) only.
+  it('shows Review to a sub-admin', () => {
+    authState.user = { id: 'u2', name: 'Sub', is_superadmin: false, is_subadmin: true }
+    renderSidebar()
+    expect(screen.getByRole('link', { name: /^review$/i })).toHaveAttribute('href', '/review')
+  })
+
+  it('hides Review from an ordinary editor', () => {
+    authState.user = { id: 'u3', name: 'Ada', is_superadmin: false, is_subadmin: false }
+    renderSidebar()
+    expect(screen.queryByRole('link', { name: /^review$/i })).toBeNull()
+  })
+})

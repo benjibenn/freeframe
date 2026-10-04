@@ -33,6 +33,15 @@ def create_hls_token(s3_prefix: str, expires_hours: int = 24) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
+def hls_stream_url(s3_key_processed: str) -> str:
+    """The proxy URL a player uses for a transcoded video's master playlist.
+
+    Shared by /assets/{id}/stream and /review-queue so the two never drift on
+    how the URL is built.
+    """
+    return f"/stream/hls/master.m3u8?token={create_hls_token(s3_key_processed)}"
+
+
 def _verify_hls_token(token: str) -> str:
     """Verify HLS token and return s3_prefix."""
     try:

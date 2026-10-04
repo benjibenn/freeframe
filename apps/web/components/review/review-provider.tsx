@@ -84,72 +84,18 @@ export function ReviewProvider({
 
   const fetchAsset = useCallback(async () => {
     try {
-      let data: AssetResponse;
-
-      if (shareToken) {
-        // Share mode: fetch stream info to build a pseudo asset
-        const API_URL =
-          process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-        const headers: Record<string, string> = {};
-        try {
-          const t = localStorage.getItem("ff_access_token");
-          if (t) headers["Authorization"] = `Bearer ${t}`;
-        } catch {}
-        const streamRes = await fetch(
-          `${API_URL}/share/${shareToken}/stream/${assetId}?_=1${shareSessionParam}`,
-          { headers },
-        );
-        const streamData = streamRes.ok ? await streamRes.json() : null;
-        // Build pseudo asset from available data
-        data = {
-          id: assetId,
-          name: streamData?.name || "Asset",
-          description: null,
-          asset_type: streamData?.asset_type || "image",
-          status: "in_review",
-          rating: null,
-          assignee_id: null,
-          folder_id: null,
-          due_date: null,
-          keywords: [],
-          project_id: "",
-          created_by: "",
-          created_at: "",
-          updated_at: "",
-          deleted_at: null,
-          stream_url: streamData?.url,
-          thumbnail_url: streamData?.thumbnail_url,
-          latest_version: streamData?.version_id
-            ? {
-                id: streamData.version_id,
-                asset_id: assetId,
-                version_number: 1,
-                processing_status: "ready",
-                created_by: "",
-                created_at: "",
-                deleted_at: null,
-                files: [],
-              }
-            : null,
-        } as AssetResponse;
-      } else {
-        // Normal mode: authenticated API
-        data = await api.get<AssetResponse>(`/assets/${assetId}`);
-      }
-
-      if (!mountedRef.current) return;
-      setAsset(data);
-      setCurrentAsset(data);
-
       if (!shareToken) {
-        // Fetch all versions for the version switcher (not available in share mode)
-        const allVersions = await api.get<AssetVersion[]>(
-          `/assets/${assetId}/versions`,
-        );
+        // The asset and its versions do not depend on each other. Ask for both
+        // at once instead of one round trip after the other.
+        const [data, allVersions] = await Promise.all([
+          api.get<AssetResponse>(`/assets/${assetId}`),
+          api.get<AssetVersion[]>(`/assets/${assetId}/versions`),
+        ]);
         if (!mountedRef.current) return;
+        setAsset(data);
+        setCurrentAsset(data);
         setVersions(allVersions ?? []);
-
-        const readyVersion = (allVersions ?? [])
+        const readyVersion = [...(allVersions ?? [])]
           .sort((a, b) => b.version_number - a.version_number)
           .find((v) => v.processing_status === "ready");
         if (readyVersion) {
@@ -157,49 +103,93 @@ export function ReviewProvider({
         } else if (data.latest_version) {
           setCurrentVersion(data.latest_version);
         }
-      } else {
-        // Share mode: load the asset's versions for the switcher. The share
-        // endpoint returns ready-only versions newest-first and caps the list
-        // to one when the link disables version history, so the UI hides the
-        // switcher when fewer than two come back.
-        try {
-          const API_URL =
-            process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-          const headers: Record<string, string> = {};
-          try {
-            const t = localStorage.getItem("ff_access_token");
-            if (t) headers["Authorization"] = `Bearer ${t}`;
-          } catch {}
-          const qs = shareSessionParam ? `?${shareSessionParam.slice(1)}` : "";
-          const vRes = await fetch(
-            `${API_URL}/share/${shareToken}/assets/${assetId}/versions${qs}`,
-            { headers },
-          );
-          const vData: Array<{
-            id: string;
-            version_number: number;
-            processing_status: AssetVersion["processing_status"];
-            created_at: string | null;
-          }> = vRes.ok ? await vRes.json() : [];
-          if (!mountedRef.current) return;
-          if (Array.isArray(vData) && vData.length > 0) {
-            const mapped: AssetVersion[] = vData.map((v) => ({
-              id: v.id,
+        return;
+      }
+
+      // Share mode: fetch stream info to build a pseudo asset
+      const API_URL =
+        process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const headers: Record<string, string> = {};
+      try {
+        const t = localStorage.getItem("ff_access_token");
+        if (t) headers["Authorization"] = `Bearer ${t}`;
+      } catch {}
+      const streamRes = await fetch(
+        `${API_URL}/share/${shareToken}/stream/${assetId}?_=1${shareSessionParam}`,
+        { headers },
+      );
+      const streamData = streamRes.ok ? await streamRes.json() : null;
+      // Build pseudo asset from available data
+      const data = {
+        id: assetId,
+        name: streamData?.name || "Asset",
+        description: null,
+        asset_type: streamData?.asset_type || "image",
+        status: "in_review",
+        rating: null,
+        assignee_id: null,
+        folder_id: null,
+        due_date: null,
+        keywords: [],
+        project_id: "",
+        created_by: "",
+        created_at: "",
+        updated_at: "",
+        deleted_at: null,
+        stream_url: streamData?.url,
+        thumbnail_url: streamData?.thumbnail_url,
+        latest_version: streamData?.version_id
+          ? {
+              id: streamData.version_id,
               asset_id: assetId,
-              version_number: v.version_number,
-              processing_status: v.processing_status,
+              version_number: 1,
+              processing_status: "ready",
               created_by: "",
-              created_at: v.created_at ?? "",
+              created_at: "",
               deleted_at: null,
-            }));
-            setVersions(mapped);
-            setCurrentVersion(mapped[0]); // endpoint returns newest-first
-          } else if (data.latest_version) {
-            setCurrentVersion(data.latest_version);
-          }
-        } catch {
-          if (data.latest_version) setCurrentVersion(data.latest_version);
+              files: [],
+            }
+          : null,
+      } as AssetResponse;
+
+      if (!mountedRef.current) return;
+      setAsset(data);
+      setCurrentAsset(data);
+
+      // Share mode: load the asset's versions for the switcher. The share
+      // endpoint returns ready-only versions newest-first and caps the list
+      // to one when the link disables version history, so the UI hides the
+      // switcher when fewer than two come back.
+      try {
+        const qs = shareSessionParam ? `?${shareSessionParam.slice(1)}` : "";
+        const vRes = await fetch(
+          `${API_URL}/share/${shareToken}/assets/${assetId}/versions${qs}`,
+          { headers },
+        );
+        const vData: Array<{
+          id: string;
+          version_number: number;
+          processing_status: AssetVersion["processing_status"];
+          created_at: string | null;
+        }> = vRes.ok ? await vRes.json() : [];
+        if (!mountedRef.current) return;
+        if (Array.isArray(vData) && vData.length > 0) {
+          const mapped: AssetVersion[] = vData.map((v) => ({
+            id: v.id,
+            asset_id: assetId,
+            version_number: v.version_number,
+            processing_status: v.processing_status,
+            created_by: "",
+            created_at: v.created_at ?? "",
+            deleted_at: null,
+          }));
+          setVersions(mapped);
+          setCurrentVersion(mapped[0]); // endpoint returns newest-first
+        } else if (data.latest_version) {
+          setCurrentVersion(data.latest_version);
         }
+      } catch {
+        if (data.latest_version) setCurrentVersion(data.latest_version);
       }
     } catch (err) {
       if (!mountedRef.current) return;
@@ -208,28 +198,26 @@ export function ReviewProvider({
   }, [assetId, shareToken, shareSessionParam, setCurrentAsset, setCurrentVersion]);
 
   const fetchComments = useCallback(async () => {
+    // Outside share mode the page reads comments through useComments, scoped to
+    // the version on screen. Fetching the unscoped list here as well was a
+    // wasted round trip on every open.
+    if (!shareToken) return;
     try {
-      let data: Comment[];
-      if (shareToken) {
-        const API_URL =
-          process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-        // Scope comments to the selected version so switching versions shows
-        // only that version's comments (the endpoint returns all when omitted).
-        const versionQs = currentVersion?.id
-          ? `&version_id=${currentVersion.id}`
-          : "";
-        const res = await fetch(
-          `${API_URL}/share/${shareToken}/comments?asset_id=${assetId}${versionQs}${shareSessionParam}`,
-        );
-        if (res.ok) {
-          const json = await res.json();
-          // Handle both formats: array directly or {comments: [...]}
-          data = Array.isArray(json) ? json : (json.comments ?? []);
-        } else {
-          data = [];
-        }
-      } else {
-        data = await api.get<Comment[]>(`/assets/${assetId}/comments`);
+      const API_URL =
+        process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      // Scope comments to the selected version so switching versions shows
+      // only that version's comments (the endpoint returns all when omitted).
+      const versionQs = currentVersion?.id
+        ? `&version_id=${currentVersion.id}`
+        : "";
+      const res = await fetch(
+        `${API_URL}/share/${shareToken}/comments?asset_id=${assetId}${versionQs}${shareSessionParam}`,
+      );
+      let data: Comment[] = [];
+      if (res.ok) {
+        const json = await res.json();
+        // Handle both formats: array directly or {comments: [...]}
+        data = Array.isArray(json) ? json : (json.comments ?? []);
       }
       if (!mountedRef.current) return;
       setComments(data ?? []);
