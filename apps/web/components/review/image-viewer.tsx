@@ -182,11 +182,25 @@ export function ImageViewer({ asset, version, className, annotationCanvas }: Ima
     // Not inside ReviewProvider — normal mode
   }
 
-  // Fetch stream URL(s)
+  // Slides already asked for in this version. A ref, not state: it must not
+  // re-run the effect below, and it must survive an in-flight request.
+  const requestedRef = React.useRef<Set<string>>(new Set())
+  const versionIdRef = React.useRef<string | undefined>(version?.id)
+  versionIdRef.current = version?.id
+
+  // Forget every slide's URL when the version changes.
+  React.useEffect(() => {
+    requestedRef.current = new Set()
+    setImageUrls({})
+    setError(null)
+  }, [version?.id])
+
+  // Single image, or any image in share mode (the share endpoint serves one URL
+  // per version): one request.
   React.useEffect(() => {
     if (!version) return
+    if (isCarousel && !shareToken) return
 
-    // In share mode, fetch via share endpoint
     if (shareToken) {
       let cancelled = false
       setIsLoading(true)
@@ -202,44 +216,44 @@ export function ImageViewer({ asset, version, className, annotationCanvas }: Ima
     }
 
     let cancelled = false
+    setIsLoading(true)
+    setError(null)
+    api.get<StreamResponse>(`/assets/${asset.id}/stream?version_id=${version.id}`)
+      .then((data) => { if (!cancelled) setImageUrls({ single: data.url }) })
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load image') })
+      .finally(() => { if (!cancelled) setIsLoading(false) })
+    return () => { cancelled = true }
+  }, [asset.id, shareToken, shareSession, version, isCarousel])
 
-    const fetchUrls = async () => {
-      setIsLoading(true)
-      setError(null)
-
-      try {
-        if (isCarousel) {
-          const entries = await Promise.all(
-            mediaFiles.map(async (mf) => {
-              const data = await api.get<StreamResponse>(
-                `/assets/${asset.id}/stream?media_file_id=${mf.id}&version_id=${version.id}`,
-              )
-              return [mf.id, data.url] as [string, string]
-            }),
-          )
-          if (!cancelled) {
-            setImageUrls(Object.fromEntries(entries))
-          }
-        } else {
-          const data = await api.get<StreamResponse>(`/assets/${asset.id}/stream?version_id=${version.id}`)
-          if (!cancelled) {
-            setImageUrls({ single: data.url })
-          }
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load image')
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false)
-      }
-    }
-
-    fetchUrls()
-    return () => {
-      cancelled = true
-    }
-  }, [asset.id, shareToken, version, isCarousel, mediaFiles])
+  // Carousel: the slide on screen and the one after it, each by its own file id.
+  // Fetching every slide up front put one /stream round trip per image in front
+  // of the first picture.
+  React.useEffect(() => {
+    if (!version || !isCarousel || shareToken) return
+    const vid = version.id
+    const wanted = mediaFiles
+      .slice(carouselIndex, carouselIndex + 2)
+      .filter((mf) => !requestedRef.current.has(mf.id))
+    if (wanted.length === 0) return
+    wanted.forEach((mf) => requestedRef.current.add(mf.id))
+    Promise.all(
+      wanted.map(async (mf) => {
+        const data = await api.get<StreamResponse>(
+          `/assets/${asset.id}/stream?media_file_id=${mf.id}&version_id=${vid}`,
+        )
+        return [mf.id, data.url] as [string, string]
+      }),
+    )
+      .then((entries) => {
+        if (versionIdRef.current !== vid) return
+        setImageUrls((prev) => ({ ...prev, ...Object.fromEntries(entries) }))
+      })
+      .catch((err) => {
+        wanted.forEach((mf) => requestedRef.current.delete(mf.id))
+        if (versionIdRef.current !== vid) return
+        setError(err instanceof Error ? err.message : 'Failed to load image')
+      })
+  }, [asset.id, shareToken, version, isCarousel, mediaFiles, carouselIndex])
 
   // Reset carousel index when version changes
   React.useEffect(() => {
@@ -262,7 +276,14 @@ export function ImageViewer({ asset, version, className, annotationCanvas }: Ima
     setImageDimensions({ w, h })
   }
 
-  if (isLoading) {
+  // A lazily loaded carousel is "loading" exactly while the slide on screen has
+  // no URL yet. The isLoading flag belongs to the single-image path.
+  const lazyCarousel = isCarousel && !shareToken
+  const showSkeleton = lazyCarousel
+    ? mediaFiles.length > 0 && !currentUrl && !error
+    : isLoading
+
+  if (showSkeleton) {
     return <ImageSkeleton />
   }
 
@@ -326,6 +347,7 @@ export function ImageViewer({ asset, version, className, annotationCanvas }: Ima
             size="sm"
             onClick={handlePrev}
             disabled={carouselIndex === 0}
+            aria-label="Previous image"
             className="h-7 w-7 p-0"
           >
             <ChevronLeft className="h-4 w-4" />
@@ -340,6 +362,7 @@ export function ImageViewer({ asset, version, className, annotationCanvas }: Ima
             size="sm"
             onClick={handleNext}
             disabled={carouselIndex === totalImages - 1}
+            aria-label="Next image"
             className="h-7 w-7 p-0"
           >
             <ChevronRight className="h-4 w-4" />
