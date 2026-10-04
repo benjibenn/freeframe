@@ -224,6 +224,17 @@ export interface AssetVersion {
 export interface AssetResponse extends Asset {
   latest_version: AssetVersion | null;
   thumbnail_url: string | null;
+  /** Filled by GET /assets/{id} only — the file page header's "by <name>". */
+  uploader_name?: string | null;
+}
+
+/** The assets either side of one in its project grid (GET /assets/{id}/neighbors). */
+export interface AssetNeighbors {
+  prev_id: string | null;
+  next_id: string | null;
+  /** 1-based place in the grid; 0 when the file is not listed there. */
+  position: number;
+  total: number;
 }
 
 export interface MediaFile {

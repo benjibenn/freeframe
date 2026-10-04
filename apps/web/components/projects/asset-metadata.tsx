@@ -171,8 +171,6 @@ function CustomFieldInput({
 interface AssetMetadataEditorProps {
   asset: Asset
   projectId: string
-  /** Project members — used to populate the assignee dropdown. */
-  members?: ProjectMember[]
   /** When false the editor renders nothing (editing is editor+ / admin only). */
   canEdit: boolean
   onUpdated?: () => void
@@ -187,7 +185,6 @@ interface AssetMetadataEditorProps {
 export function AssetMetadataEditor({
   asset,
   projectId,
-  members,
   canEdit,
   onUpdated,
 }: AssetMetadataEditorProps) {
@@ -201,11 +198,21 @@ export function AssetMetadataEditor({
   const [saving, setSaving] = React.useState(false)
   const [msg, setMsg] = React.useState('')
 
+  // Loaded on first use of the assignee picker, not on page open: most visits
+  // never touch it. A file that already has an assignee needs the list at once
+  // to show their name.
+  const [membersWanted, setMembersWanted] = React.useState(Boolean(asset.assignee_id))
+  const { data: members } = useSWR<ProjectMember[]>(
+    canEdit && membersWanted ? `/projects/${projectId}/members` : null,
+    (k: string) => api.get<ProjectMember[]>(k),
+  )
+
   // Reset when navigating to a different asset.
   React.useEffect(() => {
     setRating(asset.rating)
     setDueDate(asset.due_date ? asset.due_date.slice(0, 10) : '')
     setAssigneeId(asset.assignee_id ?? '')
+    setMembersWanted(Boolean(asset.assignee_id))
     setMsg('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asset.id])
@@ -288,6 +295,8 @@ export function AssetMetadataEditor({
           data-field-shortcut="assignee"
           value={assigneeId}
           onChange={(e) => setAssigneeId(e.target.value)}
+          onFocus={() => setMembersWanted(true)}
+          onPointerDown={() => setMembersWanted(true)}
           className="flex h-8 w-full rounded-md border border-border bg-bg-secondary px-3 text-sm text-text-primary focus:outline-none focus:border-border-focus focus:ring-1 focus:ring-border-focus transition-colors"
         >
           <option value="">Unassigned</option>

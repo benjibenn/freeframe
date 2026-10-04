@@ -41,7 +41,7 @@ import Link from 'next/link'
 import { cn, downloadAsset } from '@/lib/utils'
 import { useIsDesktop } from '@/hooks/use-media-query'
 import { usePageTitle } from '@/hooks/use-page-title'
-import type { Project, AssetResponse, ProjectMember, FolderTreeNode, User } from '@/types'
+import type { Project, AssetNeighbors, FolderTreeNode } from '@/types'
 import { ShortcutsHint } from '@/components/ui/shortcuts-hint'
 
 const ASSET_SHORTCUTS = [
@@ -96,7 +96,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     fromParam && fromParam.startsWith('/') && !fromParam.startsWith('//')
       ? fromParam
       : null
-  const { asset, versions, isLoading, refetchComments, refetchVersions } = useReview()
+  const { assetId, asset, versions, isLoading, refetchVersions } = useReview()
   const { currentVersion, isDrawingMode, focusedCommentId, seekTo, setFocusedCommentId, setActiveAnnotation } = useReviewStore()
   const { user } = useAuthStore()
   const startVersionUpload = useUploadStore((s) => s.startVersionUpload)
@@ -133,9 +133,10 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     if (!isDesktop) setSidebarOpen(false)
   }, [isDesktop])
 
-  // Fetch folder tree to build the folder path for the breadcrumb
+  // Only a filed asset has a folder path to show in the breadcrumb. Submitted
+  // work is unfiled, so most review opens skip this request.
   const { data: folderTree } = useSWR<FolderTreeNode[]>(
-    asset ? `/projects/${projectId}/folder-tree` : null,
+    asset?.folder_id ? `/projects/${projectId}/folder-tree` : null,
     () => api.get<FolderTreeNode[]>(`/projects/${projectId}/folder-tree`),
   )
 
@@ -177,35 +178,22 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     if (project?.name) setLabel(projectId, project.name)
   }, [project?.name, projectId, setLabel])
 
-  // Role-based permissions
-  const { data: members } = useSWR<ProjectMember[]>(
-    `/projects/${projectId}/members`,
-    () => api.get<ProjectMember[]>(`/projects/${projectId}/members`),
-  )
-  const currentMember = members?.find((m) => m.user_id === user?.id)
-  const currentRole = currentMember?.role ?? 'viewer'
+  // Role-based permissions. GET /projects/{id} already carries the viewer's
+  // role, so the member list is no longer fetched just to find it.
+  const currentRole = project?.role ?? 'viewer'
   // Platform admins manage every project, so they can comment/tag without explicit membership.
   const isPlatformAdmin = !!(user?.is_superadmin || user?.is_subadmin)
   const canComment = isPlatformAdmin || currentRole !== 'viewer'
   const canEditTags =
     isPlatformAdmin || currentRole === 'owner' || currentRole === 'editor'
 
-  // Fetch all assets for navigation (1 of N)
-  const { data: allAssets } = useSWR<AssetResponse[]>(
-    `/projects/${projectId}/assets`,
-    () => api.get<AssetResponse[]>(`/projects/${projectId}/assets`),
+  // Prev/next and "N of M" without loading every asset in the project.
+  const { data: neighbors } = useSWR<AssetNeighbors>(
+    `/assets/${assetId}/neighbors`,
+    (k: string) => api.get<AssetNeighbors>(k),
   )
 
-  // Resolve the uploader (asset.created_by) to a display name for the header.
-  const uploaderId = asset?.created_by ?? null
-  const { data: uploaderUsers } = useSWR<User[]>(
-    uploaderId ? `/users?ids=${uploaderId}` : null,
-    () => api.get<User[]>(`/users?ids=${uploaderId}`),
-  )
-  const uploaderName =
-    uploaderId === user?.id
-      ? user?.name
-      : uploaderUsers?.find((u) => u.id === uploaderId)?.name
+  const uploaderName = asset?.uploader_name ?? null
 
   const {
     comments,
@@ -235,10 +223,10 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   }, [comments, searchParams, seekTo, setFocusedCommentId, setActiveAnnotation])
 
   // Asset navigation
-  const currentIndex = allAssets?.findIndex((a) => a.id === asset?.id) ?? -1
-  const totalAssets = allAssets?.length ?? 0
-  const prevAsset = currentIndex > 0 ? allAssets?.[currentIndex - 1] : null
-  const nextAsset = currentIndex < totalAssets - 1 ? allAssets?.[currentIndex + 1] : null
+  const prevAssetId = neighbors?.prev_id ?? null
+  const nextAssetId = neighbors?.next_id ?? null
+  const totalAssets = neighbors?.total ?? 0
+  const currentIndex = (neighbors?.position ?? 0) - 1
 
   const navigateAsset = (assetId: string) => {
     // Preserve the origin so the back arrow still works after prev/next browsing.
@@ -289,18 +277,18 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
       }
 
       // Asset navigation
-      if (e.key === 'ArrowLeft' && prevAsset) {
+      if (e.key === 'ArrowLeft' && prevAssetId) {
         e.preventDefault()
-        navigateAsset(prevAsset.id)
+        navigateAsset(prevAssetId)
       }
-      if (e.key === 'ArrowRight' && nextAsset) {
+      if (e.key === 'ArrowRight' && nextAssetId) {
         e.preventDefault()
-        navigateAsset(nextAsset.id)
+        navigateAsset(nextAssetId)
       }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [prevAsset, nextAsset, activeTab, sidebarOpen])
+  }, [prevAssetId, nextAssetId, activeTab, sidebarOpen])
 
   if (isLoading || !asset) {
     return (
@@ -332,12 +320,10 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
       mentionUserIds,
     )
     setAnnotationData(null)
-    refetchComments()
   }
 
   const handleSubmitReply = async (parentId: string, body: string) => {
     await createComment(body, undefined, undefined, undefined, parentId)
-    refetchComments()
   }
 
   const handleReprocess = async () => {
@@ -520,8 +506,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
         {totalAssets > 1 && (
           <div className="hidden sm:flex items-center gap-1 shrink-0">
             <button
-              onClick={() => prevAsset && navigateAsset(prevAsset.id)}
-              disabled={!prevAsset}
+              onClick={() => prevAssetId && navigateAsset(prevAssetId)}
+              disabled={!prevAssetId}
               className="flex items-center justify-center h-7 w-7 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               title="Previous asset (←)"
             >
@@ -531,8 +517,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
               {currentIndex + 1} of {totalAssets}
             </span>
             <button
-              onClick={() => nextAsset && navigateAsset(nextAsset.id)}
-              disabled={!nextAsset}
+              onClick={() => nextAssetId && navigateAsset(nextAssetId)}
+              disabled={!nextAssetId}
               className="flex items-center justify-center h-7 w-7 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               title="Next asset (→)"
             >
@@ -742,7 +728,6 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                   <AssetMetadataEditor
                     asset={asset}
                     projectId={asset.project_id}
-                    members={members}
                     canEdit={canEditTags}
                   />
                 </div>
