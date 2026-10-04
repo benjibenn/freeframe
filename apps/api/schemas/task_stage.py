@@ -34,6 +34,14 @@ class TaskStageReorder(BaseModel):
 class TaskStageAssign(BaseModel):
     # Null moves the video back to "unassigned" (no stage).
     task_stage_id: Optional[uuid.UUID] = None
+    # Set by the /review page: the stage the reviewer saw the file in. The move
+    # is refused (409) if the file has left it since. With this set, a move to
+    # Revision requires `comment`.
+    expected_stage_id: Optional[uuid.UUID] = None
+    # Why the file is going back. Accepted only on a move to Revision; saved as a
+    # normal comment on `version_id` (default: newest) and emailed to the uploader.
+    comment: Optional[str] = None
+    version_id: Optional[uuid.UUID] = None
 
 
 class BulkTaskStageAssign(BaseModel):

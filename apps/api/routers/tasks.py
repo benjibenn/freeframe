@@ -58,6 +58,10 @@ from ..services.brief_editors import may_move_editor_stage, visible_editors, vis
 from ..services.permissions import require_platform_admin, is_platform_admin
 from ..services.s3_service import generate_presigned_get_url
 from ..services.thumbnails import thumbnail_key
+from ..models.comment import Comment, CommentVisibility
+from ..services.review_queue import is_revision
+from ..tasks.celery_app import send_task_safe
+from ..tasks.email_tasks import send_approval_email
 
 router = APIRouter(tags=["tasks"])
 
@@ -504,6 +508,20 @@ def get_task_board(
     return TaskBoardPage(items=briefs, total=total, stage_counts=stage_counts)
 
 
+def _comment_version(db: Session, asset: Asset, version_id: Optional[uuid.UUID]) -> AssetVersion:
+    """The version a reject comment belongs to: the one asked for, else the newest."""
+    q = db.query(AssetVersion).filter(
+        AssetVersion.asset_id == asset.id, AssetVersion.deleted_at.is_(None)
+    )
+    if version_id is not None:
+        version = q.filter(AssetVersion.id == version_id).first()
+    else:
+        version = q.order_by(AssetVersion.version_number.desc()).first()
+    if not version:
+        raise HTTPException(status_code=422, detail="No version of this file to comment on")
+    return version
+
+
 @router.patch("/assets/{asset_id}/task-stage", response_model=TaskItem)
 def set_asset_task_stage(
     asset_id: uuid.UUID,
@@ -516,6 +534,11 @@ def set_asset_task_stage(
     An editor may stage the files delivered against a brief they own — those
     sub-rows are visible to them, so a dropdown that always 403s would be worse
     than no dropdown. Any other asset stays admin-only.
+
+    `expected_stage_id`, `comment` and `version_id` are set by the /review page
+    making a review decision (see schemas/task_stage.py TaskStageAssign). The
+    tasks board's own dropdowns never send them, so they keep moving files
+    without a comment and without the 409 staleness check.
     """
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
     if not asset:
@@ -532,13 +555,50 @@ def set_asset_task_stage(
         if not owns:
             raise HTTPException(status_code=404, detail="Asset not found")
 
-    if body.task_stage_id is not None:
-        _get_stage(db, body.task_stage_id)  # validate it exists / not deleted
+    target = _get_stage(db, body.task_stage_id) if body.task_stage_id is not None else None
+    to_revision = target is not None and is_revision(target)
+    comment_text = (body.comment or "").strip()
+    if comment_text and not to_revision:
+        raise HTTPException(
+            status_code=422, detail="A comment is only taken when sending a file back for revision"
+        )
+    if body.expected_stage_id is not None:
+        # A review decision. A rejected file goes back to its editor, who cannot
+        # act on "rejected" alone, so a reason is required.
+        if to_revision and not comment_text:
+            raise HTTPException(
+                status_code=422, detail="Say what needs to change to send a file back for revision"
+            )
+        if asset.task_stage_id != body.expected_stage_id:
+            raise HTTPException(status_code=409, detail="This file is no longer in that stage")
+
+    if comment_text:
+        version = _comment_version(db, asset, body.version_id)
+        # Public: the editor must see it on the file, like any review comment.
+        db.add(Comment(
+            asset_id=asset.id,
+            version_id=version.id,
+            author_id=current_user.id,
+            body=comment_text,
+            visibility=CommentVisibility.public.value,
+        ))
+
     asset.task_stage_id = body.task_stage_id
     db.commit()
     db.refresh(asset)
 
     submitter = db.query(User).filter(User.id == asset.created_by).first()
+    if comment_text and submitter and submitter.id != current_user.id:
+        send_task_safe(
+            send_approval_email,
+            to_email=submitter.email,
+            reviewer_name=current_user.name,
+            asset_name=asset.name,
+            status="rejected",
+            asset_link=f"{settings.frontend_url}/projects/{asset.project_id}/assets/{asset.id}",
+            note=comment_text,
+        )
+
     project = db.query(Project).filter(Project.id == asset.project_id).first()
     from ..models.submission import SubmissionLink
     req = (
@@ -550,6 +610,9 @@ def set_asset_task_stage(
         name=asset.name,
         project_id=asset.project_id,
         project_name=project.name if project else None,
+        # Required by TaskItem. Its absence made this endpoint answer 500 after
+        # the move had already been committed.
+        asset_type=asset.asset_type,
         request_id=(project.submission_link_id if project else None),
         request_title=(req.title if req else None),
         task_stage_id=asset.task_stage_id,
