@@ -26,6 +26,14 @@ function isTyping(target: EventTarget | null): boolean {
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
 }
 
+// source_link.normalize accepts any non-blank text (it may be a shared-drive
+// path, not a URL), so this is not validation of the editor's input — it is
+// what decides whether we hand the browser something it will navigate to.
+// A `javascript:` value must never become a clickable href.
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value)
+}
+
 /**
  * Files in the Review stage, one at a time. A approves (→ Done) and moves on.
  * R jumps to the comment box; sending it rejects (→ Revision) with that
@@ -116,9 +124,12 @@ export function ReviewQueue() {
       if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return
       if (e.key === 'a' || e.key === 'A') {
         e.preventDefault()
+        // Holding the key down must not approve a run of files unseen.
+        if (e.repeat) return
         void decide('approve')
       } else if (e.key === 'r' || e.key === 'R') {
         e.preventDefault()
+        if (e.repeat) return
         commentRef.current?.focus()
       } else if (e.key === 'ArrowRight') {
         e.preventDefault()
@@ -188,16 +199,23 @@ export function ReviewQueue() {
           </Link>
         </div>
 
-        {current.canva_url ? (
+        {current.canva_url && isHttpUrl(current.canva_url) ? (
           <a
             href={current.canva_url}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="inline-flex items-center justify-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm text-text-primary hover:bg-bg-hover"
           >
             <ExternalLink className="h-3.5 w-3.5" />
             Open source
           </a>
+        ) : current.canva_url ? (
+          // Not an http(s) URL — e.g. a shared-drive path. Show it, but never
+          // as a clickable href: that is how a `javascript:` value would get
+          // to execute in an admin's session.
+          <p className="break-all rounded-md border border-dashed border-border px-3 py-2 text-center text-sm text-text-tertiary">
+            {current.canva_url}
+          </p>
         ) : (
           <p className="rounded-md border border-dashed border-border px-3 py-2 text-center text-sm text-text-tertiary">
             No source link

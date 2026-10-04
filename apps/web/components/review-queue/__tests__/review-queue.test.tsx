@@ -5,7 +5,7 @@
  * comment, or "Logo is cropped" would approve the file at the first "a".
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn(), patch: vi.fn() } }))
@@ -93,6 +93,14 @@ describe('ReviewQueue — keys', () => {
     await heading('hook-1.png')
     expect(screen.getByRole('button', { name: /send back/i })).toBeDisabled()
   })
+
+  it('ignores key auto-repeat so holding A cannot approve files unseen', async () => {
+    render(<ReviewQueue />)
+    await heading('hook-1.png')
+    fireEvent.keyDown(document, { key: 'a', repeat: true })
+    expect(api.patch).not.toHaveBeenCalled()
+    await heading('hook-1.png')
+  })
 })
 
 describe('ReviewQueue — failures', () => {
@@ -145,7 +153,7 @@ describe('ReviewQueue — loading ahead', () => {
 })
 
 describe('ReviewQueue — what is shown', () => {
-  it('links to the editable Canva design', async () => {
+  it('links to the editable source design', async () => {
     render(<ReviewQueue />)
     await heading('hook-1.png')
     expect(screen.getByRole('link', { name: /open source/i })).toHaveAttribute(
@@ -158,6 +166,16 @@ describe('ReviewQueue — what is shown', () => {
     render(<ReviewQueue />)
     await heading('hook-1.png')
     expect(screen.getByText('No source link')).toBeInTheDocument()
+  })
+
+  it('never turns a javascript: source value into a clickable link', async () => {
+    vi.mocked(api.get).mockResolvedValue(
+      page([item(1, { canva_url: 'javascript:alert(1)' })]) as never,
+    )
+    render(<ReviewQueue />)
+    await heading('hook-1.png')
+    expect(screen.queryByRole('link', { name: /open source/i })).toBeNull()
+    expect(screen.getByText('javascript:alert(1)')).toBeInTheDocument()
   })
 
   it('shows a still-processing file as its thumbnail, not a broken player', async () => {
