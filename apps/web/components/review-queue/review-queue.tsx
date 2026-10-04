@@ -49,22 +49,31 @@ export function ReviewQueue() {
   const [state, dispatch] = React.useReducer(queueReducer, initialQueue)
   const [banner, setBanner] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
+  const [loadError, setLoadError] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [comment, setComment] = React.useState('')
   const loadingRef = React.useRef(false)
+  const lastOffsetRef = React.useRef(0)
   const commentRef = React.useRef<HTMLTextAreaElement>(null)
 
   const load = React.useCallback(async (offset: number) => {
     if (loadingRef.current) return
     loadingRef.current = true
+    lastOffsetRef.current = offset
     try {
       const page = await api.get<ReviewQueuePage>(`/review-queue?limit=${PAGE_SIZE}&offset=${offset}`)
       dispatch({ type: 'loaded', page })
       setBanner(null)
+      setLoadError(false)
     } catch (err) {
       // 409 = a stage the queue needs is missing. Say which, so it can be fixed.
       if (statusOf(err) === 409) setBanner(messageOf(err, 'A review stage is missing'))
-      else toastRef.current.error(messageOf(err, 'Could not load the review queue'))
+      else {
+        // Otherwise the empty state would read "Nothing to review." — which a
+        // reviewer takes as "queue is clear" rather than "this failed".
+        toastRef.current.error(messageOf(err, 'Could not load the review queue'))
+        setLoadError(true)
+      }
     } finally {
       loadingRef.current = false
       setLoading(false)
@@ -153,6 +162,20 @@ export function ReviewQueue() {
     )
   }
   if (loading && !current) return <p className="p-6 text-sm text-text-tertiary">Loading…</p>
+  if (loadError && !current) {
+    return (
+      <div className="flex flex-col items-start gap-3 p-6">
+        <p className="text-sm text-text-secondary">Could not load the review queue</p>
+        <button
+          type="button"
+          onClick={() => void load(lastOffsetRef.current)}
+          className="rounded-md border border-border px-3 py-2 text-sm text-text-primary hover:bg-bg-hover"
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
   if (!current) return <p className="p-6 text-sm text-text-secondary">Nothing to review.</p>
 
   const preloads = preloadTargets(state)

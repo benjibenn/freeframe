@@ -191,3 +191,22 @@ describe('ReviewQueue — what is shown', () => {
     expect(await screen.findByText('Nothing to review.')).toBeInTheDocument()
   })
 })
+
+describe('ReviewQueue — load failure', () => {
+  it('shows an error and a Retry instead of "Nothing to review." when the first load fails', async () => {
+    vi.mocked(api.get).mockRejectedValueOnce(Object.assign(new Error('Server exploded'), { status: 500 }))
+    render(<ReviewQueue />)
+    expect(await screen.findByText('Could not load the review queue')).toBeInTheDocument()
+    expect(screen.queryByText('Nothing to review.')).toBeNull()
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+  })
+
+  it('Retry re-runs the load, and a file shows once it succeeds', async () => {
+    vi.mocked(api.get).mockRejectedValueOnce(Object.assign(new Error('Server exploded'), { status: 500 }))
+    const user = userEvent.setup()
+    render(<ReviewQueue />)
+    await screen.findByText('Could not load the review queue')
+    await user.click(screen.getByRole('button', { name: /retry/i }))
+    await heading('hook-1.png')
+  })
+})
