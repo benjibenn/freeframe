@@ -1802,10 +1802,41 @@ def accept_submission_link(
     return SubmissionAcceptResponse(project_id=_provision_submission_project(db, link, current_user))
 
 
+def resolve_submission_slot(
+    db: Session,
+    link: SubmissionLink,
+    current_user: User,
+    submission_id: Optional[uuid.UUID] = None,
+) -> uuid.UUID:
+    """The project submitted work is stored in.
+
+    Normally the caller's own slot on the brief. With submission_id it is that
+    submission's slot instead, so an admin who makes the language variants of an
+    editor's file can file them beside it: the editor can only see their own
+    project, and a variant left in the admin's slot is invisible to them. Writing
+    into someone else's slot is for platform admins only; the submitter may name
+    their own, which changes nothing.
+    """
+    if submission_id is None:
+        return _provision_submission_project(db, link, current_user)
+    sub = db.query(Submission).filter(Submission.id == submission_id).first()
+    if sub is None or sub.submission_link_id != link.id:
+        raise HTTPException(status_code=404, detail="No such submission on this brief")
+    if sub.user_id != current_user.id and not is_platform_admin(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Only a platform admin can submit into another user's submission",
+        )
+    return sub.project_id
+
+
 class SubmitWorkFromUrlRequest(BaseModel):
     url: str
     asset_name: Optional[str] = None
     language: Optional[str] = None
+    # Whose slot on the brief to file into; None means the caller's own.
+    # See resolve_submission_slot.
+    submission_id: Optional[uuid.UUID] = None
     # Where the artwork lives, like the browser upload path. url is the finished
     # render; this is the file it was made in, and it becomes the version's first
     # comment. See services/source_link.
@@ -1921,7 +1952,7 @@ def submit_work_from_url(
     link = _validate_active(
         db.query(SubmissionLink).filter(SubmissionLink.id == link_id).first()
     )
-    project_id = _provision_submission_project(db, link, current_user)
+    project_id = resolve_submission_slot(db, link, current_user, body.submission_id)
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Submission project not found")

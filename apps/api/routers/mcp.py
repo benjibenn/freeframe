@@ -707,7 +707,10 @@ def add_brief_reference(link_id: str, url: str, kind: str = "auto") -> dict[str,
         "it rather than a second one beside it. source_url is required and is "
         "where the file was made (the Figma or Canva link, not the render): it is "
         "kept as the version's first comment so the next person can open the "
-        "working file."
+        "working file. Work goes into your own submission on the brief, which only "
+        "you and the brief owner can see. To file it beside an editor's work instead "
+        "(for example the language variants of their file), pass submission_id from "
+        "list_submitted_files; that needs a platform admin."
     )
 )
 def submit_work(
@@ -716,15 +719,17 @@ def submit_work(
     source_url: str,
     asset_name: Optional[str] = None,
     language: Optional[str] = None,
+    submission_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Args: url — a public http(s) URL of the finished file; source_url — where it
     was made (Figma, Canva, …), kept as the version's first comment; asset_name —
     which deliverable this is; language — which of the brief's output_languages it
-    is in."""
+    is in; submission_id — whose submission to file it in, or omit for your own."""
     _require_scope(SCOPE_WRITE)
     link_uuid = _uuid(link_id, "link_id")
     body = submissions_router.SubmitWorkFromUrlRequest(
-        url=url, asset_name=asset_name, language=language, source_url=source_url
+        url=url, asset_name=asset_name, language=language, source_url=source_url,
+        submission_id=_uuid(submission_id, "submission_id") if submission_id else None,
     )
     result = _call(submissions_router.submit_work_from_url, link_id=link_uuid, body=body)
     return {
@@ -1417,6 +1422,9 @@ def get_file_url(asset_id: str, download: bool = True) -> dict[str, Any]:
         assets_router.get_stream_url,
         asset_id=_uuid(asset_id, "asset_id"),
         version_id=None,
+        # Called as a plain function, an omitted argument keeps FastAPI's Query()
+        # marker as its value, which then reaches SQL as a filter. Pass every one.
+        media_file_id=None,
         download=download,
     )
     kind = getattr(res, "asset_type", None)
@@ -2010,7 +2018,8 @@ def start_file_upload(
         "lists two or more output_languages, language is required. Submitting a "
         "deliverable that already exists adds a new version to it. Returns a curl "
         "command; run it, then call finish_file_upload. source_url is required — "
-        "where the file was made, kept as its first comment."
+        "where the file was made, kept as its first comment. submission_id works "
+        "as in submit_work: omit it for your own submission."
     )
 )
 def start_file_submission(
@@ -2021,12 +2030,14 @@ def start_file_submission(
     language: str | None = None,
     mime_type: str | None = None,
     size_bytes: int | None = None,
+    submission_id: str | None = None,
 ) -> dict[str, Any]:
     _require_scope(SCOPE_WRITE)
     source = source_link.normalize(source_url)
     filename = os.path.basename(file_path)
     mime = _mime_for(filename, mime_type)
     link_uuid = _uuid(link_id, "link_id")
+    sub_uuid = _uuid(submission_id, "submission_id") if submission_id else None
 
     def _slot(db: Session, current_user: User):
         link = submissions_router._validate_active(
@@ -2035,7 +2046,7 @@ def start_file_submission(
         # Resolved before provisioning so a bad name or language creates nothing.
         lang = submissions_router.resolve_submitted_language(link.brief_json, language)
         name = submissions_router.resolve_submitted_asset_name(link.brief_json, asset_name)
-        project_id = submissions_router._provision_submission_project(db, link, current_user)
+        project_id = submissions_router.resolve_submission_slot(db, link, current_user, sub_uuid)
         existing = None
         if name is not None:
             # A repeat of the same deliverable is a revision, as in submit_work.
