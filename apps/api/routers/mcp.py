@@ -65,6 +65,7 @@ from . import admin as admin_router
 from . import brief_labels as brief_labels_router
 from . import approvals as approvals_router
 from . import assets as assets_router
+from . import comments as comments_router
 from . import folders as folders_router
 from . import projects as projects_router
 from . import share as share_router
@@ -1406,6 +1407,79 @@ def list_submitted_files(brief_id: str) -> list[dict[str, Any]]:
         }
         for s in subs
     ]
+
+
+@mcp.tool(
+    description=(
+        "List the comments on a submitted file, oldest first, with their replies. "
+        "The first comment on each version is usually its source: the Figma or "
+        "Canva link the file was made from, also given as source_url. Takes the "
+        "asset_id from list_submitted_files."
+    )
+)
+def list_file_comments(asset_id: str) -> list[dict[str, Any]]:
+    """Args: asset_id — from list_submitted_files.
+
+    version_id and visibility are passed explicitly: called directly rather
+    than through FastAPI, an omitted argument would stay a Query object.
+    """
+    _require_scope(SCOPE_READ)
+    comments = _call(
+        comments_router.list_comments,
+        asset_id=_uuid(asset_id, "asset_id"),
+        version_id=None,
+        visibility=None,
+    )
+
+    def row(c) -> dict[str, Any]:
+        author = c.author or c.guest_author
+        return {
+            "id": str(c.id),
+            "version_id": str(c.version_id),
+            "author": author.name if author else None,
+            "body": c.body,
+            "source_url": source_link.parse(c.body),
+            "resolved": c.resolved,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "replies": [row(r) for r in c.replies],
+        }
+
+    return [row(c) for c in comments]
+
+
+@mcp.tool(
+    description=(
+        "Find the brief behind a submission project: the id in a "
+        "/projects/<id> link an editor sends when work is done. Returns the "
+        "brief, the submitter, the submission_id that submit_work takes, and "
+        "each file with its source_url (the Canva or Figma link it was made "
+        "from). One call, not list_submitted_files on every brief."
+    )
+)
+def find_submission(project_id: str) -> dict[str, Any]:
+    """Args: project_id — the id at the end of the submission project link."""
+    _require_scope(SCOPE_READ)
+    pid = _uuid(project_id, "project_id")
+
+    def run(db: Session, current_user: User):
+        return (
+            db.query(Submission.submission_link_id, SubmissionLink.title)
+            .join(SubmissionLink, SubmissionLink.id == Submission.submission_link_id)
+            .filter(Submission.project_id == pid)
+            .first()
+        )
+
+    row = _call(run)
+    if row is None:
+        raise ValueError(f"No submission has project {project_id}")
+    brief_id = str(row.submission_link_id)
+    # Goes through list_submitted_files so the brief's access check still applies.
+    sub = next(s for s in list_submitted_files(brief_id) if s["project_id"] == str(pid))
+    for f in sub["files"]:
+        # Oldest first: the last link is the newest version's source.
+        links = [c["source_url"] for c in list_file_comments(f["asset_id"]) if c["source_url"]]
+        f["source_url"] = links[-1] if links else None
+    return {"brief_id": brief_id, "title": row.title, **sub}
 
 
 @mcp.tool(

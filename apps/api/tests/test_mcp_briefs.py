@@ -737,6 +737,67 @@ def test_list_submitted_files_exposes_the_asset_id_every_file_tool_needs(as_admi
     assert [f["name"] for f in out[0]["files"]] == ["cut_a.mp4", "cut_b.mp4"]
 
 
+def _comment(body, replies=()):
+    c = MagicMock(id=uuid.uuid4(), version_id=uuid.uuid4(), body=body, resolved=False,
+                  created_at=datetime(2026, 9, 1, tzinfo=timezone.utc), guest_author=None,
+                  replies=list(replies))
+    c.author.name = "honey"
+    return c
+
+
+def test_list_file_comments_gives_the_source_link_an_agent_reopens(as_admin):
+    """A revision starts from the Canva or Figma file, not the render.
+
+    The link sits in the first comment as "Source: <url>". If the tool returned
+    only raw bodies, every agent would have to know and strip that prefix.
+    """
+    src = _comment("Source: https://www.canva.com/design/DAG123/edit")
+    note = _comment("Fix the price", replies=[_comment("Done")])
+    with patch.object(
+        mcp_router.comments_router, "list_comments", return_value=[src, note],
+    ) as listed:
+        out = mcp_router.list_file_comments(asset_id=str(uuid.uuid4()))
+
+    # Omitted, these stay Query objects, which are truthy and would filter.
+    assert listed.call_args.kwargs["version_id"] is None
+    assert listed.call_args.kwargs["visibility"] is None
+    assert out[0]["source_url"] == "https://www.canva.com/design/DAG123/edit"
+    assert out[1]["source_url"] is None
+    assert out[1]["replies"][0]["body"] == "Done"
+
+
+def test_find_submission_turns_a_done_link_into_brief_and_source(as_admin, mock_db):
+    """Editors report work as /projects/<id> links, not brief ids.
+
+    Without this, an agent scans list_submitted_files over every brief (minutes,
+    HTTP 429s) to learn which brief and Canva source a link belongs to. The
+    source must be the newest one: an editor who re-uploads adds a new link.
+    """
+    f = _sub_file("French — A. hook — French · EUR")
+    sub = _submission([f])
+    other = _submission([_sub_file("x.png")])
+    brief_id = uuid.uuid4()
+    mock_db.query.return_value.join.return_value.filter.return_value.first.return_value = \
+        MagicMock(submission_link_id=brief_id, title="20260916 - pm17 - IMEI")
+    old = _comment("Source: https://www.canva.com/design/OLD/edit")
+    new = _comment("Source: https://www.canva.com/design/NEW/edit")
+    with patch.object(mcp_router.submissions_router, "list_submissions",
+                      return_value=[other, sub]) as listed, \
+         patch.object(mcp_router.comments_router, "list_comments", return_value=[old, new]):
+        out = mcp_router.find_submission(project_id=str(sub.project_id))
+
+    assert listed.call_args.kwargs["link_id"] == brief_id
+    assert out["brief_id"] == str(brief_id)
+    assert out["submission_id"] == str(sub.id)
+    assert out["files"][0]["source_url"] == "https://www.canva.com/design/NEW/edit"
+
+
+def test_find_submission_says_when_no_brief_owns_the_project(as_admin, mock_db):
+    mock_db.query.return_value.join.return_value.filter.return_value.first.return_value = None
+    with pytest.raises(ValueError, match="No submission"):
+        mcp_router.find_submission(project_id=str(uuid.uuid4()))
+
+
 def test_rename_file_sends_only_the_name(as_admin):
     """update_asset applies model_dump(exclude_unset=True).
 
