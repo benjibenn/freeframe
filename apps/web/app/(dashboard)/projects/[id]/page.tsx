@@ -112,6 +112,12 @@ export default function ProjectDetailPage() {
   const [openBriefId, setOpenBriefId] = React.useState<string | null>(
     searchParams.get("brief") || null,
   );
+  // Header crumbs are links that change only the query, which does not remount
+  // the page: follow the URL so a folder crumb closes the open brief.
+  React.useEffect(() => {
+    setCurrentFolderId(searchParams.get("folder") || null);
+    setOpenBriefId(searchParams.get("brief") || null);
+  }, [searchParams]);
   const [showTrash, setShowTrash] = React.useState(false);
   const [selectedTags, setSelectedTags] = React.useState<string[]>([]);
   const [selectedMomentLabels, setSelectedMomentLabels] = React.useState<string[]>([]);
