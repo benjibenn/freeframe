@@ -61,6 +61,7 @@ import { NameDialog } from "@/components/projects/name-dialog";
 import { ShareCreateDialog } from "@/components/projects/share-create-dialog";
 import { BucketImportDialog } from "@/components/projects/bucket-import-dialog";
 import { BriefView } from "@/components/projects/brief-view";
+import { BriefFilesView } from "@/components/projects/brief-files-view";
 import { ReferenceImageCarousel, ReferenceVideoList, DownloadAllButton } from "@/components/shared/reference-carousel";
 import { ProjectMembersDialog } from "@/components/projects/project-members-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -105,6 +106,11 @@ export default function ProjectDetailPage() {
 
   const [currentFolderId, setCurrentFolderId] = React.useState<string | null>(
     searchParams.get("folder") || null,
+  );
+  // A brief opened from the folder view (?brief=<id>): its submitted files
+  // replace the folder's grid until another folder is picked.
+  const [openBriefId, setOpenBriefId] = React.useState<string | null>(
+    searchParams.get("brief") || null,
   );
   const [showTrash, setShowTrash] = React.useState(false);
   const [selectedTags, setSelectedTags] = React.useState<string[]>([]);
@@ -224,10 +230,20 @@ export default function ProjectDetailPage() {
     if (project?.name) setLabel(projectId, project.name);
   }, [project?.name, projectId, setLabel]);
 
+  // Every brief, for the folder view's brief tiles and the open brief's crumb.
+  const { data: allRequests, mutate: mutateRequests } = useSWR<VideoRequest[]>(
+    LINKS_KEY,
+    (key: string) => api.get<VideoRequest[]>(key),
+  );
+
   // Push folder path as extra breadcrumb crumbs when navigating folders
   React.useEffect(() => {
+    const briefTitle = openBriefId
+      ? allRequests?.find((r) => r.id === openBriefId)?.title ?? "Brief"
+      : null;
+    const briefCrumb = briefTitle ? [{ label: briefTitle }] : [];
     if (!currentFolderId || !tree) {
-      setExtraCrumbs([]);
+      setExtraCrumbs(briefCrumb);
       return;
     }
     // Walk the tree to collect path nodes (id + name) to currentFolderId
@@ -245,10 +261,11 @@ export default function ProjectDetailPage() {
       return null
     }
     const path = findPath(tree, currentFolderId, []) ?? []
-    setExtraCrumbs(
-      path.map((f) => ({ label: f.name, href: `/projects/${projectId}?folder=${f.id}` }))
-    );
-  }, [currentFolderId, tree, projectId, setExtraCrumbs]);
+    setExtraCrumbs([
+      ...path.map((f) => ({ label: f.name, href: `/projects/${projectId}?folder=${f.id}` })),
+      ...briefCrumb,
+    ]);
+  }, [currentFolderId, openBriefId, allRequests, tree, projectId, setExtraCrumbs]);
 
   // Label for the folder currently in view. Read off the same tree the breadcrumb
   // walks so the two can never disagree; falls back to the project name at root.
@@ -268,10 +285,6 @@ export default function ProjectDetailPage() {
   // Requests filed in the folder currently in view. Fetched once for the whole
   // project and filtered client-side — the list is small and it keeps navigating
   // between folders instant instead of refetching per folder.
-  const { data: allRequests, mutate: mutateRequests } = useSWR<VideoRequest[]>(
-    LINKS_KEY,
-    (key: string) => api.get<VideoRequest[]>(key),
-  );
   const [newRequestOpen, setNewRequestOpen] = React.useState(false);
   // Duplicate opens a pre-filled form (retitle / re-file) rather than cloning blind.
   const [duplicateSourceId, setDuplicateSourceId] = React.useState<string | null>(null);
@@ -592,6 +605,7 @@ export default function ProjectDetailPage() {
   const handleSelectFolder = React.useCallback(
     (folderId: string | null) => {
       setCurrentFolderId(folderId);
+      setOpenBriefId(null);
       setShowTrash(false);
       setShowShareLinks(false);
       setSelectedShareLink(null);
@@ -1054,12 +1068,23 @@ export default function ProjectDetailPage() {
               )}
             </div>
           ) : (
+            openBriefId ? (
+              <BriefFilesView briefId={openBriefId} />
+            ) : (
             <>
             <AssetGrid
               assets={assets ?? []}
               folders={filteringByTag_orLabel ? [] : (subfolders ?? [])}
               requests={filteringByTag_orLabel ? [] : folderRequests}
-              onRequestOpen={(requestId) => router.push(`/projects/requests/${requestId}`)}
+              onRequestOpen={(requestId) => {
+                setOpenBriefId(requestId);
+                const folder = currentFolderId ? `folder=${currentFolderId}&` : "";
+                window.history.replaceState(
+                  null,
+                  "",
+                  `/projects/${projectId}?${folder}brief=${requestId}`,
+                );
+              }}
               onRequestDuplicate={setDuplicateSourceId}
               currentFolderId={currentFolderId}
               projectId={projectId}
@@ -1335,6 +1360,7 @@ export default function ProjectDetailPage() {
               </div>
             )}
             </>
+            )
           )}
 
           {/* Upload dialog */}
