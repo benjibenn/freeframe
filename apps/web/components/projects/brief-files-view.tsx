@@ -3,8 +3,10 @@
 import * as React from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { FileImage, FolderOpen, Settings2 } from "lucide-react";
-import { api } from "@/lib/api";
+import { Download, FileImage, FolderOpen, Loader2, Settings2 } from "lucide-react";
+import { api, ApiError } from "@/lib/api";
+import { getAccessToken, refreshAccessToken } from "@/lib/auth";
+import { useToast } from "@/components/shared/toast";
 import { EmptyState } from "@/components/shared/empty-state";
 import type { AssetResponse } from "@/types";
 
@@ -20,20 +22,84 @@ interface BriefSubmission {
 
 interface BriefFilesViewProps {
   briefId: string;
+  /** Names the ZIP; the files inside are named by the API. */
+  briefTitle: string;
+}
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+/** Every file of the brief as one ZIP, each named "<brief title> - <language>". */
+async function downloadBriefZip(briefId: string, briefTitle: string): Promise<void> {
+  const path = `${API_URL}/submission-links/${briefId}/download-all`;
+  const get = (token: string | null) =>
+    fetch(path, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  let res = await get(getAccessToken());
+  if (res.status === 401) {
+    const token = await refreshAccessToken();
+    if (token) res = await get(token);
+  }
+  if (!res.ok) throw new ApiError(res.status, res.statusText);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${briefTitle.replace(/[\\/:*?"<>|]/g, "").trim() || "Brief"}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+/** One file, saved as "<brief title> - <language>" (named by the API's presigned URL). */
+async function downloadBriefFile(briefId: string, assetId: string): Promise<void> {
+  const { url } = await api.get<{ url: string }>(
+    `/submission-links/${briefId}/files/${assetId}/download`,
+  );
+  const iframe = document.createElement("iframe");
+  iframe.style.display = "none";
+  iframe.src = url;
+  document.body.appendChild(iframe);
+  setTimeout(() => iframe.remove(), 30000);
 }
 
 // A brief opened from a folder: every editor's submitted files on one screen.
 // Each editor's work lives in that editor's own project, so the files are read
 // from there and open in that project's file page.
-export function BriefFilesView({ briefId }: BriefFilesViewProps) {
+export function BriefFilesView({ briefId, briefTitle }: BriefFilesViewProps) {
+  const toast = useToast();
+  const [zipping, setZipping] = React.useState(false);
   const { data: subs, isLoading } = useSWR<BriefSubmission[]>(
     `/submission-links/${briefId}/submissions`,
     (key: string) => api.get<BriefSubmission[]>(key),
   );
+  const totalFiles = (subs ?? []).reduce((n, s) => n + s.asset_count, 0);
+
+  const downloadAll = async () => {
+    setZipping(true);
+    try {
+      await downloadBriefZip(briefId, briefTitle);
+    } catch {
+      toast.error("Download failed. Try again.");
+    } finally {
+      setZipping(false);
+    }
+  };
+  const downloadOne = (assetId: string) =>
+    downloadBriefFile(briefId, assetId).catch(() => toast.error("Download failed. Try again."));
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-4">
+        {totalFiles > 0 && (
+          <button
+            type="button"
+            onClick={downloadAll}
+            disabled={zipping}
+            className="rounded-md border border-border bg-bg-secondary px-3 h-8 inline-flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary disabled:opacity-50"
+          >
+            {zipping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            {zipping ? "Preparing ZIP…" : `Download all (${totalFiles})`}
+          </button>
+        )}
         <Link
           href={`/projects/requests/${briefId}`}
           className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary"
@@ -51,13 +117,19 @@ export function BriefFilesView({ briefId }: BriefFilesViewProps) {
           description="Files appear here when an editor submits work against this brief."
         />
       ) : (
-        subs.map((s) => <EditorFiles key={s.id} submission={s} />)
+        subs.map((s) => <EditorFiles key={s.id} submission={s} onDownload={downloadOne} />)
       )}
     </div>
   );
 }
 
-function EditorFiles({ submission }: { submission: BriefSubmission }) {
+function EditorFiles({
+  submission,
+  onDownload,
+}: {
+  submission: BriefSubmission;
+  onDownload: (assetId: string) => void;
+}) {
   const { data: assets, isLoading } = useSWR<AssetResponse[]>(
     `/projects/${submission.project_id}/assets`,
     (key: string) => api.get<AssetResponse[]>(key),
@@ -80,8 +152,8 @@ function EditorFiles({ submission }: { submission: BriefSubmission }) {
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {assets.map((a) => (
+            <div key={a.id} className="group relative">
             <Link
-              key={a.id}
               href={`/projects/${submission.project_id}/assets/${a.id}`}
               className="block rounded-xl overflow-hidden bg-bg-secondary border border-border hover:border-accent/40 transition-all duration-200"
             >
@@ -103,6 +175,16 @@ function EditorFiles({ submission }: { submission: BriefSubmission }) {
                 {a.name}
               </p>
             </Link>
+            <button
+              type="button"
+              onClick={() => onDownload(a.id)}
+              aria-label={`Download ${a.name}`}
+              title="Download"
+              className="absolute right-2 top-2 rounded-full bg-black/50 p-1.5 text-white transition-colors hover:bg-black/70"
+            >
+              <Download className="h-4 w-4" />
+            </button>
+            </div>
           ))}
         </div>
       )}

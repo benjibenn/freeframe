@@ -6,11 +6,13 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { SWRConfig } from 'swr'
 
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn() } }))
 import { api } from '@/lib/api'
 import { BriefFilesView } from '../brief-files-view'
+import { ToastProvider } from '@/components/shared/toast'
 
 const SUBS = [
   { id: 's1', user_name: 'genesis', user_email: 'g@x.com', display_name: null, project_id: 'ed1', asset_count: 2 },
@@ -27,7 +29,9 @@ const FILES: Record<string, { id: string; name: string; thumbnail_url: string | 
 function renderView() {
   return render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
-      <BriefFilesView briefId="b1" />
+      <ToastProvider>
+        <BriefFilesView briefId="b1" briefTitle="20261016 - p16 - Fear" />
+      </ToastProvider>
     </SWRConfig>,
   )
 }
@@ -54,5 +58,19 @@ describe('BriefFilesView', () => {
     vi.mocked(api.get).mockResolvedValue([] as never)
     renderView()
     expect(await screen.findByText('No submissions yet')).toBeInTheDocument()
+  })
+
+  it("downloads one file through the brief, so it is saved under the brief's name", async () => {
+    const user = userEvent.setup()
+    renderView()
+    await screen.findByText('French — French · EUR')
+    vi.mocked(api.get).mockResolvedValueOnce({ url: 'https://s3/signed' } as never)
+    await user.click(screen.getByLabelText('Download French — French · EUR'))
+    expect(api.get).toHaveBeenCalledWith('/submission-links/b1/files/f1/download')
+  })
+
+  it('offers Download all with the total file count', async () => {
+    renderView()
+    expect(await screen.findByText('Download all (3)')).toBeInTheDocument()
   })
 })

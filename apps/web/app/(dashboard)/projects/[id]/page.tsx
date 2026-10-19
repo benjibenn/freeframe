@@ -29,6 +29,7 @@ import {
   PanelLeft,
   Tag as TagIcon,
   Clock,
+  Filter,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatBytes } from "@/lib/utils";
 import { displayName } from "@/lib/display-name";
@@ -294,7 +295,7 @@ export default function ProjectDetailPage() {
   const [newRequestOpen, setNewRequestOpen] = React.useState(false);
   // Duplicate opens a pre-filled form (retitle / re-file) rather than cloning blind.
   const [duplicateSourceId, setDuplicateSourceId] = React.useState<string | null>(null);
-  const folderRequests = React.useMemo(
+  const folderRequestsAll = React.useMemo(
     () =>
       (allRequests ?? [])
         .filter(
@@ -310,6 +311,23 @@ export default function ProjectDetailPage() {
           created_at: r.created_at,
         })),
     [allRequests, projectId, currentFolderId],
+  );
+  // "With files" filter: only briefs an editor has already submitted files to.
+  const [briefsWithFiles, setBriefsWithFiles] = React.useState(false);
+  const { data: briefFileCounts } = useSWR<Record<string, number>>(
+    folderRequestsAll.length > 0 ? `/projects/${projectId}/brief-file-counts` : null,
+    (key: string) => api.get<Record<string, number>>(key),
+  );
+  const briefsWithFilesCount = React.useMemo(
+    () => folderRequestsAll.filter((r) => (briefFileCounts?.[r.id] ?? 0) > 0).length,
+    [folderRequestsAll, briefFileCounts],
+  );
+  const folderRequests = React.useMemo(
+    () =>
+      briefsWithFiles
+        ? folderRequestsAll.filter((r) => (briefFileCounts?.[r.id] ?? 0) > 0)
+        : folderRequestsAll,
+    [briefsWithFiles, folderRequestsAll, briefFileCounts],
   );
 
   const folderParam = currentFolderId
@@ -1075,7 +1093,10 @@ export default function ProjectDetailPage() {
             </div>
           ) : (
             openBriefId ? (
-              <BriefFilesView briefId={openBriefId} />
+              <BriefFilesView
+                briefId={openBriefId}
+                briefTitle={allRequests?.find((r) => r.id === openBriefId)?.title ?? "Brief"}
+              />
             ) : (
             <>
             <AssetGrid
@@ -1232,6 +1253,23 @@ export default function ProjectDetailPage() {
               }}
               actions={
                 <>
+                  {folderRequestsAll.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setBriefsWithFiles((v) => !v)}
+                      aria-pressed={briefsWithFiles}
+                      title="Show only briefs that already have submitted files"
+                      className={cn(
+                        "rounded-md border px-3 h-8 inline-flex items-center gap-1.5 text-xs font-medium",
+                        briefsWithFiles
+                          ? "border-accent bg-accent/10 text-accent"
+                          : "border-border bg-bg-secondary text-text-secondary hover:text-text-primary",
+                      )}
+                    >
+                      <Filter className="h-3.5 w-3.5" />
+                      With files{briefFileCounts ? ` (${briefsWithFilesCount})` : ""}
+                    </button>
+                  )}
                   {project?.brief_pdf_url && (
                     <a
                       href={`${process.env.NEXT_PUBLIC_API_URL || ''}${project.brief_pdf_url}`}
