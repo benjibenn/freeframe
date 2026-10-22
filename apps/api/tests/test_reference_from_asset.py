@@ -34,6 +34,9 @@ def _valid_link():
     link.created_at = datetime.now(timezone.utc)
     link.reference_project_id = None
     link.persona_label = link.angle_label = link.problem = None
+    # The stand-in row needs every UUID column the response reads, or
+    # pydantic validates a MagicMock and fails.
+    link.task_stage_id = link.assignee_id = None
     link.brief_pdf_s3_key = None
     link.brief_json = None
     link.brief_reference_video_s3_keys = []

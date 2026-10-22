@@ -47,6 +47,11 @@ import {
 } from "@/lib/folder-view";
 import { useDebounced } from "@/hooks/use-debounced";
 import { useTaskStageOrder } from "@/lib/task-stages";
+import {
+  filterBriefs,
+  NO_BRIEF_FILTERS,
+  type BriefFilterState,
+} from "@/lib/brief-filter";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/shared/toast";
 import { Input } from "@/components/ui/input";
@@ -348,39 +353,46 @@ export default function ProjectDetailPage() {
   const [newRequestOpen, setNewRequestOpen] = React.useState(false);
   // Duplicate opens a pre-filled form (retitle / re-file) rather than cloning blind.
   const [duplicateSourceId, setDuplicateSourceId] = React.useState<string | null>(null);
-  const folderRequestsAll = React.useMemo(
+  // The raw briefs filed here. Filtering happens on these, before the mapping
+  // below, which drops the stage and assignee the filters read.
+  const folderBriefsAll = React.useMemo(
     () =>
-      (allRequests ?? [])
-        .filter(
-          (r) =>
-            r.home_project_id === projectId &&
-            (r.home_folder_id ?? null) === currentFolderId,
-        )
-        .map((r) => ({
-          id: r.id,
-          title: r.title,
-          submission_count: r.submission_count,
-          has_brief: !!(r.has_brief || r.has_brief_json),
-          created_at: r.created_at,
-        })),
+      (allRequests ?? []).filter(
+        (r) =>
+          r.home_project_id === projectId &&
+          (r.home_folder_id ?? null) === currentFolderId,
+      ),
     [allRequests, projectId, currentFolderId],
   );
-  // "With files" filter: only briefs an editor has already submitted files to.
-  const [briefsWithFiles, setBriefsWithFiles] = React.useState(false);
+  const [briefFilters, setBriefFilters] =
+    React.useState<BriefFilterState>(NO_BRIEF_FILTERS);
   const { data: briefFileCounts } = useSWR<Record<string, number>>(
-    folderRequestsAll.length > 0 ? `/projects/${projectId}/brief-file-counts` : null,
+    folderBriefsAll.length > 0 ? `/projects/${projectId}/brief-file-counts` : null,
     (key: string) => api.get<Record<string, number>>(key),
   );
+  // Counts on the labels, so the filter says what it will do before it is used.
+  // A brief missing from the map has no files: the endpoint omits those rows.
   const briefsWithFilesCount = React.useMemo(
-    () => folderRequestsAll.filter((r) => (briefFileCounts?.[r.id] ?? 0) > 0).length,
-    [folderRequestsAll, briefFileCounts],
+    () => folderBriefsAll.filter((r) => (briefFileCounts?.[r.id] ?? 0) > 0).length,
+    [folderBriefsAll, briefFileCounts],
+  );
+  const toRequestItem = (r: VideoRequest) => ({
+    id: r.id,
+    title: r.title,
+    submission_count: r.submission_count,
+    has_brief: !!(r.has_brief || r.has_brief_json),
+    created_at: r.created_at,
+  });
+  const folderRequestsAll = React.useMemo(
+    () => folderBriefsAll.map(toRequestItem),
+    [folderBriefsAll],
   );
   const folderRequests = React.useMemo(
     () =>
-      briefsWithFiles
-        ? folderRequestsAll.filter((r) => (briefFileCounts?.[r.id] ?? 0) > 0)
-        : folderRequestsAll,
-    [briefsWithFiles, folderRequestsAll, briefFileCounts],
+      filterBriefs(folderBriefsAll, briefFileCounts ?? {}, briefFilters).map(
+        toRequestItem,
+      ),
+    [folderBriefsAll, briefFileCounts, briefFilters],
   );
 
   const folderParam = currentFolderId
@@ -1095,6 +1107,114 @@ export default function ProjectDetailPage() {
             </div>
           )}
 
+          {/* Brief filters. Only where the brief rows are actually on screen: a
+              flattened grid has none, and neither does the trash. All of it runs
+              on the brief list the page already holds, so a filter costs no
+              request. "Brief stage" is the brief's own stage, not the stage on
+              the files submitted against it — stamping a brief's files
+              "Approved" does not move the brief. */}
+          {!showTrash && !showShareLinks && !openBriefId && !flattened &&
+            folderBriefsAll.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="flex items-center gap-1 text-2xs font-medium uppercase tracking-wide text-text-tertiary mr-0.5">
+                  <Filter className="h-3 w-3" />
+                  Briefs
+                </span>
+                <div className="inline-flex overflow-hidden rounded-md border border-border">
+                  {(
+                    [
+                      ["all", `All (${folderBriefsAll.length})`],
+                      ["with", `With files${briefFileCounts ? ` (${briefsWithFilesCount})` : ""}`],
+                      [
+                        "without",
+                        `No files${
+                          briefFileCounts
+                            ? ` (${folderBriefsAll.length - briefsWithFilesCount})`
+                            : ""
+                        }`,
+                      ],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() =>
+                        setBriefFilters((prev) => ({ ...prev, files: value }))
+                      }
+                      aria-pressed={briefFilters.files === value}
+                      className={cn(
+                        "h-7 px-2.5 text-2xs font-medium transition-colors",
+                        briefFilters.files === value
+                          ? "bg-accent/10 text-accent"
+                          : "bg-bg-secondary text-text-secondary hover:text-text-primary",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setBriefFilters((prev) => ({
+                      ...prev,
+                      unassignedOnly: !prev.unassignedOnly,
+                    }))
+                  }
+                  aria-pressed={briefFilters.unassignedOnly}
+                  title="Briefs with nobody's name on them"
+                  className={cn(
+                    "inline-flex items-center rounded-full border px-2.5 h-7 text-2xs font-medium transition-colors",
+                    briefFilters.unassignedOnly
+                      ? "border-accent/40 bg-accent/10 text-accent"
+                      : "border-border bg-bg-secondary text-text-secondary hover:text-text-primary",
+                  )}
+                >
+                  Unassigned
+                </button>
+                {taskStages.length > 0 &&
+                  [...taskStages]
+                    .sort((a, b) => a.position - b.position)
+                    .map((stage) => {
+                      const on = briefFilters.stageIds.includes(stage.id);
+                      return (
+                        <button
+                          key={stage.id}
+                          type="button"
+                          onClick={() =>
+                            setBriefFilters((prev) => ({
+                              ...prev,
+                              stageIds: on
+                                ? prev.stageIds.filter((id) => id !== stage.id)
+                                : [...prev.stageIds, stage.id],
+                            }))
+                          }
+                          aria-pressed={on}
+                          title={`Briefs at ${stage.name}`}
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-full border px-2.5 h-7 text-2xs font-medium transition-colors",
+                            on
+                              ? "border-accent/40 bg-accent/10 text-accent"
+                              : "border-border bg-bg-secondary text-text-secondary hover:text-text-primary",
+                          )}
+                        >
+                          <span
+                            className="h-1.5 w-1.5 rounded-full"
+                            style={{
+                              backgroundColor:
+                                stage.color ?? "var(--color-text-tertiary)",
+                            }}
+                          />
+                          {stage.name}
+                        </button>
+                      );
+                    })}
+                <span className="text-2xs text-text-tertiary">
+                  {folderRequests.length} shown
+                </span>
+              </div>
+            )}
+
           {/* Tag filter bar — only outside the trash / share-links views */}
           {!showTrash && !showShareLinks &&
             ((projectTags && projectTags.length > 0) || filteringByTag) && (
@@ -1480,23 +1600,6 @@ export default function ProjectDetailPage() {
               }}
               actions={
                 <>
-                  {folderRequestsAll.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setBriefsWithFiles((v) => !v)}
-                      aria-pressed={briefsWithFiles}
-                      title="Show only briefs that already have submitted files"
-                      className={cn(
-                        "rounded-md border px-3 h-8 inline-flex items-center gap-1.5 text-xs font-medium",
-                        briefsWithFiles
-                          ? "border-accent bg-accent/10 text-accent"
-                          : "border-border bg-bg-secondary text-text-secondary hover:text-text-primary",
-                      )}
-                    >
-                      <Filter className="h-3.5 w-3.5" />
-                      With files{briefFileCounts ? ` (${briefsWithFilesCount})` : ""}
-                    </button>
-                  )}
                   {project?.brief_pdf_url && (
                     <a
                       href={`${process.env.NEXT_PUBLIC_API_URL || ''}${project.brief_pdf_url}`}

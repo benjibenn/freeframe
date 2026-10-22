@@ -22,6 +22,9 @@ export interface VideoRequest {
   expires_at: string | null
   created_at: string
   submission_count: number
+  /** The brief's own stage and internal owner (not the submitted files'). */
+  task_stage_id?: string | null
+  assignee_id?: string | null
   has_brief?: boolean
   has_brief_json?: boolean
   has_reference_video?: boolean

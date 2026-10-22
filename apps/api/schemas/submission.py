@@ -72,6 +72,11 @@ class SubmissionLinkResponse(BaseModel):
     expires_at: Optional[datetime] = None
     created_at: datetime
     submission_count: int = 0
+    # The brief's own pipeline stage and internal owner, for the folder view's
+    # brief filters ("Unassigned", "Brief stage"). Distinct from the stage on the
+    # files submitted against it, which the status chips filter.
+    task_stage_id: Optional[uuid.UUID] = None
+    assignee_id: Optional[uuid.UUID] = None
     # True when a brief PDF is attached (flywheel-imported or hand-uploaded).
     has_brief: bool = False
     # True when a structured JSON brief is attached. brief_json itself is only
