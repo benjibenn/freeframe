@@ -12,6 +12,8 @@ from ..models.user import User
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, AssetStatus, FileType, ProcessingStatus
 from ..models.frame_tag import FrameTag
 from ..models.project import Project, ProjectMember, ProjectRole
+from ..models.folder import Folder
+from ..models.task_stage import TaskStage
 from ..models.share import AssetShare
 from ..models.activity import Mention, Notification, NotificationType, ActivityAction
 from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse, TagsUpdate, TagCount, AssetNeighbors
@@ -350,6 +352,67 @@ def bulk_update_run_as_ad(
         raise HTTPException(status_code=404, detail=f"Assets not found: {', '.join(missing)}")
     for asset in assets:
         asset.run_as_ad = body.run_as_ad
+    db.commit()
+    return {"updated": len(assets)}
+
+
+class FolderStageRequest(BaseModel):
+    # Which folder to restamp: "root" for the project's top level, else a folder UUID.
+    folder_id: str
+    task_stage_id: Optional[uuid.UUID] = None
+
+
+@router.patch("/projects/{project_id}/assets/stage")
+def set_folder_assets_task_stage(
+    project_id: uuid.UUID,
+    body: FolderStageRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Set the pipeline stage on every asset in one folder (the toolbar's "Bulk status").
+
+    Scoped by folder on the server rather than by asset id, because the grid pages
+    its assets: the browser holds only the pages it has loaded, and
+    /assets/bulk/stage caps a call at 200 ids. The filters below are the ones
+    list_assets applies with its defaults, so this restamps exactly the assets the
+    grid shows for that folder — archived included, still-unusable ones excluded.
+
+    Platform-admin only, matching every other write to task_stage_id.
+    """
+    require_platform_admin(current_user)
+
+    if body.folder_id == "root":
+        folder_filter = Asset.folder_id.is_(None)
+    else:
+        try:
+            folder_id = uuid.UUID(body.folder_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="folder_id must be 'root' or a folder UUID")
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id,
+            Folder.project_id == project_id,
+            Folder.deleted_at.is_(None),
+        ).first()
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        folder_filter = Asset.folder_id == folder_id
+
+    if body.task_stage_id is not None:
+        stage = db.query(TaskStage).filter(
+            TaskStage.id == body.task_stage_id,
+            TaskStage.deleted_at.is_(None),
+        ).first()
+        if not stage:
+            raise HTTPException(status_code=404, detail="Task stage not found")
+
+    assets = db.query(Asset).filter(
+        Asset.project_id == project_id,
+        Asset.deleted_at.is_(None),
+        folder_filter,
+        _usable_or_empty(db),
+    ).all()
+    for asset in assets:
+        asset.task_stage_id = body.task_stage_id
     db.commit()
     return {"updated": len(assets)}
 

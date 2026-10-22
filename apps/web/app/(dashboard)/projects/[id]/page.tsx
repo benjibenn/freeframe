@@ -38,6 +38,7 @@ import { useToast } from "@/components/shared/toast";
 import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/shared/avatar";
 import { AssetGrid } from "@/components/projects/asset-grid";
+import { BulkStatusMenu } from "@/components/projects/bulk-status-menu";
 import { NewRequestDialog, LINKS_KEY } from "@/components/projects/folder-requests";
 import { DuplicateRequestDialog } from "@/components/projects/duplicate-request-dialog";
 import type { VideoRequest } from "@/components/projects/request-card";
@@ -1235,6 +1236,35 @@ export default function ProjectDetailPage() {
                     >
                       Import
                     </button>
+                  )}
+                  {/* Restamps the whole folder, no selection needed. Renders
+                      nothing for non-admins (the menu self-gates). Hidden while a
+                      tag or moment filter is on, because the grid is then a
+                      project-wide search and the folder scope would not match
+                      what is on screen. */}
+                  {!filteringByTag_orLabel && (
+                  <BulkStatusMenu
+                    side="bottom"
+                    label="Bulk status"
+                    scopeHint={`Files directly in ${currentFolderName} (not subfolders)`}
+                    triggerClassName="border border-border bg-bg-secondary px-3 text-xs"
+                    onSetStage={async (stageId) => {
+                      try {
+                        const { updated } = await api.patch<{ updated: number }>(
+                          `/projects/${projectId}/assets/stage`,
+                          { folder_id: currentFolderId ?? "root", task_stage_id: stageId },
+                        );
+                        mutateAssets();
+                        toast.success(
+                          updated
+                            ? `Status set on ${updated} file${updated === 1 ? "" : "s"}`
+                            : "No files in this folder",
+                        );
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : "Bulk status failed");
+                      }
+                    }}
+                  />
                   )}
                   {canManageMembers && (
                     <Button
