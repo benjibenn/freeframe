@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 import os
 import uuid
 from datetime import datetime, timezone
@@ -15,6 +15,7 @@ from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.folder import Folder
 from ..models.task_stage import TaskStage
 from ..models.share import AssetShare
+from ..models.submission import Submission, SubmissionLink
 from ..models.activity import Mention, Notification, NotificationType, ActivityAction
 from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse, TagsUpdate, TagCount, AssetNeighbors
 from ..schemas.notification import AssignmentUpdate
@@ -22,6 +23,7 @@ from ..services.permissions import require_project_role, require_asset_access, c
 from ..services import source_link
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
 from .hls_proxy import hls_stream_url
+from .folders import _get_descendant_ids
 from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, mime_to_asset_type
 from ..services.s3_service import create_multipart_upload
 from ..services.tags import normalize_tags
@@ -213,6 +215,94 @@ def list_assets(
 
     assets = query.all()
     return _build_asset_responses_bulk(assets, db)
+
+
+# ── File view: every file under a folder, briefs flattened ───────────────────
+#
+# The folder view shows three kinds of row: subfolders, briefs and files. File
+# view drops the containers and lists the files themselves for a whole subtree,
+# so a store folder can be read without opening each model and each brief.
+#
+# Two sources have to be merged, which is why this cannot be done in the client:
+#   1. assets filed in the folder or any folder below it, in this project, and
+#   2. assets submitted against briefs filed in that same subtree, which live in
+#      each submitter's own project and so carry a different project_id.
+# One SQL query over both, because the grid pages: two paged lists merged in the
+# browser cannot keep a stable order, and the join has to happen before LIMIT.
+
+
+@router.get("/projects/{project_id}/folder-files", response_model=list[AssetResponse])
+def list_folder_files(
+    project_id: uuid.UUID,
+    folder_id: str = Query(
+        "root",
+        description="Folder to flatten. 'root' for the whole project, else a folder UUID.",
+    ),
+    include_failed: bool = Query(False, description="Include assets whose latest version failed processing"),
+    skip: int = Query(0, ge=0, description="Pagination offset (newest-first)."),
+    limit: Optional[int] = Query(None, ge=1, le=200, description="Page size. Omit to return all."),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Every file under a folder: its subfolders' files and its briefs' submissions."""
+    if not can_view_project(db, project_id, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a project member")
+
+    # "root" is the whole project, not just the top level: descending into every
+    # subfolder is the point of this view, so there is no folder clause at all.
+    scope_folder_ids: Optional[list[uuid.UUID]] = None
+    if folder_id != "root":
+        try:
+            fid = uuid.UUID(folder_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="folder_id must be 'root' or a folder UUID")
+        folder = db.query(Folder).filter(
+            Folder.id == fid,
+            Folder.project_id == project_id,
+            Folder.deleted_at.is_(None),
+        ).first()
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        scope_folder_ids = [fid, *_get_descendant_ids(db, fid)]
+
+    # Same brief visibility as the folder view and GET /brief-file-counts: briefs
+    # filed in this project, and for anyone but a platform admin only their own.
+    # Without the created_by clause this view would hand a plain project member
+    # every other admin's submitted work.
+    links_q = db.query(SubmissionLink.id).filter(
+        SubmissionLink.home_project_id == project_id,
+        SubmissionLink.deleted_at.is_(None),
+    )
+    if scope_folder_ids is not None:
+        links_q = links_q.filter(SubmissionLink.home_folder_id.in_(scope_folder_ids))
+    if not is_platform_admin(current_user):
+        links_q = links_q.filter(SubmissionLink.created_by == current_user.id)
+    link_ids = [lid for (lid,) in links_q.all()]
+
+    # Deduped in Python rather than with DISTINCT: it feeds an IN clause, and two
+    # editors on one brief submit into two projects, so the list stays small.
+    submitter_project_ids = list({
+        pid
+        for (pid,) in db.query(Submission.project_id)
+        .filter(Submission.submission_link_id.in_(link_ids))
+        .all()
+    }) if link_ids else []
+
+    own = Asset.project_id == project_id
+    if scope_folder_ids is not None:
+        own = and_(own, Asset.folder_id.in_(scope_folder_ids))
+    sources = [own]
+    if submitter_project_ids:
+        sources.append(Asset.project_id.in_(submitter_project_ids))
+
+    query = db.query(Asset).filter(Asset.deleted_at.is_(None), or_(*sources))
+    if not include_failed:
+        query = query.filter(_usable_or_empty(db))
+    # Same order and paging as list_assets, so the grid's infinite scroll is unchanged.
+    query = query.order_by(Asset.created_at.desc(), Asset.id.desc())
+    if limit is not None:
+        query = query.offset(skip).limit(limit)
+    return _build_asset_responses_bulk(query.all(), db)
 
 
 @router.get("/assets/{asset_id}", response_model=AssetResponse)

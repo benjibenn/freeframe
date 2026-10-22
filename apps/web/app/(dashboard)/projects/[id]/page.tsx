@@ -35,6 +35,7 @@ import { cn, formatRelativeTime, formatBytes } from "@/lib/utils";
 import { displayName } from "@/lib/display-name";
 import { api, ApiError } from "@/lib/api";
 import { downloadBriefsZip } from "@/lib/brief-download";
+import { assetsBasePath, isFileViewActive, projectUrl } from "@/lib/folder-view";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/shared/toast";
 import { Input } from "@/components/ui/input";
@@ -114,11 +115,18 @@ export default function ProjectDetailPage() {
   const [openBriefId, setOpenBriefId] = React.useState<string | null>(
     searchParams.get("brief") || null,
   );
+  // File view (?view=files): the containers in this folder — its subfolders and
+  // its briefs — are dropped, and every file beneath them is listed instead. In
+  // the URL so a refresh, the back button or a pasted link lands on the same view.
+  const [fileView, setFileView] = React.useState(
+    searchParams.get("view") === "files",
+  );
   // Header crumbs are links that change only the query, which does not remount
   // the page: follow the URL so a folder crumb closes the open brief.
   React.useEffect(() => {
     setCurrentFolderId(searchParams.get("folder") || null);
     setOpenBriefId(searchParams.get("brief") || null);
+    setFileView(searchParams.get("view") === "files");
   }, [searchParams]);
   const [showTrash, setShowTrash] = React.useState(false);
   const [selectedTags, setSelectedTags] = React.useState<string[]>([]);
@@ -270,10 +278,13 @@ export default function ProjectDetailPage() {
     }
     const path = findPath(tree, currentFolderId, []) ?? []
     setExtraCrumbs([
-      ...path.map((f) => ({ label: f.name, href: `/projects/${projectId}?folder=${f.id}` })),
+      ...path.map((f) => ({
+        label: f.name,
+        href: projectUrl(projectId, f.id, fileView),
+      })),
       ...briefCrumb,
     ]);
-  }, [currentFolderId, openBriefId, allRequests, tree, projectId, setExtraCrumbs]);
+  }, [currentFolderId, openBriefId, allRequests, tree, projectId, fileView, setExtraCrumbs]);
 
   // Label for the folder currently in view. Read off the same tree the breadcrumb
   // walks so the two can never disagree; falls back to the project name at root.
@@ -348,13 +359,22 @@ export default function ProjectDetailPage() {
   // Infinite scroll: each SWR "page" is one paginated /assets request (newest-first).
   // The key carries the active folder/tag/label filter, so changing the filter swaps
   // the key set and we reset to one page below. A short page means we've hit the end.
+  const fileViewActive = isFileViewActive(fileView, {
+    filteringByTagOrLabel: filteringByTag_orLabel,
+    openBriefId,
+  });
+  const assetsPath = assetsBasePath(projectId, {
+    fileViewActive,
+    currentFolderId,
+    assetsQuery,
+  });
   const getAssetsKey = React.useCallback(
     (index: number, previous: AssetResponse[] | null) => {
       if (showTrash) return null;
       if (previous && previous.length < ASSETS_PAGE_SIZE) return null;
-      return `/projects/${projectId}/assets?${assetsQuery}&skip=${index * ASSETS_PAGE_SIZE}&limit=${ASSETS_PAGE_SIZE}`;
+      return `${assetsPath}&skip=${index * ASSETS_PAGE_SIZE}&limit=${ASSETS_PAGE_SIZE}`;
     },
-    [showTrash, projectId, assetsQuery],
+    [showTrash, assetsPath],
   );
 
   const {
@@ -374,8 +394,8 @@ export default function ProjectDetailPage() {
   const assetsReachedEnd = lastAssetPage ? lastAssetPage.length < ASSETS_PAGE_SIZE : false;
   const loadingMoreAssets = validatingAssets && (assetPages?.length ?? 0) > 0;
 
-  // Reset to the first page whenever the filter (folder/tag/label) changes.
-  React.useEffect(() => { setAssetsSize(1); }, [assetsQuery, setAssetsSize]);
+  // Reset to the first page whenever the filter (folder/tag/label/view) changes.
+  React.useEffect(() => { setAssetsSize(1); }, [assetsPath, setAssetsSize]);
 
   const assetsSentinelRef = useInfiniteScroll({
     onLoadMore: () => setAssetsSize((s) => s + 1),
@@ -634,13 +654,26 @@ export default function ProjectDetailPage() {
       setShowTrash(false);
       setShowShareLinks(false);
       setSelectedShareLink(null);
-      const url = folderId
-        ? `/projects/${projectId}?folder=${folderId}`
-        : `/projects/${projectId}`;
-      window.history.replaceState(null, "", url);
+      window.history.replaceState(
+        null,
+        "",
+        projectUrl(projectId, folderId, fileView),
+      );
     },
-    [projectId],
+    [projectId, fileView],
   );
+
+  // Toggling is replaceState, like folder navigation: a history entry per click
+  // would make Back walk the toggles instead of leaving the project.
+  const toggleFileView = React.useCallback(() => {
+    const next = !fileView;
+    setFileView(next);
+    window.history.replaceState(
+      null,
+      "",
+      projectUrl(projectId, currentFolderId, next),
+    );
+  }, [fileView, currentFolderId, projectId]);
 
   return (
     <div className="flex h-full flex-col lg:flex-row overflow-hidden">
@@ -1102,8 +1135,8 @@ export default function ProjectDetailPage() {
             <>
             <AssetGrid
               assets={assets ?? []}
-              folders={filteringByTag_orLabel ? [] : (subfolders ?? [])}
-              requests={filteringByTag_orLabel ? [] : folderRequests}
+              folders={filteringByTag_orLabel || fileViewActive ? [] : (subfolders ?? [])}
+              requests={filteringByTag_orLabel || fileViewActive ? [] : folderRequests}
               onRequestOpen={(requestId) => {
                 setOpenBriefId(requestId);
                 const folder = currentFolderId ? `folder=${currentFolderId}&` : "";
@@ -1131,7 +1164,11 @@ export default function ProjectDetailPage() {
                 setSelectedAsset(asset as AssetResponse);
               }}
               onAssetOpen={(asset) =>
-                router.push(`/projects/${projectId}/assets/${asset.id}`)
+                // File view lists files from the submitters' projects too, so the
+                // file page has to be opened under the project that owns the file.
+                router.push(
+                  `/projects/${asset.project_id ?? projectId}/assets/${asset.id}`,
+                )
               }
               onFolderOpen={(folder) => handleSelectFolder(folder.id)}
               onFolderRename={async (id, name) => {
@@ -1158,7 +1195,7 @@ export default function ProjectDetailPage() {
               }}
               shareMode={false}
               onShareModeChange={setShareMode}
-              onCreateShareLink={openShareDialog}
+              onCreateShareLink={fileViewActive ? undefined : openShareDialog}
               onAssetShare={(asset) => {
                 // Open dialog in configure phase — creation happens when user clicks "Create"
                 setShareDialogPreselect({
@@ -1183,9 +1220,20 @@ export default function ProjectDetailPage() {
                   }
                 } catch {}
               }}
-              onAssetRename={(asset) => setAssetToRename(asset as AssetResponse)}
-              onAssetDelete={(asset) => setAssetToDelete(asset as AssetResponse)}
-              onBulkMove={async (assetIds, folderIds, targetFolderId, requestIds) => {
+              onAssetRename={
+                // Withheld in file view: the grid holds the submitters' files too,
+                // and a rename there breaks the "<language> — …" prefix the brief
+                // downloads parse. Same for delete, below.
+                fileViewActive
+                  ? undefined
+                  : (asset) => setAssetToRename(asset as AssetResponse)
+              }
+              onAssetDelete={
+                fileViewActive
+                  ? undefined
+                  : (asset) => setAssetToDelete(asset as AssetResponse)
+              }
+              onBulkMove={fileViewActive ? undefined : async (assetIds, folderIds, targetFolderId, requestIds) => {
                 if (assetIds.length || folderIds.length) {
                   await bulkMove(assetIds, folderIds, targetFolderId);
                 }
@@ -1203,7 +1251,7 @@ export default function ProjectDetailPage() {
                 mutateSubfolders();
                 mutateTree();
               }}
-              onBulkDelete={(assetIds, folderIds, requestIds) => {
+              onBulkDelete={fileViewActive ? undefined : (assetIds, folderIds, requestIds) => {
                 setPendingBulkDelete({ assetIds, folderIds, requestIds });
               }}
               onBulkStage={async (assetIds, stageId) => {
@@ -1339,12 +1387,41 @@ export default function ProjectDetailPage() {
                       Import
                     </button>
                   )}
+                  {/* File view: drop this folder's containers and list every file
+                      under it instead — its subfolders' files and its briefs'
+                      submissions. Hidden while a tag filter or a brief is open,
+                      since each of those already replaces the folder listing. */}
+                  {!filteringByTag_orLabel && !openBriefId && (
+                    <button
+                      type="button"
+                      onClick={toggleFileView}
+                      aria-pressed={fileViewActive}
+                      title={
+                        fileViewActive
+                          ? "Back to subfolders and briefs"
+                          : `Every file under ${currentFolderName}, subfolders and briefs included`
+                      }
+                      className={`rounded-md border px-3 h-8 inline-flex items-center gap-1.5 text-xs font-medium transition-colors ${
+                        fileViewActive
+                          ? "border-accent/40 bg-accent/10 text-accent"
+                          : "border-border bg-bg-secondary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
+                      }`}
+                    >
+                      {fileViewActive ? (
+                        <FolderOpen className="h-3.5 w-3.5" />
+                      ) : (
+                        <FileText className="h-3.5 w-3.5" />
+                      )}
+                      {fileViewActive ? "Folder view" : "File view"}
+                    </button>
+                  )}
                   {/* Restamps the whole folder, no selection needed. Renders
                       nothing for non-admins (the menu self-gates). Hidden while a
                       tag or moment filter is on, because the grid is then a
                       project-wide search and the folder scope would not match
-                      what is on screen. */}
-                  {!filteringByTag_orLabel && (
+                      what is on screen. Hidden in file view too: it stamps one
+                      folder level, which is not what that grid shows. */}
+                  {!filteringByTag_orLabel && !fileViewActive && (
                   <BulkStatusMenu
                     side="bottom"
                     label="Bulk status"
