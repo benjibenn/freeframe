@@ -157,6 +157,7 @@ export default function ProjectDetailPage() {
     const next = initialFileView(
       searchParams.get("view"),
       readRememberedView(projectId),
+      Boolean(searchParams.get("brief")),
     );
     if (!next) return;
     setFileView(true);
@@ -1031,6 +1032,7 @@ export default function ProjectDetailPage() {
                   type="search"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
+                  maxLength={200}
                   placeholder="Search files by name"
                   aria-label="Search files by name"
                   className="h-8 w-56 sm:w-72 rounded-md border border-border bg-bg-secondary pl-8 pr-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-accent/40 focus:outline-none"
@@ -1038,6 +1040,10 @@ export default function ProjectDetailPage() {
               </div>
               {taskStages.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="flex items-center gap-1 text-2xs font-medium uppercase tracking-wide text-text-tertiary mr-0.5">
+                    <Filter className="h-3 w-3" />
+                    Files
+                  </span>
                   {[...taskStages]
                     .sort((a, b) => a.position - b.position)
                     .map((stage) => {
@@ -1644,24 +1650,24 @@ export default function ProjectDetailPage() {
                     <button
                       type="button"
                       onClick={toggleFileView}
-                      aria-pressed={flattened}
+                      aria-pressed={fileView}
                       title={
-                        flattened
+                        fileView
                           ? "Back to subfolders and briefs"
                           : `Every file under ${currentFolderName}, subfolders and briefs included`
                       }
                       className={`rounded-md border px-3 h-8 inline-flex items-center gap-1.5 text-xs font-medium transition-colors ${
-                        flattened
+                        fileView
                           ? "border-accent/40 bg-accent/10 text-accent"
                           : "border-border bg-bg-secondary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
                       }`}
                     >
-                      {flattened ? (
+                      {fileView ? (
                         <FolderOpen className="h-3.5 w-3.5" />
                       ) : (
                         <FileText className="h-3.5 w-3.5" />
                       )}
-                      {flattened ? "Folder view" : "File view"}
+                      {fileView ? "Folder view" : "File view"}
                     </button>
                   )}
                   {/* Restamps the whole folder, no selection needed. Renders

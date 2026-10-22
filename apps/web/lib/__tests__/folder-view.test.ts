@@ -225,3 +225,12 @@ describe('readRememberedView / rememberView', () => {
     set.mockRestore()
   })
 })
+
+describe('initialFileView with a brief open', () => {
+  it('never flattens a brief link, whatever the project is remembered as', () => {
+    // Applying the memory rewrites the URL through projectUrl, which carries no
+    // brief — so it would close the brief the link was for.
+    expect(initialFileView(null, true, true)).toBe(false)
+    expect(initialFileView('files', true, true)).toBe(false)
+  })
+})

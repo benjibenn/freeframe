@@ -113,7 +113,12 @@ const REMEMBERED_VIEW_PREFIX = "ff:fileView:";
 export function initialFileView(
   urlView: string | null,
   remembered: boolean,
+  briefOpen = false,
 ): boolean {
+  // A brief link opens that brief, whatever this project is remembered as.
+  // Applying the memory here would rewrite the URL through projectUrl, which
+  // carries no brief, and so close the very brief the link was for.
+  if (briefOpen) return false;
   if (urlView !== null) return urlView === "files";
   return remembered;
 }
