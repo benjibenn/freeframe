@@ -2,12 +2,13 @@
 
 import * as React from "react";
 import Link from "next/link";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { Download, FileImage, FolderOpen, Loader2, Settings2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { getAccessToken, refreshAccessToken } from "@/lib/auth";
 import { useToast } from "@/components/shared/toast";
 import { EmptyState } from "@/components/shared/empty-state";
+import { BulkStatusMenu } from "@/components/projects/bulk-status-menu";
 import type { AssetResponse } from "@/types";
 
 // One editor's submission against a brief (GET /submission-links/{id}/submissions).
@@ -66,6 +67,7 @@ async function downloadBriefFile(briefId: string, assetId: string): Promise<void
 // from there and open in that project's file page.
 export function BriefFilesView({ briefId, briefTitle }: BriefFilesViewProps) {
   const toast = useToast();
+  const { mutate } = useSWRConfig();
   const [zipping, setZipping] = React.useState(false);
   const { data: subs, isLoading } = useSWR<BriefSubmission[]>(
     `/submission-links/${briefId}/submissions`,
@@ -86,9 +88,39 @@ export function BriefFilesView({ briefId, briefTitle }: BriefFilesViewProps) {
   const downloadOne = (assetId: string) =>
     downloadBriefFile(briefId, assetId).catch(() => toast.error("Download failed. Try again."));
 
+  // The brief's files sit in each submitter's own project, so the stage is set
+  // server-side by brief. Each editor section is its own SWR key, so they are
+  // revalidated one by one once the call lands.
+  const setStage = async (stageId: string | null) => {
+    try {
+      const { updated } = await api.patch<{ updated: number }>(
+        "/submission-links/bulk/stage",
+        { link_ids: [briefId], task_stage_id: stageId },
+      );
+      await Promise.all(
+        (subs ?? []).map((s) => mutate(`/projects/${s.project_id}/assets`)),
+      );
+      toast.success(
+        updated
+          ? `Status set on ${updated} file${updated === 1 ? "" : "s"}`
+          : "This brief has no files",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Bulk status failed");
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-end gap-4">
+        {/* Renders nothing for non-admins (the menu self-gates). */}
+        <BulkStatusMenu
+          side="bottom"
+          label="Bulk status"
+          scopeHint="Every file in this brief (all editors)"
+          triggerClassName="border border-border bg-bg-secondary px-3 text-xs"
+          onSetStage={setStage}
+        />
         {totalFiles > 0 && (
           <button
             type="button"

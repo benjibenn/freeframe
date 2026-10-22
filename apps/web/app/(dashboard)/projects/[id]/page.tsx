@@ -34,6 +34,7 @@ import {
 import { cn, formatRelativeTime, formatBytes } from "@/lib/utils";
 import { displayName } from "@/lib/display-name";
 import { api, ApiError } from "@/lib/api";
+import { downloadBriefsZip } from "@/lib/brief-download";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/shared/toast";
 import { Input } from "@/components/ui/input";
@@ -1209,11 +1210,43 @@ export default function ProjectDetailPage() {
                 await api.patch(`/assets/bulk/stage`, { asset_ids: assetIds, task_stage_id: stageId });
                 mutateAssets();
               }}
+              onBulkBriefStage={async (requestIds, stageId) => {
+                // A brief's files live in its submitters' own projects, so the
+                // server resolves them; the client only names the briefs.
+                try {
+                  const { updated } = await api.patch<{ updated: number }>(
+                    "/submission-links/bulk/stage",
+                    { link_ids: requestIds, task_stage_id: stageId },
+                  );
+                  mutateAssets();
+                  toast.success(
+                    updated
+                      ? `Status set on ${updated} file${updated === 1 ? "" : "s"}`
+                      : "The selected briefs have no files",
+                  );
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Bulk status failed");
+                }
+              }}
               onBulkRunAsAd={async (assetIds, runAsAd) => {
                 await api.patch(`/assets/bulk/run-as-ad`, { asset_ids: assetIds, run_as_ad: runAsAd });
                 mutateAssets();
               }}
-              onBulkDownload={async (assetIds, folderIds) => {
+              onBulkDownload={async (assetIds, folderIds, requestIds) => {
+                // Briefs go first and as one request: their files live in the
+                // submitters' projects, so the server has to resolve and group
+                // them, and a ZIP per brief would mean one download per row.
+                if (requestIds.length) {
+                  try {
+                    await downloadBriefsZip(requestIds);
+                  } catch (err) {
+                    toast.error(
+                      err instanceof ApiError && err.status === 404
+                        ? "The selected briefs have no files"
+                        : "Download failed. Try again.",
+                    );
+                  }
+                }
                 function triggerDownload(url: string) {
                   const iframe = document.createElement("iframe");
                   iframe.style.display = "none";

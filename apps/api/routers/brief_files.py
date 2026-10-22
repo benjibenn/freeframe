@@ -13,6 +13,7 @@ from typing import Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -22,9 +23,10 @@ from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.asset import Asset, AssetType, AssetVersion, MediaFile
 from ..models.submission import Submission, SubmissionLink
+from ..models.task_stage import TaskStage
 from ..models.user import User
 from ..services import s3_service
-from ..services.permissions import can_view_project, is_platform_admin
+from ..services.permissions import can_view_project, is_platform_admin, require_platform_admin
 from .submissions import _get_owned_link
 
 router = APIRouter(tags=["brief-files"])
@@ -148,6 +150,151 @@ def download_brief_zip(
                     out.write(chunk)
     spool.seek(0)
     zip_name = _UNSAFE.sub("", title).strip() + ".zip"
+
+    def stream():
+        try:
+            for chunk in iter(lambda: spool.read(1024 * 1024), b""):
+                yield chunk
+        finally:
+            spool.close()
+
+    return StreamingResponse(
+        stream(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(zip_name)}"},
+    )
+
+
+# ── Bulk actions over selected briefs ────────────────────────────────────────
+#
+# The folder listing shows briefs as rows, and a row can be ticked like a file.
+# These two endpoints are what the selection bar calls: restamp every file of the
+# chosen briefs, or pull them all down in one ZIP. Both resolve a brief's files
+# with _brief_assets, the same resolver the single-brief download uses, so the
+# three actions always cover the same set.
+
+# Both paths use a "bulk/" segment rather than "bulk-…": submissions.py already
+# registers PATCH /submission-links/{link_id}, and it is included first, so a
+# one-segment "bulk-stage" would be read as a link_id and rejected as a bad UUID.
+#
+# A brief is a SubmissionLink; a cap keeps one click from walking the whole table.
+_MAX_BRIEFS = 100
+
+
+class BulkBriefStage(BaseModel):
+    link_ids: list[uuid.UUID]
+    task_stage_id: Optional[uuid.UUID] = None
+
+
+class BulkBriefDownload(BaseModel):
+    link_ids: list[uuid.UUID]
+
+
+def _owned_links(db: Session, link_ids: list[uuid.UUID], user: User) -> list[SubmissionLink]:
+    """Load the chosen briefs, refusing the whole call if any one is off limits.
+
+    Per-link rather than one IN query because _get_owned_link carries the
+    ownership rule (creator, or any platform admin); silently dropping a brief the
+    caller may not touch would restamp or download a partial set without saying so.
+    """
+    if not link_ids:
+        raise HTTPException(status_code=422, detail="link_ids is empty")
+    if len(link_ids) > _MAX_BRIEFS:
+        raise HTTPException(status_code=413, detail=f"Too many briefs (max {_MAX_BRIEFS})")
+    # dict.fromkeys dedupes while keeping the caller's order, which the ZIP uses.
+    return [_get_owned_link(db, lid, user) for lid in dict.fromkeys(link_ids)]
+
+
+@router.patch("/submission-links/bulk/stage")
+def bulk_set_brief_stage(
+    body: BulkBriefStage,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Set the pipeline stage on every submitted file of the chosen briefs.
+
+    Scoped by brief on the server: a brief's files live in its submitters' own
+    projects, so the caller cannot name them and a client-side loop would leave a
+    half-stamped selection behind if it failed part way.
+
+    Platform-admin only, matching every other write to task_stage_id.
+    """
+    require_platform_admin(current_user)
+    links = _owned_links(db, body.link_ids, current_user)
+
+    if body.task_stage_id is not None:
+        stage = db.query(TaskStage).filter(
+            TaskStage.id == body.task_stage_id,
+            TaskStage.deleted_at.is_(None),
+        ).first()
+        if not stage:
+            raise HTTPException(status_code=404, detail="Task stage not found")
+
+    updated = 0
+    for link in links:
+        for asset in _brief_assets(db, link):
+            asset.task_stage_id = body.task_stage_id
+            updated += 1
+    db.commit()  # one commit, so a selection is restamped whole or not at all
+    return {"updated": updated, "briefs": len(links)}
+
+
+@router.post("/submission-links/bulk/download")
+def bulk_download_briefs(
+    body: BulkBriefDownload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Every file of the chosen briefs in one ZIP, in a folder per brief.
+
+    The per-brief folder is what makes a multi-brief download usable: file names
+    already carry the brief title, but a flat ZIP of several briefs is impossible
+    to sort back out by hand. Two briefs sharing a title get " (2)" appended, the
+    same disambiguation the single-brief ZIP applies to file names.
+    """
+    links = _owned_links(db, body.link_ids, current_user)
+
+    s3 = s3_service.get_s3_client()
+    spool = tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024)
+    used_dirs: set[str] = set()
+    total = 0
+    with zipfile.ZipFile(spool, "w", zipfile.ZIP_STORED) as zf:
+        for link in links:
+            title = link.title or "Brief"
+            folder = _UNSAFE.sub("", title).strip() or "Brief"
+            n = 2
+            while folder.lower() in used_dirs:
+                folder = f"{_UNSAFE.sub('', title).strip() or 'Brief'} ({n})"
+                n += 1
+            used_dirs.add(folder.lower())
+
+            used: set[str] = set()
+            for asset in _brief_assets(db, link):
+                try:
+                    key, source = _media(db, asset)
+                except HTTPException:
+                    continue  # still uploading or no media: leave it out
+                name = _download_name(title, asset.name, source)
+                stem, ext = os.path.splitext(name)
+                n = 2
+                while name.lower() in used:
+                    name = f"{stem} ({n}){ext}"
+                    n += 1
+                used.add(name.lower())
+                body_obj = s3.get_object(Bucket=settings.s3_bucket, Key=key)["Body"]
+                with zf.open(f"{folder}/{name}", "w", force_zip64=True) as out:
+                    for chunk in iter(lambda: body_obj.read(1024 * 1024), b""):
+                        out.write(chunk)
+                total += 1
+    if total == 0:
+        spool.close()
+        raise HTTPException(status_code=404, detail="The selected briefs have no files")
+    spool.seek(0)
+    zip_name = (
+        f"{_UNSAFE.sub('', links[0].title or 'Brief').strip()}.zip"
+        if len(links) == 1
+        else f"{len(links)} briefs.zip"
+    )
 
     def stream():
         try:

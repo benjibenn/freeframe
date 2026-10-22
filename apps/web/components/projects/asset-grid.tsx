@@ -64,9 +64,11 @@ interface AssetGridProps {
     targetFolderId: string | null,
     requestIds: string[],
   ) => void
-  onBulkDownload?: (assetIds: string[], folderIds: string[]) => void
+  onBulkDownload?: (assetIds: string[], folderIds: string[], requestIds: string[]) => void
   /** Bulk pipeline-stage change (admin only). Shows the "Set status" menu. */
   onBulkStage?: (assetIds: string[], stageId: string | null) => void
+  /** Same menu, for ticked brief rows: stamps every file submitted against them. */
+  onBulkBriefStage?: (requestIds: string[], stageId: string | null) => void
   onBulkRunAsAd?: (assetIds: string[], runAsAd: boolean) => void
   projectName?: string
   folderTree?: FolderTreeNode[]
@@ -132,6 +134,7 @@ export function AssetGrid({
   onBulkMove,
   onBulkDownload,
   onBulkStage,
+  onBulkBriefStage,
   onBulkRunAsAd,
   projectName = 'Project',
   folderTree = [],
@@ -893,14 +896,20 @@ export function AssetGrid({
               <FolderInput className="h-4 w-4" /> Move to
             </Button>
           )}
-          {onBulkStage && selectedAssetIds.size > 0 && (
+          {/* A brief row carries no stage of its own here — ticking it stands for
+              the files submitted against it, which is why both handlers can fire
+              from one pick when a mixed selection is ticked. */}
+          {(onBulkStage || onBulkBriefStage) &&
+            (selectedAssetIds.size > 0 || selectedRequestIds.size > 0) && (
             <BulkStatusMenu
               onSetStage={(stageId) => {
-                onBulkStage(Array.from(selectedAssetIds), stageId)
+                if (selectedAssetIds.size > 0) onBulkStage?.(Array.from(selectedAssetIds), stageId)
+                if (selectedRequestIds.size > 0)
+                  onBulkBriefStage?.(Array.from(selectedRequestIds), stageId)
                 clearSelection()
               }}
               onSetRunAsAd={
-                onBulkRunAsAd
+                onBulkRunAsAd && selectedAssetIds.size > 0
                   ? (runAsAd) => {
                       onBulkRunAsAd(Array.from(selectedAssetIds), runAsAd)
                       clearSelection()
@@ -922,12 +931,20 @@ export function AssetGrid({
               <Share2 className="h-4 w-4" /> Share
             </Button>
           )}
-          {(selectedAssetIds.size > 0 || selectedFolderIds.size > 0) && (
+          {(selectedAssetIds.size > 0 ||
+            selectedFolderIds.size > 0 ||
+            selectedRequestIds.size > 0) && (
             <Button
               variant="ghost"
               size="sm"
               className="gap-1.5"
-              onClick={() => onBulkDownload?.(Array.from(selectedAssetIds), Array.from(selectedFolderIds))}
+              onClick={() =>
+                onBulkDownload?.(
+                  Array.from(selectedAssetIds),
+                  Array.from(selectedFolderIds),
+                  Array.from(selectedRequestIds),
+                )
+              }
             >
               <Download className="h-4 w-4" /> Download
             </Button>

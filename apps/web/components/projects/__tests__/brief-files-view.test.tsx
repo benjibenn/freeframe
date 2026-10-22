@@ -9,8 +9,13 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SWRConfig } from 'swr'
 
-vi.mock('@/lib/api', () => ({ api: { get: vi.fn() } }))
+vi.mock('@/lib/api', () => ({ api: { get: vi.fn(), patch: vi.fn() } }))
 import { api } from '@/lib/api'
+
+// The "Bulk status" menu is platform-admin only, so the default here is a
+// non-admin: the menu stays out of the way of the tests above.
+let mockUser: { is_superadmin: boolean; is_subadmin: boolean } | null = null
+vi.mock('@/stores/auth-store', () => ({ useAuthStore: () => ({ user: mockUser }) }))
 import { BriefFilesView } from '../brief-files-view'
 import { ToastProvider } from '@/components/shared/toast'
 
@@ -38,6 +43,7 @@ function renderView() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockUser = null
   vi.mocked(api.get).mockImplementation(((url: string) =>
     Promise.resolve(url === '/submission-links/b1/submissions' ? SUBS : FILES[url] ?? [])) as never)
 })
@@ -52,6 +58,26 @@ describe('BriefFilesView', () => {
     expect(screen.getByText('Swedish — Swedish · SEK')).toBeInTheDocument()
     // Display name wins over the account name, as on the brief settings page.
     expect(screen.getByText('Mia K')).toBeInTheDocument()
+  })
+
+  it('stamps every editor of the brief from one pick, server-side', async () => {
+    // The files sit in the editors' own projects, so the client must name the
+    // brief and let the server resolve them — never loop over the tiles.
+    mockUser = { is_superadmin: true, is_subadmin: false }
+    vi.mocked(api.patch).mockResolvedValue({ updated: 3 } as never)
+    renderView()
+    await userEvent.click(await screen.findByRole('button', { name: /bulk status/i }))
+    await userEvent.click(await screen.findByText('Unassigned'))
+    expect(api.patch).toHaveBeenCalledWith('/submission-links/bulk/stage', {
+      link_ids: ['b1'],
+      task_stage_id: null,
+    })
+  })
+
+  it('hides the bulk status menu from non-admins', async () => {
+    renderView()
+    await screen.findByText('French — French · EUR')
+    expect(screen.queryByRole('button', { name: /bulk status/i })).toBeNull()
   })
 
   it('says so when no editor has submitted yet', async () => {
