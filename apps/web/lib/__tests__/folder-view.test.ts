@@ -5,12 +5,15 @@
  * toggle: a name query flattens the grid just as the toggle does, and the gate
  * has to say so or the withheld writes come back.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   projectUrl,
   isFlattened,
   assetsBasePath,
   searchScopeHint,
+  initialFileView,
+  readRememberedView,
+  rememberView,
 } from '../folder-view'
 
 describe('projectUrl', () => {
@@ -175,5 +178,50 @@ describe('searchScopeHint', () => {
     expect(
       searchScopeHint({ flattened: false, filteringByTagOrLabel: true }, 'Store 1'),
     ).toBe('Searching the tagged files')
+  })
+})
+
+describe('initialFileView', () => {
+  it('lets the URL win, so a pasted link lands where it says', () => {
+    expect(initialFileView('files', false)).toBe(true)
+    expect(initialFileView('', true)).toBe(false)
+  })
+
+  it('falls back to the remembered default when the URL says nothing', () => {
+    // A project that is all briefs should open flat without a click.
+    expect(initialFileView(null, true)).toBe(true)
+  })
+
+  it('opens in folder view when nothing says otherwise', () => {
+    expect(initialFileView(null, false)).toBe(false)
+  })
+})
+
+describe('readRememberedView / rememberView', () => {
+  beforeEach(() => localStorage.clear())
+
+  it('round-trips the choice per project', () => {
+    rememberView('p1', true)
+    rememberView('p2', false)
+    expect(readRememberedView('p1')).toBe(true)
+    expect(readRememberedView('p2')).toBe(false)
+  })
+
+  it('reports false for a project never seen', () => {
+    expect(readRememberedView('p9')).toBe(false)
+  })
+
+  it('survives storage that throws, which private mode does', () => {
+    // A forgotten preference must not take the toggle down with it.
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied')
+    })
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('denied')
+    })
+    expect(readRememberedView('p1')).toBe(false)
+    expect(() => rememberView('p1', true)).not.toThrow()
+    get.mockRestore()
+    set.mockRestore()
   })
 })

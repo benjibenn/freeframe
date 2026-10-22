@@ -38,8 +38,11 @@ import { api, ApiError } from "@/lib/api";
 import { downloadBriefsZip } from "@/lib/brief-download";
 import {
   assetsBasePath,
+  initialFileView,
   isFlattened,
   projectUrl,
+  readRememberedView,
+  rememberView,
   searchScopeHint,
 } from "@/lib/folder-view";
 import { useDebounced } from "@/hooks/use-debounced";
@@ -136,6 +139,28 @@ export default function ProjectDetailPage() {
     setOpenBriefId(searchParams.get("brief") || null);
     setFileView(searchParams.get("view") === "files");
   }, [searchParams]);
+
+  // Open in the view last chosen for this project, so a project that is all
+  // briefs opens flat without a click. Read after mount, not in the state
+  // initializer: localStorage does not exist during this page's server render,
+  // and reading it there would either throw or mismatch on hydration. The URL
+  // wins whenever it says anything, so a pasted link still lands where it says.
+  const rememberedApplied = React.useRef(false);
+  React.useEffect(() => {
+    if (rememberedApplied.current) return;
+    rememberedApplied.current = true;
+    const next = initialFileView(
+      searchParams.get("view"),
+      readRememberedView(projectId),
+    );
+    if (!next) return;
+    setFileView(true);
+    window.history.replaceState(
+      null,
+      "",
+      projectUrl(projectId, searchParams.get("folder") || null, true),
+    );
+  }, [projectId, searchParams]);
   const [showTrash, setShowTrash] = React.useState(false);
   // Name search. The raw value drives the input so typing stays instant; the
   // settled value drives the SWR key, so one word costs one request.
@@ -699,6 +724,7 @@ export default function ProjectDetailPage() {
   const toggleFileView = React.useCallback(() => {
     const next = !fileView;
     setFileView(next);
+    rememberView(projectId, next);
     window.history.replaceState(
       null,
       "",

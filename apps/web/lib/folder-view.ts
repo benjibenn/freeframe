@@ -95,3 +95,47 @@ export function searchScopeHint(
   if (opts.flattened) return `Searching everything under ${folderName}`;
   return `Searching ${folderName}`;
 }
+
+// ── Remembering the view ─────────────────────────────────────────────────────
+//
+// Per project, not per folder: the shape of a project is what makes file view
+// the right default ("this one is all briefs"), and a per-folder memory would
+// make the grid change form as you walk the tree.
+
+const REMEMBERED_VIEW_PREFIX = "ff:fileView:";
+
+/**
+ * Which view the page should open in.
+ *
+ * The URL wins, so a pasted or bookmarked link always lands where it says. Only
+ * when it says nothing does the remembered default apply.
+ */
+export function initialFileView(
+  urlView: string | null,
+  remembered: boolean,
+): boolean {
+  if (urlView !== null) return urlView === "files";
+  return remembered;
+}
+
+/** The remembered default, or false. Storage can throw, so this never does. */
+export function readRememberedView(projectId: string): boolean {
+  try {
+    return localStorage.getItem(REMEMBERED_VIEW_PREFIX + projectId) === "files";
+  } catch {
+    return false;
+  }
+}
+
+/** Remember the view just chosen. Silent when storage is unavailable. */
+export function rememberView(projectId: string, fileView: boolean): void {
+  try {
+    localStorage.setItem(
+      REMEMBERED_VIEW_PREFIX + projectId,
+      fileView ? "files" : "folders",
+    );
+  } catch {
+    // Private mode, blocked site data, quota — a forgotten preference is not
+    // worth breaking the toggle over.
+  }
+}
