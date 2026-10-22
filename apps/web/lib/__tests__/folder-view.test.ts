@@ -37,6 +37,7 @@ describe('isFlattened', () => {
   const base = {
     fileView: false,
     query: '',
+    stageIds: [] as string[],
     filteringByTagOrLabel: false,
     openBriefId: null,
   }
@@ -55,6 +56,12 @@ describe('isFlattened', () => {
     expect(isFlattened({ ...base, query: '   ' })).toBe(false)
   })
 
+  it('is on for a status chip alone, with the toggle off', () => {
+    // Same reason as a query: at a store folder the files sit in the briefs
+    // below, so filtering one folder level would show an empty grid.
+    expect(isFlattened({ ...base, stageIds: ['s1'] })).toBe(true)
+  })
+
   it('yields to a tag filter, which is a project-wide search', () => {
     expect(
       isFlattened({ ...base, fileView: true, filteringByTagOrLabel: true }),
@@ -71,7 +78,12 @@ describe('isFlattened', () => {
 })
 
 describe('assetsBasePath', () => {
-  const base = { currentFolderId: 'f1', assetsQuery: 'folder_id=f1', query: '' }
+  const base = {
+    currentFolderId: 'f1',
+    assetsQuery: 'folder_id=f1',
+    query: '',
+    stageIds: [] as string[],
+  }
 
   it('flattens a folder server-side, subtree and briefs included', () => {
     expect(assetsBasePath('p1', { ...base, flattened: true })).toBe(
@@ -105,7 +117,9 @@ describe('assetsBasePath', () => {
     // for a file that simply had not loaded yet.
     expect(
       assetsBasePath('p1', { ...base, flattened: true, query: 'iphone 17' }),
-    ).toBe('/projects/p1/folder-files?folder_id=f1&q=iphone%2017')
+      // URLSearchParams writes a space as "+", which is what a query string
+      // means by it and what the API reads back.
+    ).toBe('/projects/p1/folder-files?folder_id=f1&q=iphone+17')
   })
 
   it('narrows a tag search by the query too', () => {
@@ -117,6 +131,24 @@ describe('assetsBasePath', () => {
         query: 'fear',
       }),
     ).toBe('/projects/p1/assets?tag=hero&q=fear')
+  })
+
+  it('repeats stage_id per chip, so the API can OR them', () => {
+    // Comma-joining would make the API read one bogus UUID and 422.
+    expect(
+      assetsBasePath('p1', { ...base, flattened: true, stageIds: ['s1', 's2'] }),
+    ).toBe('/projects/p1/folder-files?folder_id=f1&stage_id=s1&stage_id=s2')
+  })
+
+  it('carries a query and the chips together', () => {
+    expect(
+      assetsBasePath('p1', {
+        ...base,
+        flattened: true,
+        query: 'hero',
+        stageIds: ['none'],
+      }),
+    ).toBe('/projects/p1/folder-files?folder_id=f1&q=hero&stage_id=none')
   })
 
   it('leaves the path alone for a whitespace query', () => {

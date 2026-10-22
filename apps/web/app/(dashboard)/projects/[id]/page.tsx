@@ -43,6 +43,7 @@ import {
   searchScopeHint,
 } from "@/lib/folder-view";
 import { useDebounced } from "@/hooks/use-debounced";
+import { useTaskStageOrder } from "@/lib/task-stages";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/shared/toast";
 import { Input } from "@/components/ui/input";
@@ -140,6 +141,10 @@ export default function ProjectDetailPage() {
   // settled value drives the SWR key, so one word costs one request.
   const [search, setSearch] = React.useState("");
   const query = useDebounced(search, 250);
+  // Status chips. Multi-select, so two chips mean "either"; the literal "none"
+  // is a chip of its own, because an asset carries no stage until someone sets
+  // one and that is the biggest group on most boards.
+  const [selectedStageIds, setSelectedStageIds] = React.useState<string[]>([]);
   const [selectedTags, setSelectedTags] = React.useState<string[]>([]);
   const [selectedMomentLabels, setSelectedMomentLabels] = React.useState<string[]>([]);
   const [showShareLinks, setShowShareLinks] = React.useState(false);
@@ -375,6 +380,7 @@ export default function ProjectDetailPage() {
   const flattened = isFlattened({
     fileView,
     query,
+    stageIds: selectedStageIds,
     filteringByTagOrLabel: filteringByTag_orLabel,
     openBriefId,
   });
@@ -383,6 +389,7 @@ export default function ProjectDetailPage() {
     currentFolderId,
     assetsQuery,
     query,
+    stageIds: selectedStageIds,
   });
   const getAssetsKey = React.useCallback(
     (index: number, previous: AssetResponse[] | null) => {
@@ -429,6 +436,14 @@ export default function ProjectDetailPage() {
     `/projects/${projectId}/frame-tag-labels`,
     (key: string) => api.get<{ label: string; count: number }[]>(key),
   );
+
+  // /task-stages is platform-admin only, so `stages` is empty for everyone else
+  // and the chip row disappears rather than rendering a filter that does nothing.
+  const { stages: taskStages } = useTaskStageOrder();
+  const toggleStage = (id: string) =>
+    setSelectedStageIds((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
+    );
 
   const toggleTag = (tag: string) =>
     setSelectedTags((prev) =>
@@ -983,6 +998,59 @@ export default function ProjectDetailPage() {
                   className="h-8 w-56 sm:w-72 rounded-md border border-border bg-bg-secondary pl-8 pr-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-accent/40 focus:outline-none"
                 />
               </div>
+              {taskStages.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {[...taskStages]
+                    .sort((a, b) => a.position - b.position)
+                    .map((stage) => {
+                      const on = selectedStageIds.includes(stage.id);
+                      return (
+                        <button
+                          key={stage.id}
+                          type="button"
+                          onClick={() => toggleStage(stage.id)}
+                          aria-pressed={on}
+                          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 h-7 text-2xs font-medium transition-colors ${
+                            on
+                              ? "border-accent/40 bg-accent/10 text-accent"
+                              : "border-border bg-bg-secondary text-text-secondary hover:text-text-primary"
+                          }`}
+                        >
+                          <span
+                            className="h-1.5 w-1.5 rounded-full"
+                            style={{
+                              backgroundColor:
+                                stage.color ?? "var(--color-text-tertiary)",
+                            }}
+                          />
+                          {stage.name}
+                        </button>
+                      );
+                    })}
+                  {/* Untriaged work, which no stage chip would otherwise reach. */}
+                  <button
+                    type="button"
+                    onClick={() => toggleStage("none")}
+                    aria-pressed={selectedStageIds.includes("none")}
+                    className={`inline-flex items-center rounded-full border px-2.5 h-7 text-2xs font-medium transition-colors ${
+                      selectedStageIds.includes("none")
+                        ? "border-accent/40 bg-accent/10 text-accent"
+                        : "border-border bg-bg-secondary text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    No status
+                  </button>
+                  {selectedStageIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedStageIds([])}
+                      className="text-2xs text-text-tertiary hover:text-text-primary"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              )}
               {search.trim() !== "" && (
                 <span className="text-2xs text-text-tertiary">
                   {searchScopeHint(

@@ -37,6 +37,9 @@ interface AssetCardProps {
   onRename?: () => void
   onDelete?: () => void
   fileSize?: number | null
+  /** Pipeline stage, for the pill on the thumbnail. Null hides it — which is
+   *  every non-admin, since /task-stages is admin-only. */
+  stage?: { name: string; color: string | null } | null
   // Appearance settings
   showInfo?: boolean
   showFileSize?: boolean
@@ -75,6 +78,7 @@ export function AssetCard({
   onRename,
   onDelete,
   fileSize,
+  stage,
   showInfo = true,
   showFileSize = true,
   showUploader = true,
@@ -139,6 +143,19 @@ export function AssetCard({
           >
             <Check className="h-3.5 w-3.5" />
           </button>
+        )}
+
+        {/* Pipeline stage — top-right, the only free corner. Without it a grid
+            filtered by status gives no sign of why a tile is in it, and reading
+            a folder's state still means opening files one by one. */}
+        {stage && (
+          <span className="absolute top-2 right-2 inline-flex max-w-[70%] items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-2xs font-medium text-white backdrop-blur-sm">
+            <span
+              className="h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{ backgroundColor: stage.color ?? 'var(--color-text-tertiary)' }}
+            />
+            <span className="truncate">{stage.name}</span>
+          </span>
         )}
 
         {/* Duration badge — bottom-right (for video/audio) */}

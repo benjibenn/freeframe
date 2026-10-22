@@ -39,5 +39,13 @@ export function useTaskStageOrder() {
     [stages],
   )
 
-  return { available: isPlatformAdmin, positionOf }
+  // The stage itself, for the chip bar and the pill on a filtered tile. Same
+  // SWR key as positionOf, so showing a stage costs no extra request.
+  const stageOf = React.useCallback(
+    (stageId: string | null | undefined) =>
+      (stageId ? stages?.find((s) => s.id === stageId) : undefined) ?? null,
+    [stages],
+  )
+
+  return { available: isPlatformAdmin, positionOf, stageOf, stages: stages ?? [] }
 }

@@ -6,8 +6,9 @@
  * instead, so a store folder can be read without opening each model and then
  * each brief.
  *
- * Three things flatten the grid: the File view toggle, and — because searching
- * one folder level finds nothing when the files sit further down — a name query.
+ * Three things flatten the grid: the File view toggle and — because one folder
+ * level holds almost no files when the work sits in briefs — a name query or a
+ * status chip.
  * The decisions live here rather than inline in the page because each has a way
  * of going quietly wrong: a folder click that loses the view, a stale flat grid
  * left on screen by a tag filter, or a key still pointing at the folder-scoped
@@ -44,12 +45,15 @@ export function projectUrl(
 export function isFlattened(opts: {
   fileView: boolean;
   query: string;
+  stageIds: string[];
   filteringByTagOrLabel: boolean;
   openBriefId: string | null;
 }): boolean {
   if (opts.openBriefId) return false;
   if (opts.filteringByTagOrLabel) return false;
-  return opts.fileView || opts.query.trim() !== "";
+  return (
+    opts.fileView || opts.query.trim() !== "" || opts.stageIds.length > 0
+  );
 }
 
 /**
@@ -67,13 +71,19 @@ export function assetsBasePath(
     currentFolderId: string | null;
     assetsQuery: string;
     query: string;
+    stageIds: string[];
   },
 ): string {
   const base = opts.flattened
     ? `/projects/${projectId}/folder-files?folder_id=${opts.currentFolderId ?? "root"}`
     : `/projects/${projectId}/assets?${opts.assetsQuery}`;
+  const extra = new URLSearchParams();
   const q = opts.query.trim();
-  return q ? `${base}&q=${encodeURIComponent(q)}` : base;
+  if (q) extra.set("q", q);
+  // Repeated, not comma-joined: the API reads stage_id as a list, and ORs it.
+  for (const id of opts.stageIds) extra.append("stage_id", id);
+  const tail = extra.toString();
+  return tail ? `${base}&${tail}` : base;
 }
 
 /** What the grid is actually searching, for the hint under the search box. */

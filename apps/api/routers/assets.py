@@ -148,6 +148,33 @@ def _usable_or_empty(db: Session):
     return or_(usable_version, ~any_version)
 
 
+def _stage_filter(stage_id: Optional[list[str]]):
+    """A WHERE clause for the status chips, or None when no chip is on.
+
+    OR within the set, because the chips are a multi-select: picking two stages
+    means "either". "none" is a chip in its own right — an asset carries no stage
+    until someone sets one, so without it the largest group on most boards would
+    be the one group you cannot ask for.
+    """
+    values = [v.strip() for v in (stage_id or []) if v.strip()]
+    if not values:
+        return None
+    clauses = []
+    if any(v.lower() == "none" for v in values):
+        clauses.append(Asset.task_stage_id.is_(None))
+    ids = []
+    for v in values:
+        if v.lower() == "none":
+            continue
+        try:
+            ids.append(uuid.UUID(v))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="stage_id must be 'none' or a stage UUID")
+    if ids:
+        clauses.append(Asset.task_stage_id.in_(ids))
+    return or_(*clauses) if len(clauses) > 1 else clauses[0]
+
+
 @router.get("/projects/{project_id}/assets", response_model=list[AssetResponse])
 def list_assets(
     project_id: uuid.UUID,
@@ -160,6 +187,13 @@ def list_assets(
         description="Filter to assets whose name contains this text, case-insensitively.",
     ),
     frame_label: Optional[list[str]] = Query(None, description="Filter to assets that have at least one frame tag with ANY of these labels."),
+    stage_id: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter to assets at ANY of these pipeline stages. The literal "
+            "'none' matches assets with no stage, so untriaged work is reachable."
+        ),
+    ),
     exclude_archived: bool = Query(False, description="Exclude assets with status=archived. Defaults to False so the project grid is unchanged."),
     skip: int = Query(0, ge=0, description="Pagination offset (newest-first)."),
     limit: Optional[int] = Query(None, ge=1, le=200, description="Page size. Omit to return all (backward compatible)."),
@@ -211,6 +245,10 @@ def list_assets(
     if name_query:
         query = query.filter(Asset.name.icontains(name_query, autoescape=True))
 
+    stage_clause = _stage_filter(stage_id)
+    if stage_clause is not None:
+        query = query.filter(stage_clause)
+
     if not include_failed:
         # Exclude assets whose only version failed or is still uploading. Done in
         # SQL (not Python) so that `offset/limit` below returns full pages.
@@ -255,6 +293,13 @@ def list_folder_files(
         None,
         max_length=200,
         description="Filter to assets whose name contains this text, case-insensitively.",
+    ),
+    stage_id: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter to assets at ANY of these pipeline stages. The literal "
+            "'none' matches assets with no stage, so untriaged work is reachable."
+        ),
     ),
     skip: int = Query(0, ge=0, description="Pagination offset (newest-first)."),
     limit: Optional[int] = Query(None, ge=1, le=200, description="Page size. Omit to return all."),
@@ -318,6 +363,9 @@ def list_folder_files(
     name_query = (q or "").strip()
     if name_query:
         query = query.filter(Asset.name.icontains(name_query, autoescape=True))
+    stage_clause = _stage_filter(stage_id)
+    if stage_clause is not None:
+        query = query.filter(stage_clause)
     if not include_failed:
         query = query.filter(_usable_or_empty(db))
     # Same order and paging as list_assets, so the grid's infinite scroll is unchanged.

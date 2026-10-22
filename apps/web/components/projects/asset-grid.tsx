@@ -242,7 +242,13 @@ export function AssetGrid({
     selectedAssetIds.size + selectedFolderIds.size + selectedRequestIds.size
   const selectedTotalSize = Array.from(selectedAssetIds).reduce((sum, id) => sum + (fileSizes[id] ?? 0), 0)
 
-  const { available: stagesAvailable, positionOf: stagePosition } = useTaskStageOrder()
+  // stageOf shares the hook's SWR key, so the pills cost no extra request and
+  // return null for non-admins, who cannot read /task-stages at all.
+  const {
+    available: stagesAvailable,
+    positionOf: stagePosition,
+    stageOf,
+  } = useTaskStageOrder()
   // sortKey is persisted to localStorage, so a user who sorted by status before
   // losing stage visibility (or before this option existed) can still hold it.
   const effectiveSortKey = sortKey === 'status' && !stagesAvailable ? 'date' : sortKey
@@ -496,6 +502,7 @@ export function AssetGrid({
                 authorName={authorNames[asset.created_by]}
                 thumbnailUrl={thumbnails[asset.id]}
                 fileSize={fileSizes[asset.id] ?? null}
+                stage={stageOf(asset.task_stage_id)}
                 selected={selectedAssetIds.has(asset.id)}
                 onSelect={(e) => toggleAssetSelect(asset.id, e)}
                 showInfo={showCardInfo}

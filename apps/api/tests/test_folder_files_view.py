@@ -331,3 +331,103 @@ def test_underscores_in_a_query_are_matched_literally(
     assert resp.status_code == 200, resp.text
     name_clause = next(c for c in _literal_clauses(mock_db) if "assets.name" in c)
     assert "ESCAPE" in name_clause.upper(), name_clause
+
+
+@_stub_view
+@_stub_usable
+@patch("apps.api.routers.assets._build_asset_responses_bulk", return_value=[])
+def test_a_stage_chip_narrows_to_that_stage(
+    build, _usable, _view, client, mock_db, auth_headers, test_user
+):
+    # "Show me everything in Needs review under this store" is the whole point
+    # of the chips, so the clause has to reach the flattened query.
+    test_user.is_subadmin = True
+    stage_id = uuid.uuid4()
+    _chain(mock_db)
+    mock_db.all.side_effect = [[], []]
+
+    resp = client.get(
+        f"/projects/{uuid.uuid4()}/folder-files?folder_id=root&stage_id={stage_id}",
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert any("assets.task_stage_id IN" in c for c in _clauses(mock_db)), _clauses(mock_db)
+
+
+@_stub_view
+@_stub_usable
+@patch("apps.api.routers.assets._build_asset_responses_bulk", return_value=[])
+def test_two_chips_mean_either_stage(
+    build, _usable, _view, client, mock_db, auth_headers, test_user
+):
+    # The chips are a multi-select. ANDing them would always return nothing,
+    # since an asset sits at one stage.
+    test_user.is_subadmin = True
+    a, b = uuid.uuid4(), uuid.uuid4()
+    _chain(mock_db)
+    mock_db.all.side_effect = [[], []]
+
+    resp = client.get(
+        f"/projects/{uuid.uuid4()}/folder-files?folder_id=root&stage_id={a}&stage_id={b}",
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    clause = next(c for c in _literal_clauses(mock_db) if "task_stage_id" in c)
+    assert a.hex in clause and b.hex in clause, clause
+
+
+@_stub_view
+@_stub_usable
+@patch("apps.api.routers.assets._build_asset_responses_bulk", return_value=[])
+def test_the_none_chip_finds_untriaged_files(
+    build, _usable, _view, client, mock_db, auth_headers, test_user
+):
+    # An asset carries no stage until someone sets one, so "none" is the biggest
+    # group on most boards and has to be askable.
+    test_user.is_subadmin = True
+    _chain(mock_db)
+    mock_db.all.side_effect = [[], []]
+
+    resp = client.get(
+        f"/projects/{uuid.uuid4()}/folder-files?folder_id=root&stage_id=none",
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert any("assets.task_stage_id IS NULL" in c for c in _clauses(mock_db)), _clauses(mock_db)
+
+
+@_stub_view
+@_stub_usable
+@patch("apps.api.routers.assets._build_asset_responses_bulk", return_value=[])
+def test_none_combined_with_a_stage_means_either(
+    build, _usable, _view, client, mock_db, auth_headers, test_user
+):
+    test_user.is_subadmin = True
+    stage_id = uuid.uuid4()
+    _chain(mock_db)
+    mock_db.all.side_effect = [[], []]
+
+    resp = client.get(
+        f"/projects/{uuid.uuid4()}/folder-files?folder_id=root"
+        f"&stage_id=none&stage_id={stage_id}",
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    clause = next(c for c in _clauses(mock_db) if "task_stage_id" in c)
+    assert " OR " in clause, clause
+    assert "IS NULL" in clause, clause
+
+
+@_stub_view
+@_stub_usable
+def test_rejects_a_stage_id_that_is_not_a_uuid(_usable, _view, client, mock_db, auth_headers, test_user):
+    test_user.is_subadmin = True
+    resp = client.get(
+        f"/projects/{uuid.uuid4()}/folder-files?folder_id=root&stage_id=nope",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422, resp.text
