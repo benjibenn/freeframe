@@ -533,6 +533,59 @@ def _comment_version(db: Session, asset: Asset, version_id: Optional[uuid.UUID])
     return version
 
 
+def _review_fields(body: TaskStageAssign, target: Optional[TaskStage], current_stage_id, what: str) -> str:
+    """Check a move's /review fields before anything is written. Returns the
+    trimmed revision comment, or "" for none.
+
+    Shared by the file-stage and editor-stage endpoints. A sent-back item goes
+    to its editor, who cannot act on "rejected" alone, so a review decision
+    (expected_stage_id set) to Revision needs a reason. A decision on something
+    that has left the stage the reviewer saw is refused, so two reviewers
+    cannot both decide it.
+    """
+    to_revision = target is not None and is_revision(target)
+    comment_text = (body.comment or "").strip()
+    if comment_text and not to_revision:
+        raise HTTPException(
+            status_code=422, detail="A comment is only taken when sending a file back for revision"
+        )
+    if body.expected_stage_id is not None:
+        if to_revision and not comment_text:
+            raise HTTPException(
+                status_code=422, detail="Say what needs to change to send a file back for revision"
+            )
+        if current_stage_id != body.expected_stage_id:
+            raise HTTPException(status_code=409, detail=f"This {what} is no longer in that stage")
+    return comment_text
+
+
+def _add_revision_comment(db: Session, asset: Asset, version: AssetVersion, author: User, text: str) -> None:
+    # Public: the editor must see it on the file, like any review comment.
+    db.add(Comment(
+        asset_id=asset.id,
+        version_id=version.id,
+        author_id=author.id,
+        body=text,
+        visibility=CommentVisibility.public.value,
+    ))
+
+
+def _email_revision(recipient: Optional[User], reviewer: User, asset: Asset, text: str) -> None:
+    """Tell the editor what to change. Call only after commit: an email about a
+    move that then rolled back would send them to fix something still approved."""
+    if not recipient or recipient.id == reviewer.id:
+        return
+    send_task_safe(
+        send_approval_email,
+        to_email=recipient.email,
+        reviewer_name=reviewer.name,
+        asset_name=asset.name,
+        status="rejected",
+        asset_link=f"{settings.frontend_url}/projects/{asset.project_id}/assets/{asset.id}",
+        note=text,
+    )
+
+
 @router.patch("/assets/{asset_id}/task-stage", response_model=TaskItem)
 def set_asset_task_stage(
     asset_id: uuid.UUID,
@@ -567,48 +620,17 @@ def set_asset_task_stage(
             raise HTTPException(status_code=404, detail="Asset not found")
 
     target = _get_stage(db, body.task_stage_id) if body.task_stage_id is not None else None
-    to_revision = target is not None and is_revision(target)
-    comment_text = (body.comment or "").strip()
-    if comment_text and not to_revision:
-        raise HTTPException(
-            status_code=422, detail="A comment is only taken when sending a file back for revision"
-        )
-    if body.expected_stage_id is not None:
-        # A review decision. A rejected file goes back to its editor, who cannot
-        # act on "rejected" alone, so a reason is required.
-        if to_revision and not comment_text:
-            raise HTTPException(
-                status_code=422, detail="Say what needs to change to send a file back for revision"
-            )
-        if asset.task_stage_id != body.expected_stage_id:
-            raise HTTPException(status_code=409, detail="This file is no longer in that stage")
-
+    comment_text = _review_fields(body, target, asset.task_stage_id, "file")
     if comment_text:
-        version = _comment_version(db, asset, body.version_id)
-        # Public: the editor must see it on the file, like any review comment.
-        db.add(Comment(
-            asset_id=asset.id,
-            version_id=version.id,
-            author_id=current_user.id,
-            body=comment_text,
-            visibility=CommentVisibility.public.value,
-        ))
+        _add_revision_comment(db, asset, _comment_version(db, asset, body.version_id), current_user, comment_text)
 
     asset.task_stage_id = body.task_stage_id
     db.commit()
     db.refresh(asset)
 
     submitter = db.query(User).filter(User.id == asset.created_by).first()
-    if comment_text and submitter and submitter.id != current_user.id:
-        send_task_safe(
-            send_approval_email,
-            to_email=submitter.email,
-            reviewer_name=current_user.name,
-            asset_name=asset.name,
-            status="rejected",
-            asset_link=f"{settings.frontend_url}/projects/{asset.project_id}/assets/{asset.id}",
-            note=comment_text,
-        )
+    if comment_text:
+        _email_revision(submitter, current_user, asset, comment_text)
 
     project = db.query(Project).filter(Project.id == asset.project_id).first()
     from ..models.submission import SubmissionLink
@@ -888,6 +910,11 @@ def set_brief_editor_task_stage(
     The separation is the point: a brief with three editors has three answers to
     "how far along is this", and collapsing them into the brief's single stage
     would mean the first editor to finish marked the whole thing done.
+
+    `expected_stage_id`, `comment` and `version_id` are set by the /review page
+    making a decision on this editor (see TaskStageAssign). A revision comment
+    lands on `version_id`, which must be a file in this editor's project. The
+    /tasks dropdown never sends them, so it moves editors exactly as before.
     """
     link = db.query(SubmissionLink).filter(
         SubmissionLink.id == link_id, SubmissionLink.deleted_at.is_(None)
@@ -898,8 +925,8 @@ def set_brief_editor_task_stage(
         # 404, not 403: whether someone else is on this brief is not this
         # caller's to learn.
         raise HTTPException(status_code=404, detail="Request not found")
-    if body.task_stage_id is not None:
-        _get_stage(db, body.task_stage_id)  # validate it exists / is not deleted
+    # Validates it exists / is not deleted.
+    target = _get_stage(db, body.task_stage_id) if body.task_stage_id is not None else None
 
     submission = db.query(Submission).filter(
         Submission.submission_link_id == link_id,
@@ -908,9 +935,34 @@ def set_brief_editor_task_stage(
     if not submission:
         raise HTTPException(status_code=404, detail="Request not found")
 
+    comment_text = _review_fields(body, target, submission.task_stage_id, "editor")
+    commented = None
+    if comment_text:
+        if body.version_id is None:
+            raise HTTPException(status_code=422, detail="Say which file the comment is about")
+        found = (
+            db.query(AssetVersion, Asset)
+            .join(Asset, Asset.id == AssetVersion.asset_id)
+            .filter(
+                AssetVersion.id == body.version_id,
+                AssetVersion.deleted_at.is_(None),
+                Asset.project_id == submission.project_id,
+                Asset.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if not found:
+            raise HTTPException(status_code=422, detail="That file is not one of this editor's")
+        version, commented = found
+        _add_revision_comment(db, commented, version, current_user, comment_text)
+
     submission.task_stage_id = body.task_stage_id
     db.commit()
     db.refresh(link)
+
+    if commented is not None:
+        editor = db.query(User).filter(User.id == user_id).first()
+        _email_revision(editor, current_user, commented, comment_text)
     return _brief_item(db, link, current_user)
 
 
