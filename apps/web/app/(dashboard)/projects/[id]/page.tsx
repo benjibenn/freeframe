@@ -30,12 +30,19 @@ import {
   Tag as TagIcon,
   Clock,
   Filter,
+  Search,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatBytes } from "@/lib/utils";
 import { displayName } from "@/lib/display-name";
 import { api, ApiError } from "@/lib/api";
 import { downloadBriefsZip } from "@/lib/brief-download";
-import { assetsBasePath, isFileViewActive, projectUrl } from "@/lib/folder-view";
+import {
+  assetsBasePath,
+  isFlattened,
+  projectUrl,
+  searchScopeHint,
+} from "@/lib/folder-view";
+import { useDebounced } from "@/hooks/use-debounced";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/shared/toast";
 import { Input } from "@/components/ui/input";
@@ -129,6 +136,10 @@ export default function ProjectDetailPage() {
     setFileView(searchParams.get("view") === "files");
   }, [searchParams]);
   const [showTrash, setShowTrash] = React.useState(false);
+  // Name search. The raw value drives the input so typing stays instant; the
+  // settled value drives the SWR key, so one word costs one request.
+  const [search, setSearch] = React.useState("");
+  const query = useDebounced(search, 250);
   const [selectedTags, setSelectedTags] = React.useState<string[]>([]);
   const [selectedMomentLabels, setSelectedMomentLabels] = React.useState<string[]>([]);
   const [showShareLinks, setShowShareLinks] = React.useState(false);
@@ -359,14 +370,19 @@ export default function ProjectDetailPage() {
   // Infinite scroll: each SWR "page" is one paginated /assets request (newest-first).
   // The key carries the active folder/tag/label filter, so changing the filter swaps
   // the key set and we reset to one page below. A short page means we've hit the end.
-  const fileViewActive = isFileViewActive(fileView, {
+  // One gate: the endpoint, the containers and the withheld writes all read it,
+  // so a query flattening the grid cannot quietly re-enable a write.
+  const flattened = isFlattened({
+    fileView,
+    query,
     filteringByTagOrLabel: filteringByTag_orLabel,
     openBriefId,
   });
   const assetsPath = assetsBasePath(projectId, {
-    fileViewActive,
+    flattened,
     currentFolderId,
     assetsQuery,
+    query,
   });
   const getAssetsKey = React.useCallback(
     (index: number, previous: AssetResponse[] | null) => {
@@ -949,6 +965,42 @@ export default function ProjectDetailPage() {
             Folders
           </button>
 
+          {/* Search row. A query flattens the grid, so it reaches the subfolders
+              and the briefs' submitted files, not just this folder level — and
+              it narrows on the server, because the grid pages at 50 and a
+              browser-side filter would call a file missing that had not loaded.
+              Hidden where there is no asset list to narrow. */}
+          {!showTrash && !showShareLinks && !openBriefId && (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-tertiary" />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search files by name"
+                  aria-label="Search files by name"
+                  className="h-8 w-56 sm:w-72 rounded-md border border-border bg-bg-secondary pl-8 pr-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-accent/40 focus:outline-none"
+                />
+              </div>
+              {search.trim() !== "" && (
+                <span className="text-2xs text-text-tertiary">
+                  {searchScopeHint(
+                    { flattened, filteringByTagOrLabel: filteringByTag_orLabel },
+                    currentFolderName,
+                  )}
+                  {/* "+" while more pages remain: the count is what has loaded,
+                      not a total, and saying otherwise would be a lie. */}
+                  {query.trim() !== search.trim() || loadingAssets
+                    ? " …"
+                    : ` · ${assets.length}${assetsReachedEnd ? "" : "+"} match${
+                        assets.length === 1 && assetsReachedEnd ? "" : "es"
+                      }`}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Tag filter bar — only outside the trash / share-links views */}
           {!showTrash && !showShareLinks &&
             ((projectTags && projectTags.length > 0) || filteringByTag) && (
@@ -1135,8 +1187,8 @@ export default function ProjectDetailPage() {
             <>
             <AssetGrid
               assets={assets ?? []}
-              folders={filteringByTag_orLabel || fileViewActive ? [] : (subfolders ?? [])}
-              requests={filteringByTag_orLabel || fileViewActive ? [] : folderRequests}
+              folders={filteringByTag_orLabel || flattened ? [] : (subfolders ?? [])}
+              requests={filteringByTag_orLabel || flattened ? [] : folderRequests}
               onRequestOpen={(requestId) => {
                 setOpenBriefId(requestId);
                 const folder = currentFolderId ? `folder=${currentFolderId}&` : "";
@@ -1195,7 +1247,7 @@ export default function ProjectDetailPage() {
               }}
               shareMode={false}
               onShareModeChange={setShareMode}
-              onCreateShareLink={fileViewActive ? undefined : openShareDialog}
+              onCreateShareLink={flattened ? undefined : openShareDialog}
               onAssetShare={(asset) => {
                 // Open dialog in configure phase — creation happens when user clicks "Create"
                 setShareDialogPreselect({
@@ -1221,19 +1273,19 @@ export default function ProjectDetailPage() {
                 } catch {}
               }}
               onAssetRename={
-                // Withheld in file view: the grid holds the submitters' files too,
+                // Withheld in a flattened grid: it holds the submitters' files too,
                 // and a rename there breaks the "<language> — …" prefix the brief
                 // downloads parse. Same for delete, below.
-                fileViewActive
+                flattened
                   ? undefined
                   : (asset) => setAssetToRename(asset as AssetResponse)
               }
               onAssetDelete={
-                fileViewActive
+                flattened
                   ? undefined
                   : (asset) => setAssetToDelete(asset as AssetResponse)
               }
-              onBulkMove={fileViewActive ? undefined : async (assetIds, folderIds, targetFolderId, requestIds) => {
+              onBulkMove={flattened ? undefined : async (assetIds, folderIds, targetFolderId, requestIds) => {
                 if (assetIds.length || folderIds.length) {
                   await bulkMove(assetIds, folderIds, targetFolderId);
                 }
@@ -1251,7 +1303,7 @@ export default function ProjectDetailPage() {
                 mutateSubfolders();
                 mutateTree();
               }}
-              onBulkDelete={fileViewActive ? undefined : (assetIds, folderIds, requestIds) => {
+              onBulkDelete={flattened ? undefined : (assetIds, folderIds, requestIds) => {
                 setPendingBulkDelete({ assetIds, folderIds, requestIds });
               }}
               onBulkStage={async (assetIds, stageId) => {
@@ -1395,24 +1447,24 @@ export default function ProjectDetailPage() {
                     <button
                       type="button"
                       onClick={toggleFileView}
-                      aria-pressed={fileViewActive}
+                      aria-pressed={flattened}
                       title={
-                        fileViewActive
+                        flattened
                           ? "Back to subfolders and briefs"
                           : `Every file under ${currentFolderName}, subfolders and briefs included`
                       }
                       className={`rounded-md border px-3 h-8 inline-flex items-center gap-1.5 text-xs font-medium transition-colors ${
-                        fileViewActive
+                        flattened
                           ? "border-accent/40 bg-accent/10 text-accent"
                           : "border-border bg-bg-secondary text-text-secondary hover:text-text-primary hover:bg-bg-hover"
                       }`}
                     >
-                      {fileViewActive ? (
+                      {flattened ? (
                         <FolderOpen className="h-3.5 w-3.5" />
                       ) : (
                         <FileText className="h-3.5 w-3.5" />
                       )}
-                      {fileViewActive ? "Folder view" : "File view"}
+                      {flattened ? "Folder view" : "File view"}
                     </button>
                   )}
                   {/* Restamps the whole folder, no selection needed. Renders
@@ -1421,7 +1473,7 @@ export default function ProjectDetailPage() {
                       project-wide search and the folder scope would not match
                       what is on screen. Hidden in file view too: it stamps one
                       folder level, which is not what that grid shows. */}
-                  {!filteringByTag_orLabel && !fileViewActive && (
+                  {!filteringByTag_orLabel && !flattened && (
                   <BulkStatusMenu
                     side="bottom"
                     label="Bulk status"

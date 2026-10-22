@@ -154,6 +154,11 @@ def list_assets(
     include_failed: bool = Query(False, description="Include assets whose latest version failed processing"),
     folder_id: Optional[str] = Query(None, description="Filter by folder. 'root' for root level, UUID for specific folder."),
     tag: Optional[list[str]] = Query(None, description="Filter to assets carrying ALL of these tags. Searches the whole project (ignores folder)."),
+    q: Optional[str] = Query(
+        None,
+        max_length=200,
+        description="Filter to assets whose name contains this text, case-insensitively.",
+    ),
     frame_label: Optional[list[str]] = Query(None, description="Filter to assets that have at least one frame tag with ANY of these labels."),
     exclude_archived: bool = Query(False, description="Exclude assets with status=archived. Defaults to False so the project grid is unchanged."),
     skip: int = Query(0, ge=0, description="Pagination offset (newest-first)."),
@@ -199,6 +204,13 @@ def list_assets(
         elif folder_id is not None:
             query = query.filter(Asset.folder_id == uuid.UUID(folder_id))
 
+    # Name search narrows whatever the view already lists; it never widens the
+    # scope, so a query cannot be used to read outside the folder or the project.
+    # icontains escapes the _ and % that file names are full of.
+    name_query = (q or "").strip()
+    if name_query:
+        query = query.filter(Asset.name.icontains(name_query, autoescape=True))
+
     if not include_failed:
         # Exclude assets whose only version failed or is still uploading. Done in
         # SQL (not Python) so that `offset/limit` below returns full pages.
@@ -239,6 +251,11 @@ def list_folder_files(
         description="Folder to flatten. 'root' for the whole project, else a folder UUID.",
     ),
     include_failed: bool = Query(False, description="Include assets whose latest version failed processing"),
+    q: Optional[str] = Query(
+        None,
+        max_length=200,
+        description="Filter to assets whose name contains this text, case-insensitively.",
+    ),
     skip: int = Query(0, ge=0, description="Pagination offset (newest-first)."),
     limit: Optional[int] = Query(None, ge=1, le=200, description="Page size. Omit to return all."),
     db: Session = Depends(get_db),
@@ -296,6 +313,11 @@ def list_folder_files(
         sources.append(Asset.project_id.in_(submitter_project_ids))
 
     query = db.query(Asset).filter(Asset.deleted_at.is_(None), or_(*sources))
+    # Narrows the two sources above, exactly as in list_assets. Searching the
+    # flattened subtree is what makes a store folder findable by typing.
+    name_query = (q or "").strip()
+    if name_query:
+        query = query.filter(Asset.name.icontains(name_query, autoescape=True))
     if not include_failed:
         query = query.filter(_usable_or_empty(db))
     # Same order and paging as list_assets, so the grid's infinite scroll is unchanged.

@@ -242,3 +242,92 @@ def test_404_for_a_folder_in_another_project(_usable, _view, client, mock_db, au
 def test_403_for_someone_who_cannot_view_the_project(_view, _usable, client, mock_db, auth_headers):
     resp = client.get(f"/projects/{uuid.uuid4()}/folder-files?folder_id=root", headers=auth_headers)
     assert resp.status_code == 403, resp.text
+
+
+@_stub_view
+@_stub_usable
+@patch("apps.api.routers.assets._build_asset_responses_bulk", return_value=[])
+def test_a_name_query_narrows_the_flattened_grid(
+    build, _usable, _view, client, mock_db, auth_headers, test_user
+):
+    # Typing in the search box has to narrow the subtree, not the one folder
+    # level: at a store folder almost every file sits further down.
+    test_user.is_subadmin = True
+    _chain(mock_db)
+    mock_db.all.side_effect = [[], []]
+
+    resp = client.get(
+        f"/projects/{uuid.uuid4()}/folder-files?folder_id=root&q=iphone%2017",
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert any("lower(assets.name) LIKE" in c for c in _clauses(mock_db)), _clauses(mock_db)
+
+
+@_stub_view
+@_stub_usable
+@patch("apps.api.routers.assets._build_asset_responses_bulk", return_value=[])
+def test_a_query_never_widens_the_scope(
+    build, _usable, _view, client, mock_db, auth_headers, test_user
+):
+    # A query is an extra AND clause. If it ever replaced the folder or project
+    # clause, the search box would read the whole table.
+    test_user.is_subadmin = True
+    project_id, folder_id = uuid.uuid4(), uuid.uuid4()
+    _chain(mock_db)
+    mock_db.first.return_value = MagicMock()
+    mock_db.all.side_effect = [[], [], []]
+
+    resp = client.get(
+        f"/projects/{project_id}/folder-files?folder_id={folder_id}&q=hero",
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    clauses = _clauses(mock_db)
+    assert any("assets.project_id" in c for c in clauses), clauses
+    assert any("assets.folder_id IN" in c for c in clauses), clauses
+
+
+@_stub_view
+@_stub_usable
+@patch("apps.api.routers.assets._build_asset_responses_bulk", return_value=[])
+def test_blank_and_whitespace_queries_are_ignored(
+    build, _usable, _view, client, mock_db, auth_headers, test_user
+):
+    # An empty box must not become LIKE '%%', which would drop every asset whose
+    # name is NULL and read as a filter that does nothing but cost a scan.
+    test_user.is_subadmin = True
+    _chain(mock_db)
+    mock_db.all.side_effect = [[], []]
+
+    resp = client.get(
+        f"/projects/{uuid.uuid4()}/folder-files?folder_id=root&q=%20%20",
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert not any("assets.name" in c for c in _clauses(mock_db))
+
+
+@_stub_view
+@_stub_usable
+@patch("apps.api.routers.assets._build_asset_responses_bulk", return_value=[])
+def test_underscores_in_a_query_are_matched_literally(
+    build, _usable, _view, client, mock_db, auth_headers, test_user
+):
+    # File names are full of _ and %, which LIKE would otherwise read as
+    # wildcards: "p16_fear" must not also match "p16-fear".
+    test_user.is_subadmin = True
+    _chain(mock_db)
+    mock_db.all.side_effect = [[], []]
+
+    resp = client.get(
+        f"/projects/{uuid.uuid4()}/folder-files?folder_id=root&q=p16_fear",
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    name_clause = next(c for c in _literal_clauses(mock_db) if "assets.name" in c)
+    assert "ESCAPE" in name_clause.upper(), name_clause
