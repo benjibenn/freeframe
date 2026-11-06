@@ -130,7 +130,8 @@ def _version_and_media(mock_db, owner_id, *, s3_key="raw/p/a/v/original.png"):
     version.created_by = owner_id
     media = MagicMock()
     media.s3_key_raw = s3_key
-    mock_db.query.return_value.filter.return_value.first.side_effect = [version, media]
+    # The third read is the asset, for credit_slot_owner; None skips it.
+    mock_db.query.return_value.filter.return_value.first.side_effect = [version, media, None]
     return version, media
 
 

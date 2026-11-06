@@ -115,3 +115,67 @@ def test_get_file_url_passes_every_route_argument(mock_db):
         mcp_router._current_db.reset(d_tok)
     params = set(inspect.signature(assets_router.get_stream_url).parameters) - {"db", "current_user"}
     assert params <= set(route.call_args.kwargs)
+
+
+# ── Who is named as uploader ─────────────────────────────────────────────────
+# The clone bot files an editor's language variants with the admin's API key.
+# The work is the editor's, so the editor must show as uploader, not the admin.
+
+from apps.api.models.activity import ActivityAction, ActivityLog
+from apps.api.models.comment import Comment
+from apps.api.models.submission import Submission
+from apps.api.services import source_link
+
+
+def _upload(uploader, version_number=1, asset_creator=None):
+    asset = MagicMock()
+    asset.id, asset.project_id = uuid.uuid4(), uuid.uuid4()
+    asset.created_by = (asset_creator or uploader).id
+    version = MagicMock()
+    version.id, version.version_number, version.created_by = uuid.uuid4(), version_number, uploader.id
+    source = MagicMock(author_id=uploader.id, body=f"{source_link.PREFIX}https://canva.com/design/x")
+    note = MagicMock(author_id=uploader.id, body="the admin's own note")
+    log = MagicMock(user_id=uploader.id, payload={"version_number": version_number})
+    return asset, version, source, note, log
+
+
+def _db_with(sub, comments, logs):
+    db = MagicMock()
+    rows = {Submission: [sub], Comment: comments, ActivityLog: logs}
+
+    def query(model):
+        q = MagicMock()
+        q.filter.return_value.first.return_value = rows[model][0]
+        q.filter.return_value.all.return_value = rows[model]
+        return q
+    db.query.side_effect = query
+    return db
+
+
+def test_work_an_admin_files_into_an_editors_slot_is_credited_to_the_editor():
+    admin, editor = _user(admin=True), _user()
+    asset, version, source, note, log = _upload(admin)
+    sub = MagicMock(user_id=editor.id, project_id=asset.project_id)
+    submissions_router.credit_slot_owner(_db_with(sub, [source, note], [log]), asset, version, admin)
+    assert version.created_by == editor.id
+    assert asset.created_by == editor.id
+    assert source.author_id == editor.id
+    assert log.user_id == editor.id
+    assert note.author_id == admin.id  # only the upload's own rows move, never real comments
+
+
+def test_a_revision_keeps_the_assets_original_creator():
+    admin, editor, first = _user(admin=True), _user(), _user()
+    asset, version, source, _, log = _upload(admin, version_number=2, asset_creator=first)
+    sub = MagicMock(user_id=editor.id, project_id=asset.project_id)
+    submissions_router.credit_slot_owner(_db_with(sub, [source], [log]), asset, version, admin)
+    assert version.created_by == editor.id
+    assert asset.created_by == first.id
+
+
+def test_uploading_into_your_own_slot_changes_nothing():
+    editor = _user()
+    asset, version, source, _, log = _upload(editor)
+    sub = MagicMock(user_id=editor.id, project_id=asset.project_id)
+    submissions_router.credit_slot_owner(_db_with(sub, [source], [log]), asset, version, editor)
+    assert version.created_by == editor.id and log.user_id == editor.id

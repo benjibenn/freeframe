@@ -1830,6 +1830,40 @@ def resolve_submission_slot(
     return sub.project_id
 
 
+def credit_slot_owner(db: Session, asset: Asset, version: AssetVersion, current_user: User) -> None:
+    """Name the slot's owner, not the admin, as the uploader of this version.
+
+    An admin files work into an editor's slot for that editor: the clone bot
+    uploads the language variants an editor asked for with the admin's key. If
+    the admin is kept as uploader, the editor's own work shows under the admin's
+    name. Only an admin can write into another user's slot (see
+    resolve_submission_slot), so a different owner here means an admin did it.
+    Changes nothing when the caller owns the slot or the project is not a slot.
+    """
+    from ..models.activity import ActivityLog
+    from ..models.comment import Comment
+
+    sub = db.query(Submission).filter(Submission.project_id == asset.project_id).first()
+    if sub is None or sub.user_id == current_user.id:
+        return
+    owner = sub.user_id
+    version.created_by = owner
+    if version.version_number == 1 and asset.created_by == current_user.id:
+        asset.created_by = owner
+    for comment in db.query(Comment).filter(
+        Comment.version_id == version.id, Comment.author_id == current_user.id
+    ).all():
+        if source_link.parse(comment.body):
+            comment.author_id = owner
+    for entry in db.query(ActivityLog).filter(
+        ActivityLog.asset_id == asset.id,
+        ActivityLog.user_id == current_user.id,
+        ActivityLog.action == ActivityAction.created,
+    ).all():
+        if (entry.payload or {}).get("version_number") == version.version_number:
+            entry.user_id = owner
+
+
 class SubmitWorkFromUrlRequest(BaseModel):
     url: str
     asset_name: Optional[str] = None
@@ -2056,6 +2090,8 @@ def submit_work_from_url(
             "filename": media_file.original_filename,
         },
     ))
+    db.flush()
+    credit_slot_owner(db, asset, version, current_user)
     db.commit()
 
     from ..tasks.transcode_tasks import process_asset

@@ -2037,6 +2037,10 @@ def _finish(version_id: uuid.UUID, upload_id: str) -> dict[str, Any]:
     )
     # The size given at start was a claim, or absent; storage knows the real one.
     media.file_size_bytes = sum(p["Size"] for p in parts)
+    asset = db.query(Asset).filter(Asset.id == version.asset_id).first()
+    if asset is not None and is_platform_admin(_user()):
+        # Last: complete_upload above checks the caller is the uploader.
+        submissions_router.credit_slot_owner(db, asset, version, _user())
     db.commit()
     # complete_upload queues processing as a response background task, which
     # FastAPI only runs after sending a response. A tool call has no response, so
