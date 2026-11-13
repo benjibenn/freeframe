@@ -260,7 +260,9 @@ export function AssetGrid({
       result.sort((a, b) => {
         let cmp = 0
         if (effectiveSortKey === 'date') {
-          cmp = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
+          // Upload time, not updated_at: any edit (rename, stage change, move)
+          // bumps updated_at and would shuffle old files above new uploads.
+          cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
         } else if (effectiveSortKey === 'name') {
           cmp = a.name.localeCompare(b.name)
         } else if (effectiveSortKey === 'status') {
